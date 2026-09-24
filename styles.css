@@ -1,15 +1,21 @@
 :root {
   color-scheme: light;
-  font: 400 13px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Swiss neo-grotesque: Univers when installed locally (it is commercial and
+     not bundled), otherwise Helvetica Neue, which ships with macOS. */
+  font: 400 13px/1.5 "Univers Next Pro", "Univers LT Pro", Univers, "Helvetica Neue", Helvetica, Arial, sans-serif;
   color: #222;
   background: #fff;
   --line: #ddd;
   --muted: #666;
+  --side: 208px;
+  --gutter: 48px;
 }
 
 * { box-sizing: border-box; }
 html { scrollbar-gutter: stable; }
-body { margin: 0; display: flex; min-height: 100vh; }
+/* Chrome's extension-page stylesheet sets body { font-size: 75% }; keep the root font.
+   The app is a centered column: a full-width header, then sidebar and content. */
+body { margin: 0 auto; max-width: 1200px; padding: 0 32px; display: grid; grid-template-columns: var(--side) minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: var(--gutter); min-height: 100vh; font: inherit; }
 button, input, select, kbd, h1, h2, th { font: inherit; letter-spacing: normal; }
 h1, h2, p { margin: 0; }
 a { color: inherit; }
@@ -22,25 +28,28 @@ input, select { border: 0; border-bottom: 1px solid var(--line); padding: 6px 0;
 input::placeholder { color: var(--muted); opacity: 1; }
 select { cursor: pointer; max-width: 100%; }
 
+/* Rows keep 10px of inner padding for hover backgrounds; the negative margin
+   lines their text up with the logo above. */
 .sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  height: 100vh;
   position: sticky;
   top: 0;
+  align-self: start;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--line);
-  padding: 28px 20px;
+  margin-left: -10px;
+  padding: 24px 0;
 }
-.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; margin: 0 10px 40px; }
+.brand { flex: 0 0 var(--side); display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; text-decoration: none; }
+.brand:hover { text-decoration: none; }
 .brand img { display: block; flex-shrink: 0; }
-.nav-all { display: flex; align-items: center; gap: 12px; padding: 6px 10px; }
+/* Counts share one column; folder rows keep 56px on the right for their hover actions. */
+.nav-all { display: flex; align-items: center; gap: 12px; padding: 6px 66px 6px 10px; white-space: nowrap; }
 .sidebar a, .sidebar button, .sidebar a:hover, .sidebar button:hover { text-decoration: none; }
 .count { color: var(--muted); margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .section-label { display: flex; justify-content: space-between; align-items: center; margin: 30px 10px 12px; color: var(--muted); }
 .section-label button { padding: 4px 6px; }
-#folder-tree { overflow: auto; flex: 1; }
+#folder-tree { overflow: auto; flex: 1; min-height: 0; }
 .folder-row { display: flex; align-items: center; margin: 2px 0; transition: background-color 150ms ease; }
 .folder-row:hover, .folder-row:focus-within { background-color: #f0f0f0; }
 .folder-edit, .folder-delete { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 6px; opacity: 0; transition: opacity 150ms ease; }
@@ -52,19 +61,23 @@ select { cursor: pointer; max-width: 100%; }
 .disclosure { width: 20px; flex-shrink: 0; text-align: center; }
 .folder-link { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; padding: 6px 10px 6px 0; }
 .folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-row:not(:has(.folder-edit)) .folder-link { margin-right: 56px; }
 
-main { flex: 1; min-width: 0; }
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 22px 40px; border-bottom: 1px solid var(--line); }
-.search { display: flex; align-items: center; gap: 16px; width: 100%; max-width: 480px; }
-.search input { width: 100%; min-width: 0; border: 0; }
-.search-hint { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; color: var(--muted); }
-.search kbd { display: inline-grid; place-items: center; width: 24px; height: 26px; border: 1px solid #999; border-bottom-width: 2px; border-radius: 3px; color: #222; }
+main { min-width: 0; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--gutter); padding: 18px 0; border-bottom: 1px solid var(--line); }
+.search { flex: 1; display: flex; align-items: center; gap: 8px; max-width: 340px; height: 32px; padding: 0 6px 0 10px; border: 1px solid var(--line); }
+.search:focus-within { border-color: currentColor; }
+.search input { width: 100%; min-width: 0; border: 0; padding: 0; }
+.search input:focus-visible { outline: none; }
+.search-hint { display: inline-flex; align-items: center; flex-shrink: 0; white-space: nowrap; color: var(--muted); }
+.search kbd { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font-size: 12px; }
 .transfer, .actions { display: flex; align-items: center; gap: 24px; flex-shrink: 0; }
-.workspace { max-width: 1440px; margin: auto; padding: 28px 40px; }
+.transfer { margin-left: auto; }
+.workspace { padding: 28px 0 40px; }
 #breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--muted); min-height: 24px; }
 #breadcrumbs button { padding: 0; }
-.heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: 28px 0 40px; }
-h1 { overflow-wrap: anywhere; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: 6px 0 28px; }
+h1 { overflow-wrap: anywhere; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; min-height: 32px; color: var(--muted); }
 .sort { display: flex; align-items: center; gap: 12px; }
 .sort select { border: 0; }
@@ -129,7 +142,8 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: default; }
 .item-url { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-age { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .item-age::before { content: '·'; margin-right: 12px; }
-.table-wrap:not(.gallery) .item-text { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); column-gap: 12px; row-gap: 4px; align-items: baseline; }
+/* Both columns shrink together, so a short domain stays whole and the title truncates. */
+.table-wrap:not(.gallery) .item-text { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); column-gap: 12px; row-gap: 4px; align-items: baseline; }
 .table-wrap:not(.gallery) .item-metadata { display: contents; }
 .table-wrap:not(.gallery) .item-url { font-size: 12px; font-weight: 500; color: #aaa; }
 .table-wrap:not(.gallery) .item-age { grid-column: 1 / -1; color: #777; }
@@ -158,25 +172,43 @@ dialog::backdrop { background: transparent; }
 dialog h2 { margin-bottom: 32px; }
 dialog label { display: block; margin: 24px 0; }
 dialog input, dialog select { display: block; width: 100%; margin-top: 8px; }
+dialog textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 0; resize: vertical; }
 dialog p { overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 24px; margin-top: 32px; }
 .error:not(:empty) { border-left: 1px solid currentColor; padding-left: 12px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: 80vw; padding: 12px 20px; background: #fff; border: 1px solid currentColor; z-index: 10; }
 #toast { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
 .toast-action { text-decoration: underline; text-underline-offset: 4px; }
+.chat-panel { position: fixed; inset: 0 0 0 auto; z-index: 5; width: 460px; max-width: 100vw; padding: 24px; background: #fff; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.chat-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.chat-note, #chat-status { color: var(--muted); overflow-wrap: anywhere; }
+.chat-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; }
+#chat-progress { width: 100%; height: 4px; accent-color: #555; }
+#chat-messages { flex: 1; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
+.chat-message { border-top: 1px solid var(--line); padding: 16px 0; }
+.chat-message h3 { font: inherit; margin: 0 0 12px; color: var(--muted); }
+.chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-message details { margin-top: 12px; color: var(--muted); }
+.chat-message summary { cursor: pointer; }
+.chat-message details a { display: block; margin-top: 8px; overflow-wrap: anywhere; }
+#chat-form { border-top: 1px solid var(--line); padding-top: 16px; }
+#chat-question { display: block; resize: vertical; width: 100%; margin: 12px 0; padding: 8px; font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 [hidden] { display: none !important; }
 
 @media (max-width: 1000px) {
-  .sidebar { width: 210px; }
-  .topbar { padding: 20px 24px; }
-  .workspace { padding: 24px; }
+  :root { --side: 176px; --gutter: 32px; }
+  body { padding: 0 24px; }
   .heading { align-items: flex-start; flex-direction: column; }
 }
 @media (max-width: 650px) {
-  .sidebar { width: 160px; padding: 20px 8px; }
-  .topbar { padding: 16px; flex-wrap: wrap; gap: 12px; }
-  .workspace { padding: 20px 16px; }
+  :root { --side: 150px; --gutter: 20px; }
+  .nav-all { padding-right: 10px; }
+  body { padding: 0 16px; }
+  .topbar { flex-wrap: wrap; gap: 12px 20px; padding: 14px 0; }
+  .brand { flex-basis: auto; }
+  .search { order: 3; flex-basis: 100%; max-width: none; }
+  .workspace { padding: 20px 0; }
   .actions { flex-wrap: wrap; gap: 16px; }
   .heading { margin: 24px 0; }
   .list-toolbar { flex-wrap: wrap; gap: 8px; }

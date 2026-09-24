@@ -1,4 +1,6 @@
-import { safeURL, exportHTML, parseHTML, parseJSON } from './bookmarks.js';
+import './browser-api.js';
+import { safeURL, cleanAbstract, exportHTML, parseHTML, parseJSON } from './bookmarks.js';
+import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
 const library = createLibraryStore(browser);
@@ -136,7 +138,7 @@ function render() {
   const current = state.nodes.get(state.folder);
   const showLocation = !current;
   document.querySelector('.location-column').hidden = !showLocation;
-  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)}`.toLowerCase().includes(query))
+  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''}`.toLowerCase().includes(query))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
   if (sort !== 'default') nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
@@ -163,7 +165,7 @@ function render() {
       link = element('a', 'item-title', title(node));
       const url = safeURL(node.url);
       if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-      else { link.title = 'This URL cannot be opened here. Use Firefox’s native manager for special bookmark URLs.'; }
+      else { link.title = 'This URL cannot be opened here. Use your browser’s bookmark manager for special bookmark URLs.'; }
     }
     link.title ||= title(node);
     const metadata = element('div', 'item-metadata');
@@ -234,6 +236,8 @@ function openEditor(node = null, folder = false) {
   $('edit-url').value = node?.url || '';
   $('url-field').hidden = isDir;
   $('edit-url').required = !isDir;
+  $('abstract-field').hidden = isDir;
+  $('edit-abstract').value = node?.abstract || '';
   $('editor-error').textContent = '';
   fillFolders($('edit-parent'), new Set(node ? [node.id] : []), node?.parentId || defaultFolder());
   $('editor').showModal(); $('edit-name').focus();
@@ -264,7 +268,7 @@ async function removeItems(ids) {
   const childCount = ids.reduce((count, id) => count + descendants(state.nodes.get(id)), 0);
   const subject = single ? `“${title(single)}”` : `${ids.length} selected items`;
   const contents = childCount ? ` This also deletes all ${childCount} nested items, including every bookmark and subfolder inside. Are you OK with deleting all of them?` : '';
-  if (!await confirmAction(folder ? 'Delete folder?' : 'Delete bookmarks?', `Delete ${subject} from Marked?${contents} Firefox bookmarks will not change. You can undo using the message shown after deletion.`, folder ? 'Delete folder' : 'Delete')) return;
+  if (!await confirmAction(folder ? 'Delete folder?' : 'Delete bookmarks?', `Delete ${subject} from Marked?${contents} Your browser’s own bookmarks will not change. You can undo using the message shown after deletion.`, folder ? 'Delete folder' : 'Delete')) return;
   const deleted = await library.removeMany(ids);
   state.selected.clear(); await load();
   toast('Deleted from Marked.', async () => {
@@ -281,7 +285,7 @@ $('editor-form').addEventListener('submit', async event => {
     const folder = $('url-field').hidden;
     const url = folder ? undefined : safeURL($('edit-url').value.trim());
     if (!folder && !url) throw new Error('Use an http, https, ftp, or file URL.');
-    const changes = { title: name, ...(folder ? {} : { url }) };
+    const changes = { title: name, ...(folder ? {} : { url, abstract: cleanAbstract($('edit-abstract').value) }) };
     if (pendingPreview) {
       changes.preview = !folder && $('save-preview').checked && url === pendingPreviewURL ? pendingPreview : null;
     }
@@ -306,21 +310,36 @@ $('move-form').addEventListener('submit', async event => {
   } catch (error) { $('move-error').textContent = error.message; }
   finally { event.submitter.disabled = false; }
 });
-$('export').addEventListener('click', () => {
-  const blob = new Blob([exportHTML(state.root)], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = element('a'); link.href = url; link.download = `marked-bookmarks-${new Date().toISOString().slice(0, 10)}.html`;
+function download(contents, type, name, extension) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const link = element('a'); link.href = url; link.download = `${name}-${new Date().toISOString().slice(0, 10)}.${extension}`;
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+$('export').addEventListener('click', () => {
+  download(exportHTML(state.root), 'text/html;charset=utf-8', 'marked-bookmarks', 'html');
   toast('Exported your complete bookmark collection.');
+});
+// Each browser keeps its own Marked library. A backup keeps dates and previews,
+// which HTML exports drop, so a library can move between Firefox and Chrome.
+$('backup').addEventListener('click', () => {
+  download(exportBackup(state.root), 'application/json', 'marked-backup', 'json');
+  toast('Backup downloaded. Import it into Marked in another browser to move your library.');
 });
 $('import').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async () => {
   const file = $('import-file').files[0]; $('import-file').value = '';
   if (!file) return;
   try {
-    if (file.size > 25 * 1024 * 1024) throw new Error('Choose a bookmark export smaller than 25 MB.');
+    const json = file.name.toLowerCase().endsWith('.json');
+    // Marked backups include previews, so allow them to be larger.
+    if (file.size > (json ? 250 : 25) * 1024 * 1024) throw new Error(`Choose a bookmark file smaller than ${json ? 250 : 25} MB.`);
     const text = await file.text();
-    const { nodes, skipped } = file.name.toLowerCase().endsWith('.json') ? parseJSON(text) : parseHTML(text);
+    let parsed;
+    if (json) {
+      const data = JSON.parse(text);
+      parsed = data?.format === 'marked' ? parseBackup(data) : parseJSON(data);
+    } else parsed = parseHTML(text);
+    const { nodes, skipped } = parsed;
     if (!nodes.length) throw new Error('No supported bookmarks or folders found.');
     let count = 0; const countNodes = list => list.forEach(n => { count++; if (n.children) countNodes(n.children); }); countNodes(nodes);
     const parentId = defaultFolder();
@@ -331,6 +350,12 @@ $('import-file').addEventListener('change', async () => {
   } catch (error) {
     fail(error);
   } finally { $('import').disabled = false; load().catch(fail); }
+});
+$('chat-toggle').addEventListener('click', async () => {
+  try {
+    const { openChat } = await import('./chat.js');
+    await openChat(() => state.root);
+  } catch (error) { fail(error); }
 });
 $('all-bookmarks').addEventListener('click', () => navigate(null));
 $('new-bookmark').addEventListener('click', () => openEditor());
@@ -371,14 +396,17 @@ Promise.all([load(), browser.storage.local.get('markedView').then(saved => {
   openEditor();
   $('edit-name').value = params.get('title') || url;
   $('edit-url').value = url;
-  const key = params.get('preview');
-  if (key?.startsWith('preview-')) {
+  const key = params.get('capture');
+  if (key?.startsWith('capture-')) {
     try {
       const capture = (await browser.storage.session.get(key))[key];
       await browser.storage.session.remove(key);
-      if ($('editor').open && capture?.url === url && Date.now() - capture.createdAt < 60000 && validPreview(capture.preview)) {
-        pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview();
+      if ($('editor').open && capture?.url === url && Date.now() - capture.createdAt < 60000) {
+        if (validPreview(capture.preview)) { pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview(); }
+        // Don't overwrite anything typed while the capture was loading.
+        const abstract = cleanAbstract(capture.abstract);
+        if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;
       }
-    } catch { /* Preview is optional; the bookmark can still be saved. */ }
+    } catch { /* Captures are optional; the bookmark can still be saved. */ }
   }
 }).catch(fail);

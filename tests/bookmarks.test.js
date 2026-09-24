@@ -22,6 +22,15 @@ test('HTML export round trips hierarchy, separators, and escaped text', () => {
   assert.ok(!html.includes('<script>'));
   assert.deepEqual(parseHTML(html, Parser), { nodes, skipped: 0 });
 });
+test('HTML export and import keep abstracts as bookmark descriptions', () => {
+  const nodes = [{ title: 'Folder', children: [{ title: 'Paper', url: 'https://example.com/', abstract: 'About <world> models & agents' }] }];
+  const html = exportHTML({ children: nodes });
+  assert.ok(html.includes('<DD>About &lt;world&gt; models &amp; agents'));
+  assert.deepEqual(parseHTML(html, Parser).nodes, nodes);
+  // Firefox also writes folder descriptions, which are not bookmark abstracts.
+  const firefox = '<DL><p><DT><H3>Work</H3>\n<DD>Folder notes\n<DL><p><DT><A HREF="https://example.org/">Doc</A>\n<DD>Doc notes\n</DL><p></DL>';
+  assert.deepEqual(parseHTML(firefox, Parser).nodes, [{ title: 'Work', children: [{ title: 'Doc', url: 'https://example.org/', abstract: 'Doc notes' }] }]);
+});
 test('unsafe imports are skipped', () => {
   const result = parseHTML('<DL><DT><A HREF="javascript:alert(1)">Bad</A><DT><A HREF="https://example.com">Good</A></DL>', Parser);
   assert.equal(result.skipped, 1);
@@ -32,6 +41,10 @@ test('reads Firefox JSON backups without duplicating places root', () => {
   assert.equal(result.nodes[0].title, 'Toolbar');
   assert.equal(result.nodes[0].children[0].url, 'https://example.com/');
   assert.equal(result.nodes[0].children[1].type, 'separator');
+});
+test('reads already-parsed JSON data', () => {
+  const result = parseJSON({ title: 'Folder', children: [{ title: 'A', url: 'https://example.com' }] });
+  assert.equal(result.nodes[0].children[0].url, 'https://example.com/');
 });
 test('rejects invalid documents', () => {
   assert.throws(() => parseHTML('<html>not bookmarks</html>', Parser));

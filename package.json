@@ -1,15 +1,20 @@
 {
-  "name": "marked-firefox",
+  "name": "marked",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "lint:extension": "web-ext lint --source-dir . --ignore-files 'node_modules/**' 'tests/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'",
-    "build": "web-ext build --source-dir . --overwrite-dest --ignore-files 'node_modules/**' 'tests/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'"
+    "bundle:ai": "node scripts/bundle-ai.js",
+    "lint:extension": "web-ext lint --source-dir . --ignore-files 'node_modules/**' 'tests/**' 'scripts/**' 'ai/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'",
+    "build": "npm run bundle:ai && web-ext build --source-dir . --overwrite-dest --ignore-files 'node_modules/**' 'tests/**' 'scripts/**' 'ai/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "jsdom": "^26.1.0",
     "web-ext": "^10.7.0"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "0.2.85"
   }
 }

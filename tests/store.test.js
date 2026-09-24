@@ -97,6 +97,21 @@ test('stores local previews, preserves them through undo, and clears stale previ
   assert.equal(unsafe.preview, undefined);
 });
 
+test('stores cleaned abstracts on bookmarks and lets edits change or clear them', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const saved = async id => (await store.getTree())[0].children[0].children.find(n => n.id === id);
+  const node = await store.create({ parentId: 'home', title: 'Paper', url: 'https://example.test/', abstract: '  World   models\n in imagination ' });
+  assert.equal(node.abstract, 'World models in imagination');
+  const folder = await store.create({ parentId: 'home', title: 'Folder', type: 'folder', abstract: 'Folders have none' });
+  assert.equal(folder.abstract, undefined);
+  await store.update(node.id, { title: 'Renamed' });
+  assert.equal((await saved(node.id)).abstract, 'World models in imagination');
+  await store.update(node.id, { title: 'Paper', url: node.url, abstract: 'x'.repeat(5000) });
+  assert.equal((await saved(node.id)).abstract.length, 2000);
+  await store.update(node.id, { title: 'Paper', url: node.url, abstract: '   ' });
+  assert.equal('abstract' in await saved(node.id), false);
+});
+
 test('imports an entire hierarchy atomically into local storage', async () => {
   const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
   const nodes = [{ title: 'Nested', children: [{ title: 'Site', url: 'https://example.org/' }] }];

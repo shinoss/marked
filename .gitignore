@@ -1,6 +1,7 @@
 # Dependencies and generated output
 node_modules/
 web-ext-artifacts/
+vendor/
 coverage/
 *.log
 

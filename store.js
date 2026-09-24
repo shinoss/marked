@@ -1,5 +1,8 @@
+import { cleanAbstract } from './bookmarks.js';
+
 // The bookmarks permission is used only to seed the library on first upgrade.
-// All subsequent reads and writes use extension-local storage, never Firefox.
+// All subsequent reads and writes use extension-local storage, never the
+// browser's own bookmarks.
 export const STORAGE_KEY = 'markedLibraryV1';
 const LOCK = 'marked-library-write';
 
@@ -17,7 +20,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
       const saved = await read();
       if (saved) return saved;
       // Persist successfully before showing the snapshot. A failed snapshot/save
-      // never falls back to editing Firefox or replaces an existing library.
+      // never falls back to editing browser bookmarks or replaces an existing library.
       const [root] = await api.bookmarks.getTree();
       const library = { version: 1, capturedAt: Date.now(), root };
       await api.storage.local.set({ [STORAGE_KEY]: library });
@@ -58,8 +61,12 @@ export function createLibraryStore(api, locks = navigator.locks) {
   function add(root, details) {
     const parent = destination(root, details.parentId);
     const type = details.type || (details.url ? 'bookmark' : 'folder');
-    const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded: Date.now(), ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
+    // Restored backups keep their original dates; everything else is new.
+    const dateAdded = Number.isFinite(details.dateAdded) && details.dateAdded > 0 ? details.dateAdded : Date.now();
+    const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
     if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
+    const abstract = type === 'bookmark' ? cleanAbstract(details.abstract) : '';
+    if (abstract) node.abstract = abstract;
     parent.children.push(node);
     return node;
   }
@@ -85,6 +92,10 @@ export function createLibraryStore(api, locks = navigator.locks) {
           delete node.preview;
         }
         if (changes.preview === null) delete node.preview;
+        if (changes.abstract !== undefined && node.url) {
+          const abstract = cleanAbstract(changes.abstract);
+          if (abstract) node.abstract = abstract; else delete node.abstract;
+        }
       });
     },
     moveMany(ids, parentId) { return mutate(root => ids.forEach(id => move(root, id, parentId))); },

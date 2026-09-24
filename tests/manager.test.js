@@ -49,3 +49,35 @@ test('manager renders, searches, creates, and moves bookmarks through the API', 
   await new Promise(resolve => setTimeout(resolve, 6100));
   dom.window.close();
 });
+
+test('Add to Marked fills the editable abstract from the page capture and saves it', async () => {
+  const pageURL = 'https://example.com/post';
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html?add=${encodeURIComponent(pageURL)}&title=Post&capture=capture-1` });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [] }] });
+  const session = { 'capture-1': { url: pageURL, abstract: 'Agents that learn by imagining outcomes.', createdAt: Date.now() } };
+  mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js?add');
+  const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  await settle();
+  assert.ok($('editor').open);
+  assert.equal($('abstract-field').hidden, false);
+  assert.equal($('edit-abstract').value, 'Agents that learn by imagining outcomes.');
+  assert.deepEqual(session, {}, 'the capture is consumed');
+  $('edit-abstract').value += ' Edited.';
+  $('editor-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('editor-form').querySelector('[type=submit]') }));
+  await settle();
+  const saved = (await browser.storage.local.get(STORAGE_KEY))[STORAGE_KEY].root.children.find(node => node.url === pageURL);
+  assert.equal(saved.abstract, 'Agents that learn by imagining outcomes. Edited.');
+  $('search').value = 'imagining'; $('search').dispatchEvent(new dom.window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal($('items').children.length, 1, 'search matches abstract text');
+  await new Promise(resolve => setTimeout(resolve, 6100));
+  dom.window.close();
+});

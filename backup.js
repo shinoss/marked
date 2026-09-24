@@ -1,0 +1,26 @@
+import { safeURL, cleanAbstract } from './bookmarks.js';
+
+export function exportBackup(root) {
+  return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] });
+}
+export function parseBackup(data) {
+  if (data?.format !== 'marked' || data.version !== 1 || !Array.isArray(data.children)) throw new Error('Unsupported Marked backup.');
+  let count = 0, skipped = 0;
+  function convert(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 100 || ++count > 100000) throw new Error('Invalid or excessively large bookmark hierarchy.');
+    const result = { title: String(node.title || 'Untitled').slice(0, 2000) };
+    if (Number.isFinite(node.dateAdded) && node.dateAdded > 0 && node.dateAdded <= 8640000000000000) result.dateAdded = node.dateAdded;
+    if (node.type === 'separator') return { ...result, type: 'separator' };
+    if (node.url) {
+      result.url = safeURL(node.url);
+      if (!result.url) { skipped++; return null; }
+      if (typeof node.preview === 'string' && node.preview.length < 500000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(node.preview)) result.preview = node.preview;
+      const abstract = cleanAbstract(node.abstract);
+      if (abstract) result.abstract = abstract;
+    } else if (Array.isArray(node.children)) {
+      result.children = node.children.map(child => convert(child, depth + 1)).filter(Boolean);
+    } else throw new Error('A backup item is missing its URL or folder contents.');
+    return result;
+  }
+  return { nodes: data.children.map(node => convert(node, 0)).filter(Boolean), skipped };
+}

@@ -9,18 +9,18 @@
   <script type="module" src="manager.js"></script>
 </head>
 <body>
+  <header class="topbar">
+    <a class="brand" href="manager.html"><img src="icons/marked.svg" alt="" width="20" height="20">Marked</a>
+    <label class="search"><input id="search" type="search" placeholder="Search all bookmarks…" aria-label="Search all bookmarks" aria-keyshortcuts="/"><span class="search-hint" title="Press / to focus search"><kbd>/</kbd></span></label>
+    <div class="transfer"><button id="chat-toggle" aria-expanded="false" aria-controls="chat-panel">Chat</button><button id="import">Import</button><button id="export">Export</button><button id="backup" title="Download all bookmarks, dates, and previews for migration">Backup</button></div>
+    <input id="import-file" type="file" accept=".html,.htm,.json,text/html,application/json" hidden>
+  </header>
   <aside class="sidebar">
-    <a class="brand" href="manager.html"><img src="icons/marked.svg" alt="" width="28" height="28">Marked</a>
     <button id="all-bookmarks" class="nav-all"><span>All bookmarks</span><span id="total" class="count"></span></button>
     <div class="section-label">Folders<button id="sidebar-add" title="New folder" aria-label="New folder">+</button></div>
     <nav id="folder-tree" aria-label="Bookmark folders"></nav>
   </aside>
   <main>
-    <header class="topbar">
-      <label class="search"><input id="search" type="search" placeholder="Search all bookmarks…" aria-label="Search all bookmarks" aria-keyshortcuts="/"><span class="search-hint" title="Press / to focus search"><kbd>/</kbd></span></label>
-      <div class="transfer"><button id="import">Import</button><button id="export">Export</button></div>
-      <input id="import-file" type="file" accept=".html,.htm,.json,text/html,application/json" hidden>
-    </header>
     <section class="workspace">
       <nav id="breadcrumbs" aria-label="Breadcrumb"></nav>
       <div class="heading"><h1 id="page-title">All bookmarks</h1><div class="actions"><button id="new-folder">New folder</button><button id="new-bookmark" class="primary">Add bookmark</button></div></div>
@@ -30,7 +30,18 @@
       <footer class="workspace-footer"><span id="visible-count"></span></footer>
     </section>
   </main>
-  <dialog id="editor"><form id="editor-form"><h2 id="editor-title"></h2><label>Name<input id="edit-name" required maxlength="2000" autocomplete="off"></label><label id="url-field">URL<input id="edit-url" type="url" placeholder="https://example.com" autocomplete="off"></label><label>Folder<select id="edit-parent"></select></label><div id="preview-field" hidden><img id="edit-preview" alt="Page capture preview"><label class="preview-choice"><input id="save-preview" type="checkbox"> Save preview</label><p>Includes visible page content. Stored only in Marked.</p></div><p id="editor-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" data-close="editor">Cancel</button><button class="primary" type="submit">Save</button></div></form></dialog>
+  <aside id="chat-panel" class="chat-panel" aria-label="Local bookmark chat" hidden>
+    <header class="chat-heading"><h2>Local chat · experimental</h2><button id="chat-close" aria-label="Close chat">Close</button></header>
+    <p class="chat-note">Qwen3 4B · 4-bit · about 2.3 GB download. Requires WebGPU and several GB of free memory; 16 GB Mac recommended. Model data downloads from Hugging Face. Bookmarks and chat stay on this device.</p>
+    <p class="chat-note">Uses a small, relevant sample of titles, domains, folders and saved abstracts—not full pages or screenshots. Connections may be wrong. Closing this panel keeps the model loaded; Unload releases GPU memory.</p>
+    <div class="chat-controls"><button id="chat-start">Download / load model</button><button id="chat-unload" disabled>Unload</button><button id="chat-delete-model">Remove download</button></div>
+    <progress id="chat-progress" max="1" value="0" aria-label="Model loading progress" hidden></progress>
+    <p id="chat-status" role="status">Checking WebGPU…</p>
+    <div class="chat-controls"><button id="chat-clear">Clear chat</button></div>
+    <div id="chat-messages" role="log" aria-label="Conversation" aria-live="off"></div>
+    <form id="chat-form"><label for="chat-question">Ask about your bookmarks</label><textarea id="chat-question" rows="3" maxlength="650" placeholder="What unexpected connections do you see?" aria-describedby="chat-hint" disabled></textarea><div class="chat-controls"><span id="chat-hint" class="chat-note">Enter to send · Shift+Enter for a new line</span><button id="chat-stop" type="button" hidden>Stop</button></div></form>
+  </aside>
+  <dialog id="editor"><form id="editor-form"><h2 id="editor-title"></h2><label>Name<input id="edit-name" required maxlength="2000" autocomplete="off"></label><label id="url-field">URL<input id="edit-url" type="url" placeholder="https://example.com" autocomplete="off"></label><label>Folder<select id="edit-parent"></select></label><label id="abstract-field">Abstract<textarea id="edit-abstract" rows="4" maxlength="2000" placeholder="What is this page about? Local chat uses this."></textarea></label><div id="preview-field" hidden><img id="edit-preview" alt="Page capture preview"><label class="preview-choice"><input id="save-preview" type="checkbox"> Save preview</label><p>Includes visible page content. Stored only in Marked.</p></div><p id="editor-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" data-close="editor">Cancel</button><button class="primary" type="submit">Save</button></div></form></dialog>
   <dialog id="move-dialog"><form id="move-form"><h2>Move selected items</h2><label>Destination folder<select id="move-parent"></select></label><p id="move-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" data-close="move-dialog">Cancel</button><button class="primary" type="submit">Move</button></div></form></dialog>
   <dialog id="confirm-dialog"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button id="confirm-accept" value="accept" class="primary">Continue</button></div></form></dialog>
   <div id="toast" role="status" hidden></div>

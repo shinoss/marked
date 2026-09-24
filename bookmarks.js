@@ -6,6 +6,12 @@ export function safeURL(value) {
   } catch { return null; }
 }
 
+// A short plain-text description of a bookmarked page, saved for local chat.
+export const ABSTRACT_LIMIT = 2000;
+export function cleanAbstract(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, ABSTRACT_LIMIT) : '';
+}
+
 export function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
@@ -15,7 +21,9 @@ export function exportHTML(root) {
     const pad = '    '.repeat(depth);
     return nodes.map(node => {
       const title = escapeHTML(node.title || node.url || 'Untitled');
-      if (node.url) return `${pad}<DT><A HREF="${escapeHTML(node.url)}">${title}</A>`;
+      // <DD> is the Netscape bookmark format's description field.
+      const abstract = cleanAbstract(node.abstract);
+      if (node.url) return `${pad}<DT><A HREF="${escapeHTML(node.url)}">${title}</A>${abstract ? `\n${pad}<DD>${escapeHTML(abstract)}` : ''}`;
       if (node.type === 'separator') return `${pad}<HR>`;
       return `${pad}<DT><H3>${title}</H3>\n${pad}<DL><p>\n${entries(node.children || [], depth + 1)}\n${pad}</DL><p>`;
     }).join('\n');
@@ -23,9 +31,10 @@ export function exportHTML(root) {
   return '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n<TITLE>Bookmarks</TITLE>\n<H1>Bookmarks</H1>\n<DL><p>\n' + entries(root.children || [], 1) + '\n</DL><p>\n';
 }
 
-// Supports Firefox's JSON backup format and a bookmarks.getTree() JSON export.
-export function parseJSON(text) {
-  const data = JSON.parse(text);
+// Supports Firefox's JSON backup format and a bookmarks.getTree() JSON export,
+// as text or already-parsed data.
+export function parseJSON(input) {
+  const data = typeof input === 'string' ? JSON.parse(input) : input;
   let skipped = 0;
   let count = 0;
   function convert(node, depth = 0) {
@@ -55,7 +64,7 @@ export function parseJSON(text) {
 export function parseHTML(text, Parser = DOMParser) {
   const doc = new Parser().parseFromString(text, 'text/html');
   const root = doc.querySelector('dl');
-  if (!root) throw new Error('No bookmark list found. Choose a Firefox bookmarks HTML export.');
+  if (!root) throw new Error('No bookmark list found. Choose a bookmarks HTML export from Chrome, Firefox, or Marked.');
   let skipped = 0;
   let count = 0;
   function parseList(list, depth = 0) {
@@ -82,7 +91,13 @@ export function parseHTML(text, Parser = DOMParser) {
           folder = null;
         } else if (el.tagName === 'HR') {
           nodes.push({ type: 'separator' });
-        } else if (['DT', 'DD', 'P'].includes(el.tagName)) walk(el);
+        } else if (el.tagName === 'DD') {
+          // A description follows its bookmark. Folder DDs may wrap the folder's DL.
+          const last = nodes.at(-1);
+          const text = cleanAbstract([...el.childNodes].filter(child => child.nodeType === 3).map(child => child.textContent).join(' '));
+          if (text && last?.url && !last.abstract) last.abstract = text;
+          walk(el);
+        } else if (['DT', 'P'].includes(el.tagName)) walk(el);
       }
     }
     walk(list);
