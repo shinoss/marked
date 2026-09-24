@@ -1,0 +1,33 @@
+# Dependencies and generated output
+node_modules/
+web-ext-artifacts/
+coverage/
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+
+# Browser profiles, private data, and local exports
+web-ext-profile*/
+.firefox-profile/
+profiles/
+backups/
+exports/
+screenshots/
+*.xpi
+*.zip
+
+# Editor and OS files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo

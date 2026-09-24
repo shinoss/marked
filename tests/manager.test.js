@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
+import { fixture } from './storage-fixture.js';
+import { STORAGE_KEY } from '../store.js';
+
+test('manager renders, searches, creates, and moves bookmarks through the API', async () => {
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const root = { id: 'root________', children: [{ id: 'toolbar_____', parentId: 'root________', title: 'Bookmarks Toolbar', children: [] }, { id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [{ id: 'a', parentId: 'unfiled_____', title: '<img onerror=alert(1)>', url: 'https://example.com/', type: 'bookmark' }, { id: 'folder', parentId: 'unfiled_____', title: 'Reading', children: [] }] }] };
+  const mock = fixture(root);
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js');
+  const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  await settle();
+  assert.equal($('items').children.length, 1);
+  assert.equal($('items').querySelector('img'), null, 'bookmark names are rendered as text');
+  $('gallery-view').click();
+  assert.equal(document.querySelector('.table-wrap').classList.contains('gallery'), true);
+  assert.equal($('gallery-view').getAttribute('aria-pressed'), 'true');
+  assert.equal($('items').querySelector('.card-preview').textContent, 'No preview');
+  $('list-view').click();
+  assert.equal(document.querySelector('.table-wrap').classList.contains('gallery'), false);
+  $('search').value = 'Reading'; $('search').dispatchEvent(new dom.window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal($('items').children.length, 1);
+  assert.equal($('items').querySelector('.item-title').textContent, 'Reading');
+  $('all-bookmarks').click(); $('new-bookmark').click();
+  $('edit-name').value = 'New bookmark'; $('edit-url').value = 'https://mozilla.org/';
+  $('editor-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('editor-form').querySelector('[type=submit]') }));
+  await settle();
+  assert.equal($('items').children.length, 2);
+  $('select-all').click(); $('move-selected').click(); $('move-parent').value = 'folder';
+  $('move-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('move-form').querySelector('[type=submit]') }));
+  await settle();
+  const saved = (await browser.storage.local.get(STORAGE_KEY))[STORAGE_KEY].root;
+  assert.equal(saved.children[1].children.find(n => n.id === 'folder').children.length, 2);
+  assert.equal(root.children[1].children.length, 2, 'Firefox collection is unchanged');
+  assert.equal(root.children[1].children[1].children.length, 0);
+  assert.equal(mock.reads(), 1);
+  // The status toast expires after six seconds; leave the document alive
+  // until the module's pending timer has completed.
+  await new Promise(resolve => setTimeout(resolve, 6100));
+  dom.window.close();
+});
