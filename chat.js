@@ -111,7 +111,7 @@ async function start({ automatic = false } = {}) {
     });
     if (version !== epoch) return;
     engine = loaded;
-    status('Ready · local WebGPU · uses titles, folders and saved abstracts. No pages are fetched.');
+    status('Ready · local WebGPU · uses titles, folders, tags, notes and saved abstracts. No pages are fetched.');
     cached = true; startLabel();
     $('chat-question').disabled = false; $('chat-question').focus();
   } catch (error) {
@@ -138,7 +138,8 @@ async function send(event) {
   message('You', question);
   const response = message('Marked', '');
   const details = document.createElement('details');
-  const summary = document.createElement('summary'); summary.textContent = `${context.sources.length} bookmarks supplied of ${context.total} · ${context.sources.filter(source => source.abstract).length} with abstracts`;
+  const summary = document.createElement('summary'); const withNotes = context.sources.filter(source => source.note).length;
+  summary.textContent = `${context.sources.length} bookmarks supplied of ${context.total} · ${context.sources.filter(source => source.abstract).length} with abstracts${withNotes ? ` · ${withNotes} with notes` : ''}`;
   details.append(summary);
   context.sources.forEach((source, index) => {
     const link = document.createElement('a'); link.textContent = `[${index + 1}] ${source.title}`;

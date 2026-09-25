@@ -1,20 +1,24 @@
 import './browser-api.js';
-import { safeURL, cleanAbstract, exportHTML, parseHTML, parseJSON } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, exportHTML, parseHTML, parseJSON, tweetId } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
+import { suggestTags, chooseTags } from './tagger.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
-const state = { root: null, nodes: new Map(), folder: null, selected: new Set(), expanded: new Set(), visible: [], editing: null };
+const state = { root: null, nodes: new Map(), folder: null, tag: null, tags: [], selected: new Set(), expanded: new Set(), visible: [], editing: null };
 let toastTimer, refreshTimer, loadVersion = 0;
 let view = 'list';
 let pendingPreview = null;
 let pendingPreviewURL = null;
+// Tags chosen in the open editor; suggestions never override the user's own picks.
+let editorTags = [], tagsTouched = false, editorSession = 0;
 const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const isFolder = node => node && !node.url && node.type !== 'separator';
 const protectedNode = node => node.id === state.root.id;
 const title = node => node.title || node.url || 'Untitled';
+const sameTag = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 function displayDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, '') || url; }
   catch { return url; }
@@ -80,9 +84,10 @@ function defaultFolder() {
 }
 async function load() {
   const version = ++loadVersion;
-  const [root] = await library.getTree();
+  const [[root], tags] = await Promise.all([library.getTree(), library.getTags()]);
   if (version !== loadVersion) return;
   state.root = root;
+  state.tags = tags;
   state.nodes.clear();
   function index(node) { state.nodes.set(node.id, node); node.children?.forEach(index); }
   index(root);
@@ -92,14 +97,44 @@ async function load() {
 }
 function navigate(id) {
   state.folder = id;
+  state.tag = null;
   state.selected.clear();
   $('search').value = '';
   if (id) ancestors(id).forEach(node => state.expanded.add(node.id));
   render();
 }
+function showTag(tag) {
+  state.tag = tag;
+  state.folder = null;
+  state.selected.clear();
+  $('search').value = '';
+  render();
+}
+function renderTags() {
+  const counts = new Map();
+  for (const node of state.nodes.values()) for (const tag of node.tags || []) counts.set(tag.toLowerCase(), (counts.get(tag.toLowerCase()) || 0) + 1);
+  $('tag-list').replaceChildren(...state.tags.map(tag => {
+    const row = element('div', 'folder-row tag-row');
+    const active = sameTag(state.tag, tag);
+    const link = button('', () => showTag(tag), `folder-link${active ? ' active' : ''}`);
+    link.title = tag;
+    if (active) link.setAttribute('aria-current', 'page');
+    link.append(element('span', 'folder-name', tag), element('span', 'count', counts.get(tag.toLowerCase()) || 0));
+    row.append(link, iconButton('trash', () => removeTag(tag).catch(fail), 'folder-delete', `Remove tag ${tag}`));
+    return row;
+  }));
+}
+async function removeTag(tag) {
+  const count = [...state.nodes.values()].filter(node => node.tags?.some(t => sameTag(t, tag))).length;
+  if (!await confirmAction('Remove tag?', `Remove “${tag}” from your tag list${count ? ` and from ${count} ${count === 1 ? 'bookmark' : 'bookmarks'}` : ''}? The bookmarks themselves are kept.`, 'Remove tag')) return;
+  await library.removeTag(tag);
+  if (sameTag(state.tag, tag)) state.tag = null;
+  await load(); toast(`Removed the tag “${tag}”.`);
+}
 function renderTree() {
   $('folder-tree').replaceChildren();
-  $('all-bookmarks').classList.toggle('active', !state.folder);
+  $('all-bookmarks').classList.toggle('active', !state.folder && !state.tag);
+  renderTags();
   $('total').textContent = [...state.nodes.values()].filter(n => n.url).length.toLocaleString();
   function append(node, depth) {
     const row = element('div', 'folder-row');
@@ -138,15 +173,18 @@ function render() {
   const current = state.nodes.get(state.folder);
   const showLocation = !current;
   document.querySelector('.location-column').hidden = !showLocation;
-  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''}`.toLowerCase().includes(query))
+  const tag = query ? null : state.tag;
+  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')}`.toLowerCase().includes(query))
+    : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
   if (sort !== 'default') nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
   state.visible = nodes;
   const visibleIds = new Set(nodes.map(n => n.id));
   for (const id of state.selected) if (!visibleIds.has(id)) state.selected.delete(id);
-  $('page-title').textContent = query ? 'Search results' : current ? title(current) : 'All bookmarks';
+  $('page-title').textContent = query ? 'Search results' : tag || (current ? title(current) : 'All bookmarks');
   $('breadcrumbs').replaceChildren(button('Library', () => navigate(null)));
+  if (tag) $('breadcrumbs').append(element('span', '', '/'), element('span', '', 'Tags'));
   if (current) for (const node of ancestors(current.id)) $('breadcrumbs').append(element('span', '', '/'), button(title(node), () => navigate(node.id)));
   const fragment = document.createDocumentFragment();
   for (const node of nodes) {
@@ -171,17 +209,35 @@ function render() {
     const metadata = element('div', 'item-metadata');
     const domain = element('span', 'item-url', isFolder(node) ? `${node.children?.length || 0} items` : displayDomain(node.url));
     if (node.url) domain.title = node.url;
-    metadata.append(domain);
+    const details = element('span', 'item-details');
     const age = relativeAge(node.dateAdded);
     if (age) {
       const added = element('time', 'item-age', age);
       added.dateTime = new Date(node.dateAdded).toISOString();
       added.title = new Date(node.dateAdded).toLocaleString();
-      metadata.append(added);
+      details.append(added);
     }
+    // Tags and the note marker share one line. Gallery cards keep the line even
+    // when empty so page cards are the same height; X posts show the note itself.
+    const labels = element('span', 'item-tags');
+    for (const tag of node.tags || []) labels.append(button(tag, () => showTag(tag), 'tag', `Show bookmarks tagged ${tag}`));
+    if (node.note) labels.append(button('Note', () => showNote(node), 'note-chip', `Show the note on ${title(node)}`));
+    if (!isFolder(node)) details.append(labels);
+    metadata.append(domain, details);
     text.append(link, metadata);
+    if (node.note) {
+      const note = element('p', 'item-note', node.note);
+      note.title = node.note;
+      text.append(note);
+    }
     const preview = element('div', 'card-preview');
-    if (validPreview(node.preview)) {
+    const tweet = view === 'gallery' && !isFolder(node) ? tweetId(node.url) : null;
+    // Only the gallery shows X's embed, so the list view never contacts X.
+    if (tweet) {
+      row.classList.add('tweet-row');
+      preview.classList.add('tweet');
+      preview.append(tweetEmbed(tweet));
+    } else if (validPreview(node.preview)) {
       const image = element('img'); image.src = node.preview; image.alt = ''; image.loading = 'lazy';
       preview.append(image);
     } else preview.append(element('span', '', isFolder(node) ? 'Folder' : 'No preview'));
@@ -196,10 +252,50 @@ function render() {
   $('items').replaceChildren(fragment);
   document.querySelector('.table-wrap').hidden = nodes.length === 0;
   $('empty').hidden = nodes.length > 0;
-  $('empty').querySelector('h2').textContent = query ? 'No bookmarks found' : 'No bookmarks yet';
-  $('empty').querySelector('p').textContent = query ? 'Try another name, URL, or folder.' : 'Add a bookmark or import your saved collection.';
-  $('visible-count').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
+  $('empty').querySelector('h2').textContent = query ? 'No bookmarks found' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
+  $('empty').querySelector('p').textContent = query ? 'Try another name, URL, folder, note, or tag.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
+}
+// X's official post embed. Its frame reports its height with a postMessage.
+// Heights X last reported, so a reload starts each post at its real size
+// instead of growing or shrinking. A per-browser convenience; safe to lose.
+const TWEET_HEIGHTS = 'markedTweetHeights';
+const tweetHeights = (() => {
+  try { return JSON.parse(document.defaultView.localStorage.getItem(TWEET_HEIGHTS)) || {}; } catch { return {}; }
+})();
+function tweetEmbed(id) {
+  const frame = element('iframe', 'tweet-embed');
+  frame.dataset.tweet = id;
+  // Unknown posts start collapsed rather than at a placeholder height.
+  frame.style.height = `${tweetHeights[id] || 0}px`;
+  frame.src = `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`;
+  frame.title = 'Post on X';
+  frame.loading = 'lazy';
+  frame.referrerPolicy = 'no-referrer';
+  frame.setAttribute('scrolling', 'no');
+  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+  return frame;
+}
+document.defaultView.addEventListener('message', event => {
+  if (event.origin !== 'https://platform.twitter.com') return;
+  let data = event.data;
+  try { if (typeof data === 'string') data = JSON.parse(data); } catch { return; }
+  const message = data?.['twttr.embed'];
+  const height = Number(message?.params?.[0]?.height);
+  if (message?.method !== 'twttr.private.resize' || !(height > 0 && height < 5000)) return;
+  const frame = [...document.querySelectorAll('iframe.tweet-embed')].find(f => f.contentWindow === event.source);
+  if (!frame) return;
+  frame.style.height = `${Math.ceil(height)}px`;
+  tweetHeights[frame.dataset.tweet] = Math.ceil(height);
+  try { document.defaultView.localStorage.setItem(TWEET_HEIGHTS, JSON.stringify(tweetHeights)); } catch {}
+});
+let noteNode = null;
+function showNote(node) {
+  noteNode = node;
+  $('note-title').textContent = title(node);
+  $('note-text').textContent = node.note;
+  $('note-dialog').showModal();
 }
 function renderSelection() {
   const count = state.selected.size;
@@ -238,9 +334,45 @@ function openEditor(node = null, folder = false) {
   $('edit-url').required = !isDir;
   $('abstract-field').hidden = isDir;
   $('edit-abstract').value = node?.abstract || '';
+  $('note-field').hidden = isDir;
+  $('edit-note').value = node?.note || '';
+  $('tags-field').hidden = isDir;
+  editorTags = node ? [...(node.tags || [])] : state.tag ? [state.tag] : [];
+  tagsTouched = false; editorSession++;
+  $('new-tag').value = ''; $('tags-hint').textContent = '';
+  renderTagOptions();
   $('editor-error').textContent = '';
   fillFolders($('edit-parent'), new Set(node ? [node.id] : []), node?.parentId || defaultFolder());
   $('editor').showModal(); $('edit-name').focus();
+}
+function renderTagOptions() {
+  $('edit-tags').replaceChildren(...cleanTags([...state.tags, ...editorTags], Infinity).map(tag => {
+    const chip = button(tag, () => {
+      tagsTouched = true;
+      editorTags = editorTags.some(t => sameTag(t, tag)) ? editorTags.filter(t => !sameTag(t, tag)) : [...editorTags, tag];
+      renderTagOptions();
+    }, 'tag-option');
+    chip.setAttribute('aria-pressed', String(editorTags.some(t => sameTag(t, tag))));
+    return chip;
+  }));
+}
+function addEditorTag() {
+  const tag = cleanTag($('new-tag').value);
+  $('new-tag').value = '';
+  if (!tag) return;
+  tagsTouched = true;
+  if (!editorTags.some(t => sameTag(t, tag))) editorTags.push(tag);
+  renderTagOptions();
+}
+// Adds likely tags from the fields; automatic runs defer to the user's own picks.
+async function suggestEditorTags(automatic = false) {
+  const session = editorSession;
+  const page = { title: $('edit-name').value, url: $('edit-url').value, abstract: $('edit-abstract').value };
+  const suggested = chooseTags(await suggestTags(page, state.tags));
+  if (session !== editorSession || !$('editor').open || (automatic && tagsTouched)) return;
+  for (const tag of suggested) if (!editorTags.some(t => sameTag(t, tag))) editorTags.push(tag);
+  renderTagOptions();
+  $('tags-hint').textContent = suggested.length ? `Suggested from the title, address, and abstract: ${suggested.join(', ')}.` : 'No tags matched. Choose tags yourself.';
 }
 function showEditorPreview() {
   $('preview-field').hidden = !pendingPreview;
@@ -285,7 +417,8 @@ $('editor-form').addEventListener('submit', async event => {
     const folder = $('url-field').hidden;
     const url = folder ? undefined : safeURL($('edit-url').value.trim());
     if (!folder && !url) throw new Error('Use an http, https, ftp, or file URL.');
-    const changes = { title: name, ...(folder ? {} : { url, abstract: cleanAbstract($('edit-abstract').value) }) };
+    if (!folder) addEditorTag();
+    const changes = { title: name, ...(folder ? {} : { url, abstract: cleanAbstract($('edit-abstract').value), note: cleanNote($('edit-note').value), tags: editorTags }) };
     if (pendingPreview) {
       changes.preview = !folder && $('save-preview').checked && url === pendingPreviewURL ? pendingPreview : null;
     }
@@ -358,6 +491,25 @@ $('chat-toggle').addEventListener('click', async () => {
   } catch (error) { fail(error); }
 });
 $('all-bookmarks').addEventListener('click', () => navigate(null));
+$('suggest-tags').addEventListener('click', () => suggestEditorTags().catch(fail));
+$('sidebar-add-tag').addEventListener('click', () => {
+  $('tag-name').value = ''; $('tag-error').textContent = '';
+  $('tag-dialog').showModal(); $('tag-name').focus();
+});
+$('tag-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const tag = await library.addTag($('tag-name').value);
+    $('tag-dialog').close(); await load(); toast(`Added the tag “${tag}”.`);
+  } catch (error) { $('tag-error').textContent = error.message; }
+});
+$('note-edit').addEventListener('click', () => { $('note-dialog').close(); if (noteNode) openEditor(noteNode); });
+// Enter adds the typed tag instead of submitting the editor.
+$('new-tag').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  addEditorTag();
+});
 $('new-bookmark').addEventListener('click', () => openEditor());
 $('new-folder').addEventListener('click', () => openEditor(null, true));
 $('sidebar-add').addEventListener('click', () => openEditor(null, true));
@@ -409,4 +561,5 @@ Promise.all([load(), browser.storage.local.get('markedView').then(saved => {
       }
     } catch { /* Captures are optional; the bookmark can still be saved. */ }
   }
+  await suggestEditorTags(true);
 }).catch(fail);

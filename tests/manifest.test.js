@@ -33,3 +33,13 @@ test('page capture needs only activeTab and scripting, not access to every site'
   assert.ok(manifest.permissions.includes('scripting'));
   assert.equal(manifest.host_permissions, undefined);
 });
+
+test('the tweet content script runs only in the top frame of x.com and twitter.com', async () => {
+  assert.equal(manifest.content_scripts.length, 1);
+  const [script] = manifest.content_scripts;
+  assert.deepEqual(script.matches, ['https://x.com/*', 'https://twitter.com/*']);
+  assert.deepEqual(script.js, ['tweet-capture.js']);
+  assert.equal(script.run_at, 'document_idle');
+  assert.equal(script.all_frames, false);
+  await exists(script.js[0]);
+});

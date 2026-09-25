@@ -12,6 +12,39 @@ export function cleanAbstract(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, ABSTRACT_LIMIT) : '';
 }
 
+// The user's own note on a bookmark. Unlike abstracts, notes keep line breaks.
+export const NOTE_LIMIT = 2000;
+export function cleanNote(value) {
+  return typeof value === 'string' ? value.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, NOTE_LIMIT) : '';
+}
+
+// Topic tags. Bookmark files separate tags with commas, so names can't contain them.
+export const TAG_LENGTH = 40;
+export const TAGS_PER_BOOKMARK = 12;
+export function cleanTag(value) {
+  return typeof value === 'string' ? value.replace(/[,\s]+/g, ' ').trim().slice(0, TAG_LENGTH).trim() : '';
+}
+// Deduplicates case-insensitively, keeping the first spelling.
+export function cleanTags(values, limit = TAGS_PER_BOOKMARK) {
+  const tags = [], seen = new Set();
+  for (const value of Array.isArray(values) ? values : []) {
+    const tag = cleanTag(value);
+    if (!tag || seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase()); tags.push(tag);
+    if (tags.length === limit) break;
+  }
+  return tags;
+}
+
+// The post ID of an X (Twitter) post URL such as https://x.com/<user>/status/<id>.
+export function tweetId(url) {
+  try {
+    const { hostname, pathname } = new URL(url);
+    if (!/^(?:(?:www|mobile)\.)?(?:x|twitter)\.com$/.test(hostname)) return null;
+    return pathname.match(/^\/[^/]+\/status(?:es)?\/(\d{1,25})(?:\/|$)/)?.[1] || null;
+  } catch { return null; }
+}
+
 export function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
@@ -23,7 +56,8 @@ export function exportHTML(root) {
       const title = escapeHTML(node.title || node.url || 'Untitled');
       // <DD> is the Netscape bookmark format's description field.
       const abstract = cleanAbstract(node.abstract);
-      if (node.url) return `${pad}<DT><A HREF="${escapeHTML(node.url)}">${title}</A>${abstract ? `\n${pad}<DD>${escapeHTML(abstract)}` : ''}`;
+      const tags = cleanTags(node.tags);
+      if (node.url) return `${pad}<DT><A HREF="${escapeHTML(node.url)}"${tags.length ? ` TAGS="${escapeHTML(tags.join(','))}"` : ''}>${title}</A>${abstract ? `\n${pad}<DD>${escapeHTML(abstract)}` : ''}`;
       if (node.type === 'separator') return `${pad}<HR>`;
       return `${pad}<DT><H3>${title}</H3>\n${pad}<DL><p>\n${entries(node.children || [], depth + 1)}\n${pad}</DL><p>`;
     }).join('\n');
@@ -81,7 +115,8 @@ export function parseHTML(text, Parser = DOMParser) {
           nodes.push(folder);
         } else if (el.tagName === 'A') {
           const url = safeURL(el.getAttribute('href'));
-          if (url) nodes.push({ title: el.textContent.trim() || url, url });
+          const tags = cleanTags((el.getAttribute('tags') || '').split(','));
+          if (url) nodes.push({ title: el.textContent.trim() || url, url, ...(tags.length && { tags }) });
           else skipped++;
           folder = null;
         } else if (el.tagName === 'DL') {

@@ -59,3 +59,17 @@ test('includes clipped abstracts and ranks bookmarks by abstract text', () => {
   assert.ok(new TextEncoder().encode(rows[0].abstract).length <= 300);
   assert.equal(rows[1].abstract, undefined);
 });
+
+test('gives chat the tags and note of each bookmark, and an overview of tags', () => {
+  const library = { children: [
+    { id: 'n', title: 'Some page', url: 'https://page.test/', tags: ['Fiction'], note: 'Gift idea for Sam', dateAdded: 100 },
+    { id: 'o', title: 'Other', url: 'https://other.test/', tags: ['Fiction', 'History'], dateAdded: 200 }
+  ] };
+  const context = buildChatContext(library, 'Any gift ideas?');
+  assert.equal(context.sources[0].id, 'n', 'notes are searched');
+  const system = context.messages[0].content;
+  const rows = JSON.parse(system.slice(system.lastIndexOf('\n') + 1));
+  assert.deepEqual(rows[0].tags, ['Fiction']);
+  assert.equal(rows[0].note, 'Gift idea for Sam');
+  assert.ok(system.includes('Tag overview: Fiction: 2; History: 1.'));
+});

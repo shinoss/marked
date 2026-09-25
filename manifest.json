@@ -11,6 +11,7 @@
   "action": { "default_title": "Open Marked", "default_icon": { "16": "icons/marked-16.png", "32": "icons/marked-32.png" } },
   "icons": { "16": "icons/marked-16.png", "32": "icons/marked-32.png", "48": "icons/marked-48.png", "128": "icons/marked-128.png" },
   "background": { "service_worker": "background.js", "scripts": ["background.js"], "type": "module" },
+  "content_scripts": [{ "matches": ["https://x.com/*", "https://twitter.com/*"], "js": ["tweet-capture.js"], "run_at": "document_idle", "all_frames": false }],
   "minimum_chrome_version": "123",
   "browser_specific_settings": {
     "gecko": {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLibraryStore } from '../store.js';
+import { createLibraryStore, DEFAULT_TAGS } from '../store.js';
 import { fixture } from './storage-fixture.js';
 const tree = () => ({ id: 'root', children: [{ id: 'home', parentId: 'root', title: 'Home', children: [{ id: 'a', parentId: 'home', title: 'Original', url: 'https://example.com' }, { id: 'folder', parentId: 'home', title: 'Folder', children: [] }] }] });
 
@@ -110,6 +110,34 @@ test('stores cleaned abstracts on bookmarks and lets edits change or clear them'
   assert.equal((await saved(node.id)).abstract.length, 2000);
   await store.update(node.id, { title: 'Paper', url: node.url, abstract: '   ' });
   assert.equal('abstract' in await saved(node.id), false);
+});
+
+test('keeps a tag list, saves tags and notes on bookmarks, and removes tags everywhere', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const saved = async id => (await store.getTree())[0].children[0].children.find(n => n.id === id);
+  assert.deepEqual(await store.getTags(), DEFAULT_TAGS);
+  const node = await store.create({ parentId: 'home', title: 'Paper', url: 'https://example.test/', tags: ['ai', 'Robotics', 'robotics'], note: '  For the  reading group ' });
+  assert.deepEqual(node.tags, ['ai', 'Robotics']);
+  assert.equal(node.note, 'For the reading group');
+  assert.deepEqual(await store.getTags(), [...DEFAULT_TAGS, 'Robotics'], 'new tags join the list; case-only duplicates do not');
+  const folder = await store.create({ parentId: 'home', title: 'Folder', type: 'folder', tags: ['AI'], note: 'Folders have none' });
+  assert.equal(folder.tags, undefined); assert.equal(folder.note, undefined);
+  await store.update(node.id, { title: 'Renamed' });
+  assert.deepEqual((await saved(node.id)).tags, ['ai', 'Robotics']);
+  await store.update(node.id, { title: 'Paper', url: node.url, tags: [], note: '' });
+  assert.equal('tags' in await saved(node.id), false);
+  assert.equal('note' in await saved(node.id), false);
+  await store.update(node.id, { title: 'Paper', url: node.url, tags: ['History', 'AI'] });
+  assert.equal(await store.removeTag('ai'), 1);
+  assert.deepEqual((await saved(node.id)).tags, ['History']);
+  assert.deepEqual(await store.getTags(), ['Technology', 'History', 'Fiction', 'Robotics']);
+  assert.equal(await store.addTag('  Cooking '), 'Cooking');
+  await assert.rejects(store.addTag('cooking'), /already a tag/);
+  await assert.rejects(store.addTag('   '), /Enter a tag name/);
+  assert.ok((await store.getTags()).includes('Cooking'));
+  const imported = await store.importTree([{ title: 'Novel', url: 'https://novel.test/', tags: ['Fiction', 'Poetry'] }], 'home', 'Imported');
+  assert.deepEqual(imported.children[0].tags, ['Fiction', 'Poetry']);
+  assert.ok((await store.getTags()).includes('Poetry'));
 });
 
 test('imports an entire hierarchy atomically into local storage', async () => {

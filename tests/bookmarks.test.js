@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { safeURL, parseHTML, parseJSON, exportHTML } from '../bookmarks.js';
+import { safeURL, parseHTML, parseJSON, exportHTML, cleanTags, cleanNote, tweetId } from '../bookmarks.js';
 const Parser = new JSDOM('').window.DOMParser;
 
 test('rejects executable and malformed URLs', () => {
@@ -30,6 +30,23 @@ test('HTML export and import keep abstracts as bookmark descriptions', () => {
   // Firefox also writes folder descriptions, which are not bookmark abstracts.
   const firefox = '<DL><p><DT><H3>Work</H3>\n<DD>Folder notes\n<DL><p><DT><A HREF="https://example.org/">Doc</A>\n<DD>Doc notes\n</DL><p></DL>';
   assert.deepEqual(parseHTML(firefox, Parser).nodes, [{ title: 'Work', children: [{ title: 'Doc', url: 'https://example.org/', abstract: 'Doc notes' }] }]);
+});
+test('HTML export and import keep tags in the TAGS attribute that Firefox uses', () => {
+  const nodes = [{ title: 'Paper', url: 'https://example.com/', tags: ['AI', 'Machine "learning"'] }];
+  const html = exportHTML({ children: nodes });
+  assert.ok(html.includes('TAGS="AI,Machine &quot;learning&quot;"'));
+  assert.deepEqual(parseHTML(html, Parser).nodes, nodes);
+  assert.deepEqual(parseHTML('<DL><DT><A HREF="https://example.org/" TAGS="history, ,History,war">War</A></DL>', Parser).nodes[0].tags, ['history', 'war']);
+});
+test('cleans tags, notes, and recognizes X post links', () => {
+  assert.deepEqual(cleanTags(['  AI ', 'ai', 'Deep,learning', '', 42, 'x'.repeat(60)]), ['AI', 'Deep learning', 'x'.repeat(40)]);
+  assert.equal(cleanTags(Array.from({ length: 20 }, (_, i) => `t${i}`)).length, 12);
+  assert.equal(cleanNote('  Read   later \r\n\r\n\r\n for the   talk  '), 'Read later\n\nfor the talk');
+  assert.equal(cleanNote(7), '');
+  assert.equal(tweetId('https://x.com/jack/status/20'), '20');
+  assert.equal(tweetId('https://twitter.com/a/status/123/photo/1?s=20'), '123');
+  assert.equal(tweetId('https://x.com/home'), null);
+  assert.equal(tweetId('https://example.com/a/status/1'), null);
 });
 test('unsafe imports are skipped', () => {
   const result = parseHTML('<DL><DT><A HREF="javascript:alert(1)">Bad</A><DT><A HREF="https://example.com">Good</A></DL>', Parser);

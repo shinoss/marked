@@ -1,10 +1,17 @@
-import { cleanAbstract } from './bookmarks.js';
+import { cleanAbstract, cleanNote, cleanTag, cleanTags } from './bookmarks.js';
 
 // The bookmarks permission is used only to seed the library on first upgrade.
 // All subsequent reads and writes use extension-local storage, never the
 // browser's own bookmarks.
 export const STORAGE_KEY = 'markedLibraryV1';
 const LOCK = 'marked-library-write';
+// The tag list lives beside the tree; libraries saved before tags start with these.
+export const DEFAULT_TAGS = ['Technology', 'AI', 'History', 'Fiction'];
+const TAG_LIST_LIMIT = 100;
+const tagList = library => Array.isArray(library.tags) ? cleanTags(library.tags, TAG_LIST_LIMIT) : [...DEFAULT_TAGS];
+function remember(library, tags) {
+  if (tags?.length) library.tags = cleanTags([...tagList(library), ...tags], TAG_LIST_LIMIT);
+}
 
 export function createLibraryStore(api, locks = navigator.locks) {
   async function read() {
@@ -53,7 +60,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
     await initialize();
     return locks.request(LOCK, async () => {
       const library = await read();
-      const result = action(library.root);
+      const result = action(library.root, library);
       await api.storage.local.set({ [STORAGE_KEY]: library });
       return result;
     });
@@ -65,8 +72,12 @@ export function createLibraryStore(api, locks = navigator.locks) {
     const dateAdded = Number.isFinite(details.dateAdded) && details.dateAdded > 0 ? details.dateAdded : Date.now();
     const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
     if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
-    const abstract = type === 'bookmark' ? cleanAbstract(details.abstract) : '';
-    if (abstract) node.abstract = abstract;
+    if (type === 'bookmark') {
+      const abstract = cleanAbstract(details.abstract), note = cleanNote(details.note), tags = cleanTags(details.tags);
+      if (abstract) node.abstract = abstract;
+      if (note) node.note = note;
+      if (tags.length) node.tags = tags;
+    }
     parent.children.push(node);
     return node;
   }
@@ -81,9 +92,16 @@ export function createLibraryStore(api, locks = navigator.locks) {
   }
   return {
     async getTree() { return [(await initialize()).root]; },
-    create(details) { return mutate(root => add(root, details)); },
+    async getTags() { return tagList(await initialize()); },
+    create(details) {
+      return mutate((root, library) => {
+        const node = add(root, details);
+        remember(library, node.tags);
+        return node;
+      });
+    },
     update(id, changes, parentId) {
-      return mutate(root => {
+      return mutate((root, library) => {
         const node = editable(root, id);
         if (parentId && node.parentId !== parentId) move(root, id, parentId);
         node.title = changes.title;
@@ -95,6 +113,15 @@ export function createLibraryStore(api, locks = navigator.locks) {
         if (changes.abstract !== undefined && node.url) {
           const abstract = cleanAbstract(changes.abstract);
           if (abstract) node.abstract = abstract; else delete node.abstract;
+        }
+        if (changes.note !== undefined && node.url) {
+          const note = cleanNote(changes.note);
+          if (note) node.note = note; else delete node.note;
+        }
+        if (changes.tags !== undefined && node.url) {
+          const tags = cleanTags(changes.tags);
+          if (tags.length) node.tags = tags; else delete node.tags;
+          remember(library, tags);
         }
       });
     },
@@ -137,12 +164,40 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
       });
     },
+    addTag(name) {
+      return mutate((root, library) => {
+        const tag = cleanTag(name), tags = tagList(library);
+        if (!tag) throw new Error('Enter a tag name.');
+        if (tags.some(existing => existing.toLowerCase() === tag.toLowerCase())) throw new Error(`“${tag}” is already a tag.`);
+        if (tags.length >= TAG_LIST_LIMIT) throw new Error(`Marked keeps up to ${TAG_LIST_LIMIT} tags. Remove one first.`);
+        remember(library, [tag]);
+        return tag;
+      });
+    },
+    // Removes a tag from the tag list and from every bookmark; returns how many had it.
+    removeTag(name) {
+      return mutate((root, library) => {
+        const key = cleanTag(name).toLowerCase();
+        library.tags = tagList(library).filter(tag => tag.toLowerCase() !== key);
+        let count = 0;
+        (function walk(node) {
+          const kept = node.tags?.filter(tag => tag.toLowerCase() !== key);
+          if (kept && kept.length !== node.tags.length) {
+            count++;
+            if (kept.length) node.tags = kept; else delete node.tags;
+          }
+          node.children?.forEach(walk);
+        })(root);
+        return count;
+      });
+    },
     importTree(nodes, parentId, title) {
-      return mutate(root => {
+      return mutate((root, library) => {
         const container = add(root, { parentId, title, type: 'folder' });
         function append(list, parentId) {
           for (const node of list) {
             const created = add(root, { ...node, parentId, type: node.type === 'separator' ? 'separator' : node.url ? 'bookmark' : 'folder' });
+            remember(library, created.tags);
             if (node.children) append(node.children, created.id);
           }
         }

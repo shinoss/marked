@@ -1,13 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
 
-let menu, onClick, onAction;
-const opened = [], focused = [];
+let onClick, onAction;
+const menus = [], opened = [], focused = [];
 let tabs = [];
 globalThis.browser = {
   contextMenus: {
     removeAll: async () => {},
-    create: details => { menu = details; },
+    create: details => { menus.push(details); },
     onClicked: { addListener: listener => { onClick = listener; } }
   },
   runtime: { getURL: path => `moz-extension://marked/${path}` },
@@ -23,7 +25,7 @@ globalThis.browser = {
 await import('../background.js');
 
 test('context menu opens a prefilled editor for the page, not the clicked link', async () => {
-  assert.equal(menu.title, 'Add to Marked');
+  assert.equal(menus[0].title, 'Add to Marked');
   await onClick({ menuItemId: 'add-to-marked', pageUrl: 'https://example.com/', linkUrl: 'https://other.test/' }, { url: 'https://example.com/?a=1&b=2', title: 'A & B' });
   const request = new URL(opened[0].url);
   assert.equal(request.searchParams.get('add'), 'https://example.com/?a=1&b=2');
@@ -65,4 +67,100 @@ test('saves the page abstract with the capture only while the tab still shows th
   assert.equal(opened.length, 3, 'the editor still opens without an abstract');
   assert.equal(new URL(opened[1].url).searchParams.get('capture'), null);
   assert.equal(new URL(opened[2].url).searchParams.get('capture'), null);
+});
+
+const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+const jack = { url: 'https://x.com/jack/status/20', author: 'jack', handle: 'jack', text: ' just setting up\nmy  twttr ' };
+const saveTweet = tab => onClick({ menuItemId: 'save-tweet-to-marked', pageUrl: 'https://x.com/home' }, tab);
+
+test('Save tweet to Marked is offered only where its content script runs', () => {
+  const item = menus.find(menu => menu.id === 'save-tweet-to-marked');
+  assert.equal(item.title, 'Save tweet to Marked');
+  assert.deepEqual(item.contexts, ['page', 'link', 'image', 'video', 'selection']);
+  assert.deepEqual(item.documentUrlPatterns, manifest.content_scripts[0].matches);
+});
+
+test('Save tweet to Marked opens the editor with the tweet under the pointer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  opened.length = 0;
+  const saved = {}, sent = [];
+  browser.storage.session.set = async value => Object.assign(saved, value);
+  browser.storage.session.remove = async () => {};
+  browser.tabs.sendMessage = async (...args) => { sent.push(args); return jack; };
+  await saveTweet({ id: 9, url: 'https://x.com/home', title: 'Home / X' });
+  assert.deepEqual(sent, [[9, { type: 'marked:tweet-under-pointer' }, { frameId: 0 }]]);
+  const request = new URL(opened[0].url);
+  assert.equal(request.searchParams.get('add'), 'https://x.com/jack/status/20');
+  assert.equal(request.searchParams.get('title'), 'jack (@jack) on X: “just setting up my twttr”');
+  const key = request.searchParams.get('capture');
+  assert.deepEqual({ ...saved[key], createdAt: 0 }, { url: 'https://x.com/jack/status/20', abstract: 'just setting up my twttr', createdAt: 0 });
+});
+
+test('tweet titles clip long text and fall back when the name or text is missing', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  browser.storage.session.set = async () => {};
+  const open = async reply => {
+    opened.length = 0;
+    browser.tabs.sendMessage = async () => ({ url: 'https://x.com/ada/status/1', ...reply });
+    await saveTweet({ id: 9 });
+    return new URL(opened[0].url).searchParams;
+  };
+  // 100 characters end inside the 17th word, so the title ends after the 16th.
+  const words = Array(16).fill('words').join(' ');
+  assert.equal((await open({ author: 'Ada', handle: 'ada', text: 'words '.repeat(30) })).get('title'), `Ada (@ada) on X: “${words}…”`);
+  assert.equal((await open({ author: 'Ada', handle: 'ada', text: '👍🏽'.repeat(150) })).get('title'), `Ada (@ada) on X: “${'👍🏽'.repeat(100)}…”`);
+  assert.equal((await open({ handle: 'ada', text: 'Hi' })).get('title'), '@ada on X: “Hi”');
+  const untitled = await open({ author: 'Ada', handle: 'ada', text: '' });
+  assert.equal(untitled.get('title'), 'Ada (@ada) on X');
+  assert.equal(untitled.get('capture'), null, 'nothing to hand over without text');
+});
+
+test('Save tweet to Marked opens nothing when no tweet was under the pointer', async () => {
+  opened.length = 0;
+  let injected;
+  browser.scripting = { executeScript: async details => { injected = details; } };
+  browser.tabs.sendMessage = async () => null;
+  await saveTweet({ id: 9 });
+  // The reply comes from the page's process, so its URL is checked as well.
+  browser.tabs.sendMessage = async () => ({ ...jack, url: 'https://example.com/jack/status/20' });
+  await saveTweet({ id: 9 });
+  assert.equal(opened.length, 0);
+  assert.equal(injected, undefined, 'the content script shows its own notice');
+});
+
+test('without its content script, Save tweet to Marked adds it and asks for another right-click', async t => {
+  t.mock.method(console, 'warn', () => {});
+  opened.length = 0;
+  const injected = [];
+  browser.scripting = { executeScript: async details => { injected.push(details); return []; } };
+  browser.tabs.sendMessage = async () => { throw new Error('Could not establish connection. Receiving end does not exist.'); };
+  await saveTweet({ id: 9 });
+  assert.equal(opened.length, 0);
+  assert.deepEqual(injected.map(details => details.target), [{ tabId: 9 }, { tabId: 9 }]);
+  assert.deepEqual(injected[0].files, ['tweet-capture.js'], 'the content script is added for the next right-click');
+  // executeScript serializes func, so it must work on its own in the page.
+  const { window } = new JSDOM('<body></body>', { runScripts: 'outside-only' });
+  const attachShadow = window.Element.prototype.attachShadow;
+  let shadow;
+  window.Element.prototype.attachShadow = function (init) { return shadow = attachShadow.call(this, init); };
+  window.setTimeout = () => {};
+  window.eval(`(${injected[1].func})(...${JSON.stringify(injected[1].args)})`);
+  assert.match(shadow.querySelector('[role="status"]').textContent, /^Marked is ready on this page now\. Right-click the tweet again/);
+});
+
+test('in Firefox, Save tweet to Marked asks for access to X while the click counts as user input', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const requested = [];
+  browser.permissions = { request: details => { requested.push(details); return Promise.resolve(true); } };
+  browser.storage.session.set = async () => {};
+  browser.tabs.sendMessage = async () => jack;
+  await saveTweet({ id: 9 });
+  assert.deepEqual(requested, [], 'Chrome grants content-script sites at install');
+  browser.runtime.getBrowserInfo = async () => ({ name: 'Firefox' });
+  try {
+    // The request must start synchronously in the click handler, before any await.
+    const pending = saveTweet({ id: 9 });
+    assert.deepEqual(requested, [{ origins: ['https://x.com/*', 'https://twitter.com/*'] }]);
+    await pending;
+  } finally { delete browser.runtime.getBrowserInfo; }
 });
