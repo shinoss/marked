@@ -4,6 +4,10 @@ import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHig
 // user imports them. The library lives in extension-local storage and never
 // changes the browser's own bookmarks.
 export const STORAGE_KEY = 'markedLibraryV1';
+// What web pages and the address bar need at a glance: each bookmark's address,
+// title, and highlights, without the previews the library holds. It is
+// rewritten with every change, so nothing reads the whole library on each page.
+export const INDEX_KEY = 'markedIndexV1';
 const LOCK = 'marked-library-write';
 // The tag list lives beside the tree; libraries saved before tags start with these.
 export const DEFAULT_TAGS = ['Technology', 'AI', 'History', 'Fiction'];
@@ -12,6 +16,19 @@ const tagList = library => Array.isArray(library.tags) ? cleanTags(library.tags,
 function remember(library, tags) {
   if (tags?.length) library.tags = cleanTags([...tagList(library), ...tags], TAG_LIST_LIMIT);
 }
+
+export function indexLibrary(root) {
+  const pages = [];
+  (function walk(node) {
+    if (node.url) {
+      const highlights = (node.highlights || []).map(({ id, text, note }) => ({ id, text, ...(note && { note }) }));
+      pages.push({ id: node.id, url: node.url, title: node.title || '', dateAdded: node.dateAdded || 0, ...(highlights.length && { highlights }) });
+    }
+    node.children?.forEach(walk);
+  })(root);
+  return { version: 1, pages };
+}
+const withIndex = library => ({ [STORAGE_KEY]: library, [INDEX_KEY]: indexLibrary(library.root) });
 
 export function createLibraryStore(api, locks = navigator.locks) {
   async function read() {
@@ -30,7 +47,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
       // bookmarks (importBrowser) instead of copying them unasked.
       const now = Date.now();
       const library = { version: 1, createdAt: now, root: { id: 'root', title: '', type: 'folder', dateAdded: now, children: [] } };
-      await api.storage.local.set({ [STORAGE_KEY]: library });
+      await api.storage.local.set(withIndex(library));
       return library;
     });
   }
@@ -61,7 +78,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
     return locks.request(LOCK, async () => {
       const library = await read();
       const result = action(library.root, library);
-      await api.storage.local.set({ [STORAGE_KEY]: library });
+      await api.storage.local.set(withIndex(library));
       return result;
     });
   }
@@ -92,6 +109,17 @@ export function createLibraryStore(api, locks = navigator.locks) {
   }
   return {
     async getTree() { return [(await initialize()).root]; },
+    // Libraries saved before the index existed get one the first time it's read.
+    async getIndex() {
+      const index = (await api.storage.local.get(INDEX_KEY))[INDEX_KEY];
+      if (index?.version === 1) return index;
+      await initialize();
+      return locks.request(LOCK, async () => {
+        const index = indexLibrary((await read()).root);
+        await api.storage.local.set({ [INDEX_KEY]: index });
+        return index;
+      });
+    },
     async getTags() { return tagList(await initialize()); },
     create(details) {
       return mutate((root, library) => {

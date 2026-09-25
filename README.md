@@ -72,6 +72,12 @@ Every highlight is collected on its bookmark, with its note:
   <img src="docs/images/highlights.png" width="880" alt="The highlights saved on a bookmark">
 </p>
 
+Open the page again and your highlights come back, marked in yellow. Hover over one to see your note. Notes appear only in Marked's own popup and never in the page's code, so the site can't read them.
+
+<p align="center">
+  <img src="docs/images/highlights-on-page.png" width="880" alt="Saved highlights marked again on a revisited page, with a note shown on hover">
+</p>
+
 ### Save posts from X
 
 Right-click a post on x.com and choose **Save tweet to Marked**. Marked saves the post under your pointer, not the page around it, with its text, author, and link. If the pointer isn't on a post, it tells you so instead of guessing.
@@ -79,6 +85,37 @@ Right-click a post on x.com and choose **Save tweet to Marked**. Marked saves th
 <p align="center">
   <img src="docs/images/save-tweet.png" width="880" alt="The editor, prefilled from a post on X">
 </p>
+
+### Marked while you browse
+
+Your library is a keystroke away from any tab.
+
+**Search from the address bar.** Type `mk`, a space, and a few words, and Marked suggests matching bookmarks as you type. Pick one to open it, or press <kbd>Enter</kbd> to search your library.
+
+<p align="center">
+  <img src="docs/images/address-bar.png" width="880" alt="Typing mk wiki in Firefox's address bar lists matching bookmarks from Marked">
+</p>
+
+**See what's saved.** The Marked button shows a ✓ on pages already in your library.
+
+<p align="center">
+  <img src="docs/images/saved-badge.png" width="880" alt="The Marked button in Firefox's toolbar shows a check on a saved Wikipedia page">
+</p>
+
+**Save with a keystroke.** Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> (<kbd>⌥</kbd>+<kbd>⇧</kbd>+<kbd>M</kbd> on a Mac) to add the page you're on. On a page you've already saved, it opens that bookmark instead of making a second copy.
+
+**Save a whole session.** **Save open tabs** puts every web page open in the window into a new folder, and can close them for you. Later, **Open all** brings the session back.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/save-tabs.png" alt="Saving the six pages open in the window, closing them afterwards"></td>
+    <td width="50%"><img src="docs/images/tabs-folder.png" alt="The saved session as a folder, with Open all"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Choose <b>Save open tabs</b></sub></td>
+    <td align="center"><sub>The session in a folder, ready to <b>Open all</b></sub></td>
+  </tr>
+</table>
 
 ### Ask your bookmarks, privately
 
@@ -92,13 +129,17 @@ Open **Chat** and ask questions like *"What unexpected connections do you see?"*
 
 Describe what you're looking for in the search box, such as *"that essay about protecting focus"*, and choose **Semantic**. Typing alone only matches keywords; each click asks TypeSafe's [Jev](https://typesafe.ai) model which bookmarks match, even when they share no words with your query, and puts them first, followed by ordinary keyword matches. It follows TypeSafe's [line-by-line search recipe](https://docs.typesafe.ai/cookbooks/semantic_find.md): each bookmark is one short line, a single request ranks up to 250 of them, and larger libraries are ranked in parallel windows and then merged. Bring your own API key: add it in **Settings**, and Marked checks it with a tiny request before saving it.
 
-Every request's cost is added to a running total, shown after each search (*"This search $0.000076 · $0.0042 in total"*) and in **Settings**, where you can reset it. The estimate uses the token counts TypeSafe reports, at $0.042 per million input tokens; output is free. A typical search of a few hundred bookmarks costs well under a tenth of a cent, and repeating a search costs nothing until your library changes.
+Every request's cost is added to a running total, shown after each search (*"This search $0.000076 · $0.0042 in total"*) and in **Settings**, where you can reset it. The estimate uses the token counts TypeSafe reports, at $0.042 per million input tokens; output is free. A typical search of a few hundred bookmarks costs well under a tenth of a cent, and repeating a search costs nothing until your library changes. **Settings** also estimates what one search of your whole library will cost, before you spend anything.
 
 ### Yours to keep
 
-- **Independent from your browser's bookmarks.** The first time you open Marked, it offers to import them, folders and all, and it never changes them.
+- **Your browser's bookmarks, brought along.** The first time you open Marked, it offers to import them, folders and all, skipping any it already has. It never changes them, and **Settings** brings in new ones later.
 - **Backup and move between browsers.** A backup keeps everything: folders, dates, previews, abstracts, notes, tags, and highlights. Import it into Marked in another browser, for example from Firefox to Chrome.
 - **Standard HTML export** for any other bookmark manager, with abstracts as descriptions and tags in Firefox's `TAGS` attribute.
+
+<p align="center">
+  <img src="docs/images/browser-import.png" width="880" alt="On first run, Marked offers to import the 48 bookmarks it found in Chrome">
+</p>
 
 ## Install
 
@@ -126,10 +167,12 @@ Open **Marked** from the browser's extensions menu. The first time, it offers to
 | --- | --- |
 | Save the page you're on | Right-click it and choose **Add to Marked**. Review the name, folder, tags, note, abstract, and preview, then **Save**. |
 | Save a post from X | Right-click the post and choose **Save tweet to Marked**. On x.com, Marked's items are grouped under **Marked — Bookmark Manager**. |
+| Save with the keyboard | Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> (<kbd>⌥</kbd>+<kbd>⇧</kbd>+<kbd>M</kbd> on a Mac). Change it at `chrome://extensions/shortcuts`, or in Firefox under **Manage Extension Shortcuts** in the add-ons page. |
 | Highlight a passage | Select text on any page and choose **Highlight**. Add a note if you like, then **Save highlight** (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd>). |
 | Read a note or highlights | Click the yellow **Note** or **N highlights** label on a bookmark. |
 | Tag bookmarks | Use the tag chips in the editor, or **Suggest**. Add new tags with **+** next to **Tags** in the sidebar. |
-| Find anything | Type in the search box, or press <kbd>/</kbd>. |
+| Find anything | Type in the search box, or press <kbd>/</kbd>. From any tab, type `mk` and a space in the address bar. |
+| Save your open tabs | Choose **Save open tabs** above the list. To reopen them, open the folder and choose **Open all**. |
 | Search by meaning | Add your TypeSafe API key in **Settings**, describe what you want in the search box, and choose **Semantic**. |
 | Ask a question | Open **Chat**. The first time, choose **Download / load model**. Press <kbd>Enter</kbd> to send, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. |
 | Move to another browser | **Backup** in one browser, **Import** the `marked-backup-….json` file in the other. |
@@ -138,7 +181,7 @@ Open **Marked** from the browser's extensions menu. The first time, it offers to
 
 - **Notes and highlights.** Gallery cards for pages show a **Note** label, so every page card stays the same height. Cards for posts from X show the note beside the post.
 - **Tag suggestions.** Suggestions currently come from a small keyword matcher that runs on your device (`tagger.js`). It is a stand-in for TypeSafe's Jev model; Marked doesn't call any tagging service yet.
-- **Older bookmarks.** Bookmarks copied from the browser, or imported without descriptions, have no abstract; add one with **Edit**.
+- **Older bookmarks.** Bookmarks imported from your browser, or from a file without descriptions, have no abstract; add one with **Edit**.
 - **Previews.** Uncheck **Save preview** in the editor if you don't want to keep a screenshot of a page.
 - **A page without Marked's script.** If a tab was open before Marked was installed or reloaded, Marked adds its script when you use it. For posts from X, it then asks you to right-click the post again.
 
@@ -169,7 +212,7 @@ Your bookmarks, notes, tags, abstracts, highlights, and chats stay in your brows
 | `storage`, `unlimitedStorage` | Keep the library, previews, and the chat model on your device |
 | `contextMenus` | **Add to Marked** and **Save tweet to Marked** |
 | `activeTab`, `scripting` | Read the abstract of the page you're saving, when you save it |
-| Access to all websites | Show the **Highlight** button when you select text, and capture a preview and abstract when you highlight a page that isn't saved yet. The script does nothing until you click the button, and sends nothing off your device. |
+| Access to all websites | Show the **Highlight** button when you select text, mark your saved highlights when you revisit a page, show ✓ on saved pages, and read the addresses of your open tabs for **Save open tabs**. It also captures a preview and abstract when you highlight a page that isn't saved yet. Nothing is sent off your device. |
 | x.com and twitter.com | Find the post under your pointer for **Save tweet to Marked** |
 | Hugging Face (optional) | Download the chat model; requested when you first load it |
 | TypeSafe (optional) | Semantic search; requested when you save an API key |
@@ -191,10 +234,10 @@ Reload the Marked tab after UI changes. After changing the manifest or backgroun
 | Path | What it does |
 | --- | --- |
 | `manager.html`, `manager.js`, `styles.css` | The library interface |
-| `store.js` | Local library, tag list, and the first-run bookmark copy |
-| `background.js` | Menus, the toolbar button, and saving (a Chrome service worker and a Firefox event page) |
+| `store.js` | Local library, tag list, the page index, and importing the browser's bookmarks |
+| `background.js` | Menus, the toolbar button and its badge, the address-bar search, the keyboard shortcut, and saving (a Chrome service worker and a Firefox event page) |
 | `page-abstract.js` | Reads a page's description and opening text |
-| `highlighter.js` | Content script for the Highlight button and panel |
+| `highlighter.js` | Content script for the Highlight button and panel, and for marking saved highlights on the page |
 | `tweet-capture.js` | Content script that finds the post under the pointer on x.com |
 | `tagger.js` | Tag suggestions (a local stand-in for a future Jev integration) |
 | `jev.js`, `semantic-search.js` | The Jev client, cost tracking, and semantic search |

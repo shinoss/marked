@@ -199,3 +199,17 @@ test('imports an entire hierarchy atomically into local storage', async () => {
   assert.equal(imported.children[0].children[0].title, 'Site');
   assert.equal(mock.reads(), 0, 'file imports never read the browser’s bookmarks');
 });
+
+test('keeps a small index of pages and their highlights, without previews, and builds one for older libraries', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  assert.deepEqual((await store.getIndex()).pages.map(page => [page.id, page.url, page.title]), [['a', 'https://example.com', 'Original']], 'a library saved before the index gets one');
+  assert.ok((await mock.api.storage.local.get()).markedIndexV1);
+  const created = await store.create({ parentId: 'home', title: 'New', url: 'https://new.test/', preview: 'data:image/jpeg;base64,AAAA', dateAdded: 5 });
+  await store.addHighlight(created.id, { text: 'A passage', note: 'Why' });
+  const index = (await mock.api.storage.local.get()).markedIndexV1;
+  const page = index.pages.find(entry => entry.id === created.id);
+  assert.deepEqual({ ...page, highlights: page.highlights.map(({ text, note }) => ({ text, note })) }, { id: created.id, url: 'https://new.test/', title: 'New', dateAdded: 5, highlights: [{ text: 'A passage', note: 'Why' }] });
+  assert.ok(!JSON.stringify(index).includes('base64'), 'previews stay out of the index');
+  await store.removeMany([created.id]);
+  assert.deepEqual((await store.getIndex()).pages.map(entry => entry.id), ['a']);
+});

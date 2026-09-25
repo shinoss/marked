@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-let onClick, onAction, onMessage;
-const menus = [], opened = [], focused = [];
+let onClick, onAction, onMessage, onTabUpdated, onStorageChanged, onOmniboxInput, onOmniboxEnter, onCommand;
+const menus = [], opened = [], focused = [], badges = [], defaults = [];
 let tabs = [];
 globalThis.browser = {
   contextMenus: {
@@ -13,16 +13,39 @@ globalThis.browser = {
     onClicked: { addListener: listener => { onClick = listener; } }
   },
   runtime: { getURL: path => `moz-extension://marked/${path}`, onMessage: { addListener: listener => { onMessage = listener; } } },
-  storage: { session: { get: async () => ({}) } },
+  storage: { session: { get: async () => ({}) }, onChanged: { addListener: listener => { onStorageChanged = listener; } } },
   tabs: {
     create: async details => { opened.push(details); },
     query: async () => tabs,
-    update: async (id, details) => { focused.push({ tab: id, ...details }); }
+    update: async (id, details) => { focused.push(typeof id === 'object' ? { tab: 'current', ...id } : { tab: id, ...details }); },
+    onUpdated: { addListener: listener => { onTabUpdated = listener; } }
   },
   windows: { update: async (id, details) => { focused.push({ window: id, ...details }); } },
-  action: { onClicked: { addListener: listener => { onAction = listener; } } }
+  action: {
+    onClicked: { addListener: listener => { onAction = listener; } },
+    setBadgeBackgroundColor: async () => {},
+    setBadgeText: async details => { badges.push(details); },
+    setTitle: async () => {}
+  },
+  omnibox: {
+    setDefaultSuggestion: details => { defaults.push(details.description); },
+    onInputChanged: { addListener: listener => { onOmniboxInput = listener; } },
+    onInputEntered: { addListener: listener => { onOmniboxEnter = listener; } }
+  },
+  commands: { onCommand: { addListener: listener => { onCommand = listener; } } }
 };
 await import('../background.js');
+// A saved library, with its index, as the store writes it.
+async function useLibrary(children) {
+  const { fixture } = await import('./storage-fixture.js');
+  const { createLibraryStore } = await import('../store.js');
+  const mock = fixture({ id: 'root', children: [] });
+  browser.storage.local = mock.api.storage.local;
+  Object.defineProperty(navigator, 'locks', { value: mock.locks, configurable: true });
+  const store = createLibraryStore(mock.api, mock.locks);
+  for (const node of children) await store.create({ parentId: 'root', ...node });
+  return mock;
+}
 
 test('context menu opens a prefilled editor for the page, not the clicked link', async () => {
   assert.equal(menus[0].title, 'Add to Marked');
@@ -192,7 +215,7 @@ test('a highlight on a new page opens the editor with the passage, as Add to Mar
   const saved = {};
   opened.length = 0;
   browser.storage.session.set = async value => Object.assign(saved, value);
-  browser.storage.local = { get: async () => ({}) };
+  await useLibrary([]);
   browser.scripting = { executeScript: async () => [{ result: { url: 'https://example.org/new', text: 'Page description.' } }] };
   assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Quoted words' }, { id: 4, url: 'https://example.org/new', title: 'New page' }), { opened: true });
   const request = new URL(opened[0].url);
@@ -202,4 +225,66 @@ test('a highlight on a new page opens the editor with the passage, as Add to Mar
   assert.equal(await ask({ type: 'marked:highlight', text: '   ' }, { id: 4, url: 'https://example.org/new' }), null);
   assert.equal(onMessage({ type: 'other' }, { tab: { id: 4 } }, () => {}), undefined);
   assert.equal(opened.length, 1, 'empty selections and other messages open nothing');
+});
+
+test('the toolbar button shows a check on saved pages and updates when the library changes', async () => {
+  await useLibrary([{ title: 'The essay', url: 'https://example.com/essay' }]);
+  badges.length = 0;
+  onTabUpdated(1, { url: 'https://example.com/essay#part-2' }, { id: 1, url: 'https://example.com/essay#part-2' });
+  onTabUpdated(2, { status: 'complete' }, { id: 2, url: 'https://other.test/' });
+  onTabUpdated(3, { title: 'Renamed' }, { id: 3, url: 'https://example.com/essay' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(badges.sort((a, b) => a.tabId - b.tabId), [{ tabId: 1, text: '✓' }, { tabId: 2, text: '' }], 'only address and load changes count');
+  badges.length = 0;
+  tabs = [{ id: 1, url: 'https://example.com/essay' }, { id: 4, url: 'about:blank' }];
+  onStorageChanged({ markedIndexV1: {} }, 'local');
+  onStorageChanged({ markedView: {} }, 'local');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(badges.sort((a, b) => a.tabId - b.tabId), [{ tabId: 1, text: '✓' }, { tabId: 4, text: '' }]);
+  tabs = [];
+});
+
+test('a page asks for its saved highlights and gets only its own', async () => {
+  await useLibrary([{ title: 'The essay', url: 'https://example.com/essay', highlights: [{ text: 'A passage', note: 'Why' }, { text: 'Another' }] }, { title: 'Plain', url: 'https://plain.test/' }]);
+  const reply = await ask({ type: 'marked:page-highlights' }, { id: 1, url: 'https://example.com/essay#top' });
+  assert.deepEqual(reply.highlights.map(({ text, note }) => ({ text, note })), [{ text: 'A passage', note: 'Why' }, { text: 'Another', note: undefined }]);
+  assert.equal(await ask({ type: 'marked:page-highlights' }, { id: 2, url: 'https://plain.test/' }), null);
+  assert.equal(await ask({ type: 'marked:page-highlights' }, { id: 3, url: 'https://unsaved.test/' }), null);
+});
+
+test('typing mk in the address bar suggests saved pages; Enter opens one or searches Marked', async () => {
+  await useLibrary([
+    { title: 'Deep work <notes> & ideas', url: 'https://www.example.com/deep', dateAdded: 1000 },
+    { title: 'Shallow work', url: 'https://work.test/', dateAdded: 2000 },
+    { title: 'Recipes', url: 'https://food.test/work-lunch', dateAdded: 3000 }
+  ]);
+  const suggestions = await new Promise(resolve => onOmniboxInput(' work ', resolve));
+  assert.deepEqual(suggestions, [
+    { content: 'https://work.test/', description: 'Shallow work <dim>work.test</dim>' },
+    { content: 'https://www.example.com/deep', description: 'Deep work &lt;notes&gt; &amp; ideas <dim>example.com</dim>' },
+    { content: 'https://food.test/work-lunch', description: 'Recipes <dim>food.test</dim>' }
+  ], 'title matches first, newest first, then address matches; Chrome markup is escaped');
+  assert.equal(defaults.at(-1), 'Search Marked for “work”');
+  opened.length = 0; focused.length = 0;
+  onOmniboxEnter('https://work.test/', 'currentTab');
+  onOmniboxEnter('deep ideas', 'newForegroundTab');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(focused, [{ tab: 'current', url: 'https://work.test/' }]);
+  assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html?q=deep+ideas', active: true }]);
+});
+
+test('the keyboard shortcut adds the page, or edits its bookmark when it is already saved', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const mock = await useLibrary([{ title: 'Saved', url: 'https://example.com/saved' }]);
+  const [saved] = (await mock.api.storage.local.get()).markedLibraryV1.root.children;
+  browser.storage.session.set = async () => {};
+  browser.scripting = { executeScript: async () => [] };
+  opened.length = 0;
+  await onCommand('add-to-marked', { id: 5, url: 'https://example.com/saved#intro', title: 'Saved' });
+  await onCommand('add-to-marked', { id: 6, url: 'https://example.com/new', title: 'New' });
+  await onCommand('other', { id: 6, url: 'https://example.com/new' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(opened.length, 2);
+  assert.equal(new URL(opened[0].url).searchParams.get('edit'), saved.id, 'a saved page opens its bookmark, not a second copy');
+  assert.equal(new URL(opened[1].url).searchParams.get('add'), 'https://example.com/new');
 });

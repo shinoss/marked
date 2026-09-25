@@ -330,3 +330,70 @@ test('first run: asks once to import the browser’s bookmarks, keeping their fo
   assert.equal($('toast').textContent, 'Every bookmark in your browser is already in Marked.');
   dom.window.close();
 });
+
+test('links from the address bar search, a saved page opens its bookmark, and tabs save to a folder and reopen', async () => {
+  const library = () => ({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'essay', parentId: 'reading', title: 'On attention', url: 'https://example.com/essay', type: 'bookmark' },
+    { id: 'pasta', parentId: 'reading', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark' }
+  ] }] });
+  async function open(search, name) {
+    const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html${search}` });
+    globalThis.document = dom.window.document;
+    globalThis.DOMParser = dom.window.DOMParser;
+    dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+    dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+    const mock = fixture(library());
+    globalThis.browser = mock.api;
+    Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+    await import(`../manager.js?${name}`);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    return { dom, mock, $: id => document.getElementById(id) };
+  }
+  const settle = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+
+  let { dom, $ } = await open('?q=pasta', 'omnibox');
+  assert.equal($('search').value, 'pasta');
+  assert.deepEqual([...$('items').querySelectorAll('.item-title')].map(link => link.textContent), ['Weeknight pasta']);
+  assert.equal(dom.window.location.search, '', 'a refresh doesn’t repeat it');
+  dom.window.close();
+
+  ({ dom, $ } = await open('?edit=essay', 'edit'));
+  assert.ok($('editor').open);
+  assert.equal($('editor-title').textContent, 'Edit bookmark');
+  assert.equal($('edit-name').value, 'On attention');
+  dom.window.close();
+
+  let mock;
+  ({ dom, $, mock } = await open('', 'tabs'));
+  assert.equal($('open-all').hidden, true, 'never offered for the whole library');
+  const created = [], removed = [], requested = [];
+  mock.api.permissions = { request: async request => { requested.push(request); return true; } };
+  mock.api.tabs = {
+    getCurrent: async () => ({ id: 1 }),
+    query: async () => [
+      { id: 1, url: 'moz-extension://marked/manager.html', title: 'Marked' },
+      { id: 2, url: 'https://a.test/', title: 'Page A' },
+      { id: 3, url: 'https://a.test/', title: 'Page A again' },
+      { id: 4, url: 'about:config', title: 'Settings' },
+      { id: 5, url: 'https://b.test/path', title: '' }
+    ],
+    remove: async ids => { removed.push(...ids); },
+    create: async details => { created.push(details); }
+  };
+  $('save-tabs').click(); await settle();
+  assert.deepEqual(requested, [{ origins: ['<all_urls>'] }], 'Firefox needs site access to read tab addresses');
+  assert.ok($('tabs-dialog').open);
+  assert.equal($('tabs-text').textContent, 'Save the 2 pages open in this window to a new folder in Library?', 'web pages only, once each, never Marked itself');
+  $('tabs-close').checked = true;
+  $('tabs-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('tabs-save') }));
+  await settle();
+  const folder = (await mock.api.storage.local.get()).markedLibraryV1.root.children.at(-1);
+  assert.match(folder.title, /^Tabs · /);
+  assert.deepEqual(folder.children.map(node => [node.title, node.url]), [['Page A', 'https://a.test/'], ['https://b.test/path', 'https://b.test/path']]);
+  assert.deepEqual(removed, [2, 5], 'closed after saving, as asked');
+  assert.equal($('page-title').textContent, folder.title, 'the new folder opens');
+  assert.equal($('open-all').hidden, false);
+  $('open-all').click(); await settle();
+  assert.deepEqual(created, [{ url: 'https://a.test/', active: false }, { url: 'https://b.test/path', active: false }]);
+  dom.window.close();
+});

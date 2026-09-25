@@ -2,8 +2,9 @@
 // user selects text it shows a Highlight button beside the selection; nothing
 // is read or sent until the user clicks it. On a page already in Marked, the
 // highlight and an optional note are added right here in a small panel; a new
-// page opens Marked's editor, as Add to Marked does. Content scripts are
-// classic scripts, not modules; tests evaluate this file in a JSDOM window.
+// page opens Marked's editor, as Add to Marked does. Passages saved earlier are
+// marked again when the page opens. Content scripts are classic scripts, not
+// modules; tests evaluate this file in a JSDOM window.
 
 // Selected text worth highlighting, or '' for none or text inside form fields.
 function selectedText(selection) {
@@ -13,6 +14,39 @@ function selectedText(selection) {
   if (document.designMode === 'on' || element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return '';
   const text = selection.toString();
   return text.trim() ? text : '';
+}
+
+// The page's text without whitespace, so a passage matches however the page
+// breaks it into lines, paragraphs, and elements, with where each character is.
+function pageText(root) {
+  const segments = [];
+  let text = '';
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: node => node.parentElement?.closest('script, style, noscript, textarea, select, marked-highlighter, marked-note, [contenteditable]:not([contenteditable="false"])') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  });
+  for (let node; (node = walker.nextNode());) {
+    const offsets = [];
+    let chunk = '';
+    for (let i = 0; i < node.data.length; i++) if (!/\s/.test(node.data[i])) { chunk += node.data[i]; offsets.push(i); }
+    if (chunk) { segments.push({ node, start: text.length, offsets }); text += chunk; }
+  }
+  return { text, segments };
+}
+// The pieces of text nodes that hold passage, in page order, or [] if it isn't there.
+function locate(page, passage) {
+  const needle = String(passage).replace(/\s+/g, '');
+  const at = needle ? page.text.indexOf(needle) : -1;
+  if (at < 0) return [];
+  const end = at + needle.length, pieces = [];
+  page.segments.forEach((segment, order) => {
+    const last = segment.start + segment.offsets.length;
+    if (last <= at || segment.start >= end) return;
+    // Spaces between the pieces are marked too, so the passage reads as one highlight.
+    const from = segment.start <= at ? segment.offsets[at - segment.start] : 0;
+    const to = last >= end ? segment.offsets[end - 1 - segment.start] + 1 : segment.node.data.length;
+    pieces.push({ node: segment.node, from, to, order });
+  });
+  return pieces;
 }
 
 if (!globalThis.markedHighlighter) {
@@ -69,7 +103,7 @@ if (!globalThis.markedHighlighter) {
       saveButton.disabled = true;
       let reply;
       try { reply = await api.runtime.sendMessage({ type: 'marked:save-highlight', text, note: note.value }); } catch {}
-      if (reply?.ok) say('Highlight saved to Marked.');
+      if (reply?.ok) { say('Highlight saved to Marked.'); markPassages([{ text, note: note.value.trim() }]); }
       else { error.textContent = reply?.error || 'Marked could not save the highlight. Try again.'; saveButton.disabled = false; }
     };
     const saveButton = button('Save highlight', true, save);
@@ -118,5 +152,65 @@ if (!globalThis.markedHighlighter) {
   document.addEventListener('mouseup', later, true);
   document.addEventListener('keyup', event => { if (event.shiftKey || event.key === 'Shift') later(event); }, true);
   document.addEventListener('selectionchange', () => { if (!panel && getSelection()?.isCollapsed) close(); });
-  addEventListener('scroll', () => { if (!panel) close(); }, { capture: true, passive: true });
+  addEventListener('scroll', () => { if (!panel) close(); hideNote(); }, { capture: true, passive: true });
+
+  // Saved passages, marked in yellow. Hovering one shows its note in Marked's
+  // own closed box; notes are kept here, never in the page, so the site's
+  // scripts can't read them.
+  const MARK = 'all:unset;background:rgba(255,221,0,.45);color:inherit;border-radius:2px';
+  const notes = new WeakMap();
+  let noteHost = null, card = null;
+  function hideNote() { noteHost?.remove(); }
+  function showNote(mark) {
+    if (!noteHost) {
+      noteHost = document.createElement('marked-note');
+      card = noteHost.attachShadow({ mode: 'closed' }).appendChild(document.createElement('div'));
+    }
+    const note = notes.get(mark);
+    card.style.cssText = `${BOX};max-width:320px;padding:8px 10px;pointer-events:none`;
+    card.replaceChildren(...(note
+      ? [make('div', 'color:#536471;font-size:12px', 'Your note in Marked'), make('div', 'white-space:pre-wrap;overflow-wrap:anywhere', note)]
+      : [make('div', 'color:#536471', 'Highlighted in Marked')]));
+    document.documentElement.append(noteHost);
+    const spot = mark.getClientRects()[0] ?? mark.getBoundingClientRect();
+    const { width, height } = card.getBoundingClientRect();
+    card.style.top = `${Math.max(4, spot.bottom + 6 + height > innerHeight ? spot.top - height - 6 : spot.bottom + 6)}px`;
+    card.style.left = `${Math.max(4, Math.min(spot.left, innerWidth - width - 4))}px`;
+  }
+  // Marks each passage found on the page and returns the ones that aren't there yet.
+  function markPassages(passages) {
+    const page = pageText(document.body);
+    const pieces = [], missing = [];
+    for (const passage of passages) {
+      const found = locate(page, passage.text);
+      if (found.length) pieces.push(...found.map(piece => ({ ...piece, note: passage.note || '' })));
+      else missing.push(passage);
+    }
+    // From the end of the page back, so splitting a text node keeps earlier offsets valid.
+    pieces.sort((a, b) => b.order - a.order || b.from - a.from);
+    for (const { node, from, to, note } of pieces) {
+      if (to > node.data.length || node.parentElement?.closest('marked-highlight')) continue;
+      const middle = node.splitText(from);
+      middle.splitText(to - from);
+      const mark = document.createElement('marked-highlight');
+      mark.style.cssText = MARK;
+      middle.replaceWith(mark);
+      mark.append(middle);
+      notes.set(mark, note);
+      mark.addEventListener('mouseenter', () => showNote(mark));
+      mark.addEventListener('mouseleave', hideNote);
+    }
+    return missing;
+  }
+  // Pages that build their text after loading get two more tries.
+  (async () => {
+    let reply;
+    try { reply = await api.runtime.sendMessage({ type: 'marked:page-highlights' }); } catch { return; }
+    let missing = reply?.highlights || [];
+    for (const wait of [0, 1500, 5000]) {
+      if (!missing.length || !document.body) return;
+      if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+      missing = markPassages(missing);
+    }
+  })();
 }

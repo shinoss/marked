@@ -144,6 +144,22 @@ export function planBrowserImport(browserRoot, libraryRoot) {
   return { nodes, count, already };
 }
 
+// Bookmarks whose title or address holds every word of the query, best first:
+// titles that start with it, then other title matches, then address matches,
+// newest first within each. pages come from the library index.
+export function searchPages(pages, query, limit = 6) {
+  const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const phrase = words.join(' ');
+  const found = [];
+  for (const page of pages) {
+    const title = (page.title || '').toLowerCase(), url = page.url.toLowerCase();
+    if (!words.every(word => title.includes(word) || url.includes(word))) continue;
+    found.push({ page, rank: title.startsWith(phrase) ? 0 : words.every(word => title.includes(word)) ? 1 : 2 });
+  }
+  return found.sort((a, b) => a.rank - b.rank || (b.page.dateAdded || 0) - (a.page.dateAdded || 0)).slice(0, limit).map(({ page }) => page);
+}
+
 export function parseHTML(text, Parser = DOMParser) {
   const doc = new Parser().parseFromString(text, 'text/html');
   const root = doc.querySelector('dl');

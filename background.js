@@ -1,7 +1,7 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
 import './browser-api.js';
-import { cleanAbstract, cleanHighlightText } from './bookmarks.js';
-import { STORAGE_KEY, createLibraryStore } from './store.js';
+import { cleanAbstract, cleanHighlightText, safeURL, searchPages } from './bookmarks.js';
+import { INDEX_KEY, createLibraryStore } from './store.js';
 import { readPageAbstract } from './page-abstract.js';
 
 const ADD_MENU = 'add-to-marked';
@@ -100,6 +100,9 @@ async function addPage(info, tab) {
   // Bookmark the top-level page, not a clicked link or embedded image/frame.
   const url = tab?.url || info.pageUrl;
   if (!url) return;
+  // A page already in Marked opens its bookmark instead of adding a second copy.
+  const saved = await findBookmark(url).catch(() => null);
+  if (saved) return openManager(new URLSearchParams({ edit: saved.id }));
   const [preview, abstract] = await Promise.all([
     capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; }),
     captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; })
@@ -157,17 +160,65 @@ function showNotice(text) {
 function pageKey(url) {
   try { const page = new URL(url); page.hash = ''; return page.href; } catch { return url; }
 }
+// Saved pages by address, the newest bookmark of each, from the library's small
+// index rather than the whole library with its previews.
+async function savedPages() {
+  const byPage = new Map();
+  for (const page of (await createLibraryStore(browser).getIndex()).pages) {
+    const key = pageKey(page.url), old = byPage.get(key);
+    if (!old || page.dateAdded > old.dateAdded) byPage.set(key, page);
+  }
+  return byPage;
+}
 // The newest bookmark of url in the library, or null.
 async function findBookmark(url) {
-  const library = (await browser.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  const key = pageKey(url);
-  let found = null;
-  (function walk(node) {
-    if (node.url && pageKey(node.url) === key && (!found || (node.dateAdded || 0) > (found.dateAdded || 0))) found = node;
-    node.children?.forEach(walk);
-  })(library?.root ?? {});
-  return found;
+  return (await savedPages()).get(pageKey(url)) ?? null;
 }
+
+// The toolbar button shows a check on pages already in Marked.
+async function updateBadges(tabs) {
+  const byPage = await savedPages();
+  await Promise.all(tabs.map(async ({ id, url }) => {
+    const saved = !!url && byPage.has(pageKey(url));
+    await browser.action.setBadgeText({ tabId: id, text: saved ? '✓' : '' });
+    await browser.action.setTitle({ tabId: id, title: saved ? 'Open Marked (this page is saved)' : 'Open Marked' });
+  }).map(update => update.catch(() => {})));
+}
+const updateAllBadges = () => browser.tabs.query({}).then(updateBadges).catch(error => console.warn('Could not update the toolbar badge', error));
+browser.action.setBadgeBackgroundColor({ color: '#2c5949' });
+browser.action.setBadgeTextColor?.({ color: '#ffffff' });
+browser.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.url || change.status === 'complete') updateBadges([tab]).catch(() => {});
+});
+// Saving, editing, or deleting in Marked updates every open tab.
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[INDEX_KEY]) updateAllBadges();
+});
+browser.runtime.onStartup?.addListener(updateAllBadges);
+browser.runtime.onInstalled?.addListener(updateAllBadges);
+
+// Type "mk", a space, and a few words in the address bar to search Marked.
+// Chrome styles suggestions with XML markup; Firefox shows plain text.
+const plainSuggestions = !!browser.runtime.getBrowserInfo;
+const markup = text => plainSuggestions ? String(text) : String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+function suggestion(page) {
+  let domain = '';
+  try { domain = new URL(page.url).hostname.replace(/^www\./, ''); } catch {}
+  const title = markup(page.title || page.url);
+  // Firefox shows each suggestion's address after it; Chrome gets the domain, dimmed.
+  return { content: page.url, description: plainSuggestions ? title : `${title} <dim>${markup(domain)}</dim>` };
+}
+browser.omnibox?.onInputChanged.addListener((text, suggest) => {
+  browser.omnibox.setDefaultSuggestion({ description: `Search Marked for “${markup(text.trim())}”` });
+  createLibraryStore(browser).getIndex()
+    .then(({ pages }) => suggest(searchPages(pages, text).map(suggestion)), () => suggest([]));
+});
+// A chosen suggestion's text is its address; anything else is searched in Marked.
+browser.omnibox?.onInputEntered.addListener((text, disposition) => {
+  const url = safeURL(text.trim()) ?? `${browser.runtime.getURL('manager.html')}?${new URLSearchParams({ q: text.trim() })}`;
+  const opening = disposition === 'currentTab' ? browser.tabs.update({ url }) : browser.tabs.create({ url, active: disposition !== 'newBackgroundTab' });
+  opening.catch(error => console.error('Could not open the search', error));
+});
 
 // highlighter.js asks about a passage the user chose to highlight. A saved page
 // answers with its title, and the page shows its own panel for the note; a new
@@ -203,6 +254,11 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
     saveHighlight(sender.tab, message).then(reply, error => reply({ error: error.message }));
     return true;
   }
+  // highlighter.js asks on every page for the passages saved on it, to mark them.
+  if (message?.type === 'marked:page-highlights') {
+    findBookmark(sender.tab.url || sender.url).then(page => reply(page?.highlights?.length ? { highlights: page.highlights } : null), () => reply(null));
+    return true;
+  }
 });
 
 browser.contextMenus.onClicked.addListener((info, tab) => {
@@ -214,6 +270,13 @@ browser.contextMenus.onClicked.addListener((info, tab) => {
     if (browser.runtime.getBrowserInfo) browser.permissions.request({ origins: TWEET_ORIGINS }).catch(error => console.warn('Could not request access to X', error));
     return saveTweet(tab).catch(error => console.error('Could not save tweet to Marked', error));
   }
+});
+
+// Alt+Shift+M adds the current page, as Add to Marked does.
+browser.commands?.onCommand.addListener(async (command, tab) => {
+  if (command !== 'add-to-marked') return;
+  tab ??= (await browser.tabs.query({ active: true, currentWindow: true }))[0];
+  addPage({}, tab).catch(error => console.error('Could not open Add to Marked', error));
 });
 
 browser.action.onClicked.addListener(async () => {

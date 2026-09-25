@@ -13,7 +13,8 @@ function load(body, replies = {}) {
   const page = { window, sent: [] };
   window.chrome = { runtime: { sendMessage: async message => { page.sent.push({ ...message }); return replies[message.type]; } } };
   const attachShadow = window.Element.prototype.attachShadow;
-  window.Element.prototype.attachShadow = function (init) { return page.shadow = attachShadow.call(this, init); };
+  // The first shadow root is the Highlight box; a note card may follow.
+  window.Element.prototype.attachShadow = function (init) { const shadow = attachShadow.call(this, init); (page.shadows ??= []).push(shadow); page.shadow ??= shadow; return shadow; };
   window.eval(source);
   page.select = (selector, collapse = false) => {
     const range = window.document.createRange();
@@ -37,7 +38,7 @@ test('on a saved page, Highlight opens a panel on the page that saves the passag
   page.select('#text'); await page.mouseup('#text');
   assert.deepEqual(page.buttons(), ['Highlight'], 'one option, not separate highlight and note');
   await page.click('Highlight');
-  assert.deepEqual(page.sent, [{ type: 'marked:highlight', text: 'A passage worth keeping.' }]);
+  assert.deepEqual(page.sent, [{ type: 'marked:page-highlights' }, { type: 'marked:highlight', text: 'A passage worth keeping.' }], 'the page asks for its saved passages once, on load');
   assert.match(page.box().textContent, /On “The essay”/);
   assert.match(page.box().textContent, /A passage worth keeping\./);
   assert.deepEqual(page.buttons(), ['Cancel', 'Save highlight']);
@@ -50,6 +51,7 @@ test('on a saved page, Highlight opens a panel on the page that saves the passag
   await page.click('Save highlight');
   assert.deepEqual(page.sent.at(-1), { type: 'marked:save-highlight', text: 'A passage worth keeping.', note: 'Quote this.' });
   assert.equal(page.box().textContent, 'Highlight saved to Marked.');
+  assert.equal(page.window.document.querySelector('marked-highlight').textContent, 'A passage worth keeping.', 'the new highlight shows at once');
 });
 
 test('on a new page, Highlight hands off to Marked and closes; failures are shown in the panel', async () => {
@@ -76,5 +78,33 @@ test('ignores empty selections and text in form fields or editable areas, and hi
   assert.ok(page.box());
   page.select('#text', true); await page.mouseup('#text');
   assert.equal(page.box(), null, 'a collapsed selection hides the button');
-  assert.deepEqual(page.sent, []);
+  assert.deepEqual(page.sent, [{ type: 'marked:page-highlights' }]);
+});
+
+test('saved passages are marked again when the page opens; notes show only in Marked’s own box', async () => {
+  const page = load('<p>Some <b>bold</b> words across\n   lines.</p><p>Second paragraph starts here.</p><p id="late"></p>', {
+    'marked:page-highlights': { highlights: [
+      { id: '1', text: 'bold words across lines. Second paragraph', note: 'A private thought' },
+      { id: '2', text: 'starts here.' },
+      { id: '3', text: 'Loaded later' }
+    ] }
+  });
+  await tick(page.window);
+  const document = page.window.document;
+  const marks = () => [...document.querySelectorAll('marked-highlight')].map(mark => mark.textContent);
+  assert.deepEqual(marks(), ['bold', ' words across\n   lines.', 'Second paragraph', 'starts here.'], 'found across elements, lines, and paragraphs, with the spaces between');
+  assert.equal(document.body.textContent, 'Some bold words across\n   lines.Second paragraph starts here.', 'the page text is unchanged');
+  const first = document.querySelector('marked-highlight');
+  first.dispatchEvent(new page.window.MouseEvent('mouseenter'));
+  assert.ok(document.querySelector('marked-note'));
+  assert.match(page.shadows.at(-1).textContent, /Your note in Marked\s*A private thought/);
+  assert.ok(!document.documentElement.outerHTML.includes('A private thought'), 'the note never enters the page');
+  first.dispatchEvent(new page.window.MouseEvent('mouseleave'));
+  assert.equal(document.querySelector('marked-note'), null);
+  document.querySelectorAll('marked-highlight')[3].dispatchEvent(new page.window.MouseEvent('mouseenter'));
+  assert.equal(page.shadows.at(-1).textContent, 'Highlighted in Marked');
+  // A page that adds its text after loading is searched again.
+  document.getElementById('late').textContent = 'Loaded later, by a script.';
+  await new Promise(resolve => setTimeout(resolve, 1600));
+  assert.equal(marks().at(-1), 'Loaded later');
 });

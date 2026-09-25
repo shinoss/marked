@@ -209,6 +209,10 @@ function render() {
     nodes = [...lead, ...nodes.filter(node => !ids.has(node.id))];
   }
   state.visible = nodes;
+  // Open all is for a folder, a tag, or search results, never the whole library.
+  const bookmarks = nodes.filter(node => node.url).length;
+  $('open-all').hidden = !bookmarks || (!query && !tag && !current);
+  $('open-all').title = `Open the ${bookmarks === 1 ? 'bookmark' : `${bookmarks.toLocaleString()} bookmarks`} shown here in new tabs`;
   const visibleIds = new Set(nodes.map(n => n.id));
   for (const id of state.selected) if (!visibleIds.has(id)) state.selected.delete(id);
   $('page-title').textContent = query ? 'Search results' : tag || (current ? title(current) : 'All bookmarks');
@@ -730,6 +734,50 @@ $('new-tag').addEventListener('keydown', event => {
   addEditorTag();
 });
 $('new-bookmark').addEventListener('click', () => openEditor());
+$('open-all').addEventListener('click', async () => {
+  const urls = state.visible.filter(node => node.url).map(node => node.url);
+  if (urls.length > 10 && !await confirmAction('Open all?', `Open ${urls.length.toLocaleString()} bookmarks in new tabs?`, `Open ${urls.length.toLocaleString()} tabs`)) return;
+  for (const url of urls) await browser.tabs.create({ url, active: false }).catch(() => {});
+});
+// Saves the web pages open in this window to a new folder, to pick the session up later.
+let openTabs = [];
+$('save-tabs').addEventListener('click', async () => {
+  // Firefox shows other tabs' addresses only with site access. Ask while the
+  // click still counts as user input; where access is granted this resolves at once.
+  const access = browser.permissions?.request?.({ origins: ['<all_urls>'] }).catch(() => false);
+  try {
+    const granted = await access;
+    const current = await browser.tabs.getCurrent();
+    const seen = new Set();
+    openTabs = (await browser.tabs.query({ currentWindow: true })).flatMap(tab => {
+      const url = safeURL(tab.url);
+      if (!url || tab.id === current?.id || seen.has(url)) return [];
+      seen.add(url);
+      return [{ id: tab.id, url, title: tab.title || url }];
+    });
+    if (!openTabs.length) { toast(granted === false ? 'Allow Marked on all websites to read your open tabs, then try again.' : 'No web pages are open in this window.'); return; }
+    const count = openTabs.length;
+    $('tabs-text').textContent = `Save the ${count === 1 ? 'page' : `${count} pages`} open in this window to a new folder in ${path(defaultFolder())}?`;
+    $('tabs-save').textContent = `Save ${count} ${count === 1 ? 'tab' : 'tabs'}`;
+    $('tabs-close').checked = false;
+    $('tabs-error').textContent = '';
+    $('tabs-dialog').showModal();
+  } catch (error) { fail(error); }
+});
+$('tabs-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = event.submitter; submit.disabled = true;
+  try {
+    const name = `Tabs · ${new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+    const folder = await library.importTree(openTabs.map(({ url, title }) => ({ url, title })), defaultFolder(), name);
+    if ($('tabs-close').checked) await browser.tabs.remove(openTabs.map(tab => tab.id)).catch(() => {});
+    $('tabs-dialog').close();
+    await load(); navigate(folder.id);
+    toast(`Saved ${openTabs.length} ${openTabs.length === 1 ? 'tab' : 'tabs'} to “${name}”.`);
+  } catch (error) {
+    $('tabs-error').textContent = error.message;
+  } finally { submit.disabled = false; }
+});
 $('new-folder').addEventListener('click', () => openEditor(null, true));
 $('sidebar-add').addEventListener('click', () => openEditor(null, true));
 let searchTimer;
@@ -820,9 +868,17 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   render();
   askFirstImport();
   const params = new URLSearchParams(document.location.search);
-  if (!params.has('add')) return;
-  // Consume the request so refreshing the tab does not reopen the dialog.
+  if (!['add', 'edit', 'q'].some(key => params.has(key))) return;
+  // Consume the request so refreshing the tab does not repeat it.
   document.defaultView.history.replaceState(null, '', document.location.pathname);
+  // A search typed after "mk" in the address bar.
+  if (params.has('q')) { $('search').value = params.get('q'); render(); return; }
+  // Add to Marked on a page that's already saved edits its bookmark.
+  if (params.has('edit')) {
+    const node = state.nodes.get(params.get('edit'));
+    if (node?.url) openEditor(node); else toast('This bookmark is no longer in Marked.');
+    return;
+  }
   const url = safeURL(params.get('add'));
   if (!url) { toast('This page URL cannot be bookmarked.'); return; }
   openEditor();

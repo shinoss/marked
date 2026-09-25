@@ -51,3 +51,9 @@ test('the highlighter runs in the top frame of every web page', async () => {
   assert.equal(script.all_frames, false);
   await exists('highlighter.js');
 });
+
+test('mk searches Marked from the address bar, and Alt+Shift+M adds the page, with no new permissions', () => {
+  assert.deepEqual(manifest.omnibox, { keyword: 'mk' });
+  assert.equal(manifest.commands['add-to-marked'].suggested_key.default, 'Alt+Shift+M');
+  assert.deepEqual(manifest.permissions, ['bookmarks', 'storage', 'unlimitedStorage', 'contextMenus', 'activeTab', 'scripting']);
+});
