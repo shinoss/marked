@@ -1,4 +1,4 @@
-import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights, validIcon } from './bookmarks.js';
 
 export function exportBackup(root) {
   return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] });
@@ -15,6 +15,7 @@ export function parseBackup(data) {
       result.url = safeURL(node.url);
       if (!result.url) { skipped++; return null; }
       if (typeof node.preview === 'string' && node.preview.length < 500000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(node.preview)) result.preview = node.preview;
+      if (validIcon(node.icon)) result.icon = node.icon;
       const abstract = cleanAbstract(node.abstract);
       if (abstract) result.abstract = abstract;
       const note = cleanNote(node.note);

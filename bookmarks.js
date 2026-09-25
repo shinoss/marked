@@ -6,6 +6,24 @@ export function safeURL(value) {
   } catch { return null; }
 }
 
+// A site's small icon, captured when the page is saved: a data: image under 20 KB.
+export function validIcon(value) {
+  return typeof value === 'string' && value.length < 20000 && /^data:image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+// A letter and a hue for a site without an icon, from the site's name rather
+// than its subdomain (en.wikipedia.org gives W), the same every time.
+export function monogram(url) {
+  let host = '';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const labels = host.split('.').filter(Boolean);
+  let name = labels.length > 1 ? labels[labels.length - 2] : labels[0] || '';
+  if (labels.length > 2 && name.length <= 3 && labels[labels.length - 1].length === 2) name = labels[labels.length - 3];
+  const letter = (name.match(/[\p{L}\p{N}]/u)?.[0] || '•').toUpperCase();
+  let hash = 0;
+  for (const char of name || String(url)) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+  return { letter, hue: hash % 360 };
+}
+
 // A short plain-text description of a bookmarked page, saved for local chat.
 export const ABSTRACT_LIMIT = 2000;
 export function cleanAbstract(value) {
@@ -158,6 +176,42 @@ export function searchPages(pages, query, limit = 6) {
     found.push({ page, rank: title.startsWith(phrase) ? 0 : words.every(word => title.includes(word)) ? 1 : 2 });
   }
   return found.sort((a, b) => a.rank - b.rank || (b.page.dateAdded || 0) - (a.page.dateAdded || 0)).slice(0, limit).map(({ page }) => page);
+}
+
+// The page an address points to, for spotting a page saved twice: without its
+// #fragment, "www.", tracking parameters, a trailing slash, or http vs https.
+export function pageIdentity(url) {
+  try {
+    const page = new URL(url);
+    page.hash = '';
+    page.hostname = page.hostname.replace(/^www\./, '');
+    if (page.protocol === 'http:') page.protocol = 'https:';
+    for (const key of [...page.searchParams.keys()]) if (/^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref_src)$/.test(key)) page.searchParams.delete(key);
+    return page.href.replace(/\/$/, '');
+  } catch { return String(url); }
+}
+
+// Notes and highlights as Markdown, for a notes app: each bookmark with a note or
+// highlights, under its title, with its folder and tags.
+export function exportMarkdown(root, date = new Date()) {
+  const text = value => String(value).replace(/([\\`*_[\]#<>])/g, '\\$1');
+  const lines = ['# Notes and highlights from Marked', '', `Exported ${date.toISOString().slice(0, 10)}.`, ''];
+  (function walk(node, trail) {
+    for (const child of node.children || []) {
+      if (Array.isArray(child.children)) { walk(child, [...trail, child.title || 'Untitled folder']); continue; }
+      const highlights = cleanHighlights(child.highlights), note = cleanNote(child.note);
+      if (!child.url || (!note && !highlights.length)) continue;
+      lines.push(`## [${text(child.title || child.url)}](${child.url.replace(/[()\s]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)})`, '');
+      const context = [trail.map(text).join(' / '), ...cleanTags(child.tags).map(tag => `#${tag.replace(/\s+/g, '-')}`)].filter(Boolean).join(' · ');
+      if (context) lines.push(`*${context}*`, '');
+      if (note) lines.push(note, '');
+      for (const highlight of highlights) {
+        lines.push(`> ${highlight.text}`, '');
+        if (highlight.note) lines.push(highlight.note, '');
+      }
+    }
+  })(root, []);
+  return lines.join('\n');
 }
 
 export function parseHTML(text, Parser = DOMParser) {

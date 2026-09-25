@@ -1,4 +1,4 @@
-import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, planBrowserImport, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
+import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, planBrowserImport, validIcon, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
 
 // The bookmarks permission is used only to read the browser's bookmarks when the
 // user imports them. The library lives in extension-local storage and never
@@ -88,6 +88,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
     const dateAdded = Number.isFinite(details.dateAdded) && details.dateAdded > 0 ? details.dateAdded : Date.now();
     const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
     if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
+    if (validIcon(details.icon)) node.icon = details.icon;
     if (type === 'bookmark') {
       const abstract = cleanAbstract(details.abstract), note = cleanNote(details.note), tags = cleanTags(details.tags), highlights = cleanHighlights(details.highlights);
       if (abstract) node.abstract = abstract;
@@ -136,6 +137,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
         if (changes.url !== undefined && changes.url !== node.url) {
           node.url = changes.url;
           delete node.preview;
+          delete node.icon;
         }
         if (changes.preview === null) delete node.preview;
         if (changes.abstract !== undefined && node.url) {
@@ -249,6 +251,36 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
         append(nodes, container.id);
         return container;
+      });
+    },
+    // Folds each group of bookmarks for one page into its oldest bookmark, which
+    // keeps every tag, note, and highlight. Returns how many copies were removed.
+    mergeDuplicates(groups) {
+      return mutate(root => {
+        let removed = 0;
+        for (const ids of groups) {
+          const nodes = ids.map(id => find(root, id)).filter(node => node?.url);
+          if (nodes.length < 2) continue;
+          nodes.sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0));
+          const [keep, ...copies] = nodes;
+          const tags = cleanTags(nodes.flatMap(node => node.tags || []));
+          if (tags.length) keep.tags = tags;
+          const notes = [...new Set(nodes.map(node => node.note).filter(Boolean))];
+          if (notes.length) keep.note = cleanNote(notes.join('\n\n'));
+          const seen = new Set();
+          const highlights = nodes.flatMap(node => node.highlights || []).filter(highlight => !seen.has(highlight.text) && seen.add(highlight.text));
+          if (highlights.length) keep.highlights = highlights.slice(0, HIGHLIGHTS_PER_BOOKMARK);
+          for (const field of ['abstract', 'preview', 'icon']) {
+            const found = keep[field] || copies.find(node => node[field])?.[field];
+            if (found) keep[field] = found;
+          }
+          for (const copy of copies) {
+            const parent = find(root, copy.parentId);
+            if (parent?.children) parent.children = parent.children.filter(child => child.id !== copy.id);
+            removed++;
+          }
+        }
+        return removed;
       });
     },
     // Copies the browser's bookmarks that the library doesn't have yet, keeping

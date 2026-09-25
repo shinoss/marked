@@ -74,12 +74,11 @@ test('saves the page abstract with the capture only while the tab still shows th
   const saved = {};
   browser.storage.session.set = async value => Object.assign(saved, value);
   browser.storage.session.remove = async () => {};
-  let injected;
-  browser.scripting = { executeScript: async details => { injected = details; return [{ result: { url: 'https://example.com/post', text: '  A post about   world models. ' } }]; } };
+  const injected = [];
+  browser.scripting = { executeScript: async details => { injected.push(details); return [{ result: details.func.name === 'readPageAbstract' ? { url: 'https://example.com/post', text: '  A post about   world models. ' } : null }]; } };
   const tab = { id: 4, url: 'https://example.com/post', title: 'Post' };
   await onClick({ menuItemId: 'add-to-marked' }, tab);
-  assert.deepEqual(injected.target, { tabId: 4 });
-  assert.equal(injected.func.name, 'readPageAbstract');
+  assert.deepEqual(injected.map(details => [details.target.tabId, details.func.name]), [[4, 'readPageAbstract'], [4, 'readPageIcon']], 'the page reads its abstract and its icon');
   const key = new URL(opened[0].url).searchParams.get('capture');
   assert.match(key, /^capture-/);
   assert.deepEqual({ ...saved[key], createdAt: 0 }, { url: 'https://example.com/post', abstract: 'A post about world models.', createdAt: 0 });
@@ -90,6 +89,21 @@ test('saves the page abstract with the capture only while the tab still shows th
   assert.equal(opened.length, 3, 'the editor still opens without an abstract');
   assert.equal(new URL(opened[1].url).searchParams.get('capture'), null);
   assert.equal(new URL(opened[2].url).searchParams.get('capture'), null);
+});
+
+test('the capture carries the page’s own icon, and skips anything that isn’t a small image', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  opened.length = 0;
+  const saved = {};
+  browser.storage.session.set = async value => Object.assign(saved, value);
+  const icon = 'data:image/png;base64,iVBORw0KGgo=';
+  let reported = icon;
+  browser.scripting = { executeScript: async details => [{ result: details.func.name === 'readPageIcon' ? reported : null }] };
+  await onClick({ menuItemId: 'add-to-marked' }, { id: 4, url: 'https://example.com/icon', title: 'Icon' });
+  assert.equal(saved[new URL(opened[0].url).searchParams.get('capture')].icon, icon);
+  reported = 'data:text/html;base64,PGI+';
+  await onClick({ menuItemId: 'add-to-marked' }, { id: 4, url: 'https://example.com/other', title: 'Other' });
+  assert.equal(new URL(opened[1].url).searchParams.get('capture'), null, 'anything but a small image is ignored, so nothing is handed over');
 });
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));

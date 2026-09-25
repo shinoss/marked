@@ -1,5 +1,5 @@
 import './browser-api.js';
-import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, parseHTML, parseJSON, planBrowserImport, tweetId } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
@@ -9,11 +9,14 @@ import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
-const state = { root: null, nodes: new Map(), folder: null, tag: null, tags: [], selected: new Set(), expanded: new Set(), visible: [], editing: null };
+// special is 'rediscover' or 'duplicates' while one of those views is open.
+const state = { root: null, nodes: new Map(), folder: null, tag: null, special: null, rediscover: [], tags: [], selected: new Set(), expanded: new Set(), visible: [], editing: null };
 let toastTimer, refreshTimer, loadVersion = 0;
 let view = 'list';
 let pendingPreview = null;
 let pendingPreviewURL = null;
+// The site's icon, when it came with the page from Add to Marked.
+let pendingIcon = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
 let pendingHighlight = '';
@@ -26,6 +29,24 @@ const semantic = { query: '', result: null, status: '', error: '', cost: 0, cach
 const semanticReady = () => !!jev.apiKey || jev.preview;
 // Whether the results are Jev's answer for what's in the search box.
 const semanticShown = () => !!semantic.status && semantic.query.toLowerCase() === $('search').value.trim().toLowerCase();
+// Light, Dark, or System (the default), kept per browser so theme.js can apply
+// it before the page draws. X's embeds follow along.
+const THEME_KEY = 'markedTheme';
+const darkScheme = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
+const isDark = () => document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && !!darkScheme?.matches);
+function readTheme() {
+  try { return document.defaultView.localStorage.getItem(THEME_KEY) || 'system'; } catch { return 'system'; }
+}
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  for (const choice of document.querySelectorAll('[data-theme-choice]')) choice.setAttribute('aria-checked', String(choice.dataset.themeChoice === theme));
+}
+function setTheme(theme) {
+  try { document.defaultView.localStorage.setItem(THEME_KEY, theme); } catch {}
+  applyTheme(theme);
+  render();
+}
 const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const isFolder = node => node && !node.url && node.type !== 'separator';
 const protectedNode = node => node.id === state.root.id;
@@ -47,6 +68,25 @@ function button(text, action, className, label) {
   if (label) { el.title = label; el.setAttribute('aria-label', label); }
   el.addEventListener('click', action);
   return el;
+}
+function glyph(path) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', path);
+  svg.append(shape);
+  return svg;
+}
+const FOLDER_GLYPH = 'M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z';
+// A site's icon, or a tile with its initial in a color of its own.
+function siteIcon(node, large = false) {
+  const tile = element('span', `site-icon${large ? ' large' : ''}`);
+  tile.setAttribute('aria-hidden', 'true');
+  if (isFolder(node)) { tile.classList.add('folder'); tile.append(glyph(FOLDER_GLYPH)); }
+  else if (validIcon(node.icon)) { const image = element('img'); image.src = node.icon; image.alt = ''; tile.classList.add('image'); tile.append(image); }
+  else { const { letter, hue } = monogram(node.url); tile.textContent = letter; tile.style.setProperty('--hue', hue); }
+  return tile;
 }
 function iconButton(kind, action, className, label) {
   const el = button('', action, className, label);
@@ -112,6 +152,7 @@ async function load() {
 function navigate(id) {
   state.folder = id;
   state.tag = null;
+  state.special = null;
   state.selected.clear();
   $('search').value = '';
   if (id) ancestors(id).forEach(node => state.expanded.add(node.id));
@@ -120,9 +161,48 @@ function navigate(id) {
 function showTag(tag) {
   state.tag = tag;
   state.folder = null;
+  state.special = null;
   state.selected.clear();
   $('search').value = '';
   render();
+}
+function showSpecial(kind) {
+  Object.assign(state, { special: kind, folder: null, tag: null });
+  state.selected.clear();
+  $('search').value = '';
+  if (kind === 'rediscover') state.rediscover = pickRediscover();
+  render();
+}
+// A few bookmarks saved more than two weeks ago, picked at random. Ones with a
+// note or highlights are three times as likely: they meant something.
+function pickRediscover(count = 8) {
+  const pool = [...state.nodes.values()].filter(node => node.url && Date.now() - (node.dateAdded || 0) > 14 * 864e5)
+    .map(node => ({ id: node.id, weight: node.note || node.highlights?.length ? 3 : 1 }));
+  const picked = [];
+  while (picked.length < count && pool.length) {
+    let roll = Math.random() * pool.reduce((sum, item) => sum + item.weight, 0);
+    const index = pool.findIndex(item => (roll -= item.weight) < 0);
+    picked.push(pool.splice(index < 0 ? pool.length - 1 : index, 1)[0].id);
+  }
+  return picked;
+}
+// Bookmarks for the same page, grouped, oldest first in each group.
+function findDuplicates() {
+  const groups = new Map();
+  for (const node of state.nodes.values()) {
+    if (!node.url) continue;
+    const key = pageIdentity(node.url);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(node);
+  }
+  return [...groups.values()].filter(group => group.length > 1).map(group => group.sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0)));
+}
+async function mergeGroups(groups) {
+  const copies = groups.reduce((sum, group) => sum + group.length - 1, 0);
+  if (!copies || !await confirmAction('Merge duplicates?', `Fold ${copies === 1 ? 'the extra copy' : `${copies} extra copies`} into the oldest bookmark for ${groups.length === 1 ? 'the page' : `each of ${groups.length} pages`}? Every tag, note, and highlight is kept.`, 'Merge')) return;
+  const removed = await library.mergeDuplicates(groups.map(group => group.map(node => node.id)));
+  await load();
+  toast(`Merged ${removed} ${removed === 1 ? 'copy' : 'copies'}.`);
 }
 function renderTags() {
   const counts = new Map();
@@ -147,7 +227,9 @@ async function removeTag(tag) {
 }
 function renderTree() {
   $('folder-tree').replaceChildren();
-  $('all-bookmarks').classList.toggle('active', !state.folder && !state.tag);
+  $('all-bookmarks').classList.toggle('active', !state.folder && !state.tag && !state.special && !$('search').value.trim());
+  $('rediscover-nav').classList.toggle('active', state.special === 'rediscover');
+  $('duplicates-nav').classList.toggle('active', state.special === 'duplicates');
   renderTags();
   $('total').textContent = [...state.nodes.values()].filter(n => n.url).length.toLocaleString();
   // A folder counts every bookmark inside it, subfolders included.
@@ -196,12 +278,21 @@ function render() {
   const showLocation = !current;
   document.querySelector('.location-column').hidden = !showLocation;
   const tag = query ? null : state.tag;
+  const special = query ? null : state.special;
+  const duplicates = findDuplicates();
+  const copies = duplicates.reduce((sum, group) => sum + group.length - 1, 0);
+  $('duplicates-nav').hidden = !copies && special !== 'duplicates';
+  $('duplicates-count').textContent = copies ? copies.toLocaleString() : '';
+  // The first bookmark of each group of copies, for a Merge button on its row.
+  const groupStarts = new Map(special === 'duplicates' ? duplicates.map(group => [group[0].id, group]) : []);
   const highlightText = node => (node.highlights || []).map(h => `${h.text} ${h.note || ''}`).join(' ');
   let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase().includes(query))
+    : special === 'rediscover' ? state.rediscover.map(id => state.nodes.get(id)).filter(Boolean)
+    : special === 'duplicates' ? duplicates.flat()
     : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
-  if (sort !== 'default') nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
+  if (sort !== 'default' && !special) nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
   // Jev's matches lead, most relevant first; the remaining keyword matches follow.
   if (query && semantic.result && semantic.query.toLowerCase() === query) {
     const lead = semanticMatches(semantic.result.ranked).map(match => state.nodes.get(match.id)).filter(Boolean);
@@ -215,13 +306,21 @@ function render() {
   $('open-all').title = `Open the ${bookmarks === 1 ? 'bookmark' : `${bookmarks.toLocaleString()} bookmarks`} shown here in new tabs`;
   const visibleIds = new Set(nodes.map(n => n.id));
   for (const id of state.selected) if (!visibleIds.has(id)) state.selected.delete(id);
-  $('page-title').textContent = query ? 'Search results' : tag || (current ? title(current) : 'All bookmarks');
+  const specialTitle = { rediscover: 'Rediscover', duplicates: 'Duplicates' }[special];
+  $('page-title').textContent = query ? 'Search results' : specialTitle || tag || (current ? title(current) : 'All bookmarks');
   $('breadcrumbs').replaceChildren(button('Library', () => navigate(null)));
   if (tag) $('breadcrumbs').append(element('span', '', '/'), element('span', '', 'Tags'));
+  $('shuffle').hidden = special !== 'rediscover' || !nodes.length;
+  $('merge-all').hidden = special !== 'duplicates' || !copies;
+  $('view-note').hidden = !special || !nodes.length;
+  $('view-note').textContent = special === 'rediscover' ? 'A few things you saved a while ago, picked at random. The ones with notes and highlights come up more often.'
+    : `${duplicates.length.toLocaleString()} ${duplicates.length === 1 ? 'page is' : 'pages are'} saved more than once. Merging keeps the oldest bookmark with every tag, note, and highlight.`;
   if (current) for (const node of ancestors(current.id)) $('breadcrumbs').append(element('span', '', '/'), button(title(node), () => navigate(node.id)));
   const fragment = document.createDocumentFragment();
   for (const node of nodes) {
     const row = element('tr', state.selected.has(node.id) ? 'selected' : '');
+    const group = groupStarts.get(node.id);
+    if (group) row.classList.add('group-start');
     const checkCell = element('td', 'check-cell');
     const check = element('input'); check.type = 'checkbox'; check.checked = state.selected.has(node.id); check.disabled = protectedNode(node);
     check.setAttribute('aria-label', `Select ${title(node)}`);
@@ -257,6 +356,7 @@ function render() {
     if (node.note) labels.append(button('Note', () => showNote(node), 'note-chip', `Show the note on ${title(node)}`));
     const highlights = node.highlights?.length;
     if (highlights) labels.append(button(`${highlights} ${highlights === 1 ? 'highlight' : 'highlights'}`, () => showHighlights(node.id), 'highlight-chip', `Show highlights on ${title(node)}`));
+    if (group) labels.append(button(`Merge ${group.length} copies`, () => mergeGroups([group]).catch(fail), 'merge-chip', `Merge the ${group.length} bookmarks for ${displayDomain(node.url)}`));
     if (!isFolder(node)) details.append(labels);
     metadata.append(domain, details);
     text.append(link, metadata);
@@ -275,8 +375,14 @@ function render() {
     } else if (validPreview(node.preview)) {
       const image = element('img'); image.src = node.preview; image.alt = ''; image.loading = 'lazy';
       preview.append(image);
-    } else preview.append(element('span', '', isFolder(node) ? 'Folder' : 'No preview'));
-    main.append(preview, text); nameCell.append(main);
+    } else {
+      // Without a screenshot, a card shows the site's icon or its letter on the site's color.
+      const tile = siteIcon(node, true);
+      preview.classList.add(isFolder(node) ? 'folder-preview' : tile.classList.contains('image') ? 'icon-preview' : 'letter-preview');
+      if (tile.style.getPropertyValue('--hue')) preview.style.setProperty('--hue', tile.style.getPropertyValue('--hue'));
+      preview.append(tile);
+    }
+    main.append(preview, siteIcon(node), text); nameCell.append(main);
     const location = element('td', 'item-location', path(node.parentId)); location.title = path(node.parentId);
     const actions = element('td', 'row-actions');
     if (!protectedNode(node)) actions.append(iconButton('pencil', () => openEditor(node), 'item-action', `Edit ${title(node)}`), iconButton('trash', () => removeItems([node.id]).catch(fail), 'item-action', `Delete ${title(node)}`));
@@ -287,8 +393,13 @@ function render() {
   $('items').replaceChildren(fragment);
   document.querySelector('.table-wrap').hidden = nodes.length === 0;
   $('empty').hidden = nodes.length > 0;
-  $('empty').querySelector('h2').textContent = query ? 'No bookmarks found' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
-  $('empty').querySelector('p').textContent = query ? 'Try another name, URL, folder, note, or tag.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  // An empty library greets you with ways to fill it.
+  const welcome = !query && !special && !tag && !current && !nodes.length;
+  $('welcome').hidden = !welcome;
+  $('empty').classList.toggle('welcoming', welcome);
+  document.querySelector('.list-toolbar').hidden = welcome;
+  $('empty').querySelector('h2').textContent = welcome ? 'Welcome to Marked' : query ? 'No bookmarks found' : special === 'rediscover' ? 'Nothing to rediscover yet' : special === 'duplicates' ? 'No duplicates' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
+  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try another name, URL, folder, note, or tag.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
   renderSemanticStatus();
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
@@ -305,7 +416,7 @@ function tweetEmbed(id) {
   frame.dataset.tweet = id;
   // Unknown posts start collapsed rather than at a placeholder height.
   frame.style.height = `${tweetHeights[id] || 0}px`;
-  frame.src = `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true`;
+  frame.src = `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true${isDark() ? '&theme=dark' : ''}`;
   frame.title = 'Post on X';
   frame.loading = 'lazy';
   frame.referrerPolicy = 'no-referrer';
@@ -440,7 +551,7 @@ function openSettings(message = '') {
   $('settings-status').textContent = message;
   $('settings-error').textContent = '';
   renderUsage();
-  renderEstimate();
+  renderEstimate().catch(() => {});
   $('settings-dialog').showModal();
   if (!jev.apiKey) $('jev-key').focus();
 }
@@ -585,6 +696,7 @@ $('editor-form').addEventListener('submit', async event => {
       changes.preview = !folder && $('save-preview').checked && url === pendingPreviewURL ? pendingPreview : null;
     }
     if (pendingHighlight && !state.editing) changes.highlights = [{ text: pendingHighlight, note: $('edit-highlight-note').value }];
+    if (pendingIcon && !state.editing && url === pendingPreviewURL) changes.icon = pendingIcon;
     const parentId = $('edit-parent').value;
     if (state.editing) {
       await library.update(state.editing.id, changes, parentId);
@@ -611,9 +723,26 @@ function download(contents, type, name, extension) {
   const link = element('a'); link.href = url; link.download = `${name}-${new Date().toISOString().slice(0, 10)}.${extension}`;
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-$('export').addEventListener('click', () => {
+// Export offers two files: every bookmark as a standard bookmarks file, and the
+// notes and highlights as Markdown for a notes app.
+function exportBookmarks() {
   download(exportHTML(state.root), 'text/html;charset=utf-8', 'marked-bookmarks', 'html');
   toast('Exported your complete bookmark collection.');
+}
+function exportNotes() {
+  const annotated = [...state.nodes.values()].filter(node => node.url && (node.note || node.highlights?.length)).length;
+  if (!annotated) { toast('No notes or highlights to export yet.'); return; }
+  download(exportMarkdown(state.root), 'text/markdown;charset=utf-8', 'marked-notes', 'md');
+  toast(`Exported the notes and highlights on ${annotated} ${annotated === 1 ? 'bookmark' : 'bookmarks'}.`);
+}
+$('export-html').addEventListener('click', () => { $('export-menu').hidePopover?.(); exportBookmarks(); });
+$('export-markdown').addEventListener('click', () => { $('export-menu').hidePopover?.(); exportNotes(); });
+// The menu opens under Export; popovers otherwise sit in the middle of the page.
+$('export-menu').addEventListener('toggle', event => {
+  if (event.newState !== 'open') return;
+  const anchor = $('export').getBoundingClientRect(), menu = $('export-menu');
+  menu.style.top = `${anchor.bottom + 8}px`;
+  menu.style.left = `${Math.max(8, Math.min(anchor.left - 16, document.defaultView.innerWidth - menu.offsetWidth - 8))}px`;
 });
 // Each browser keeps its own Marked library. A backup keeps dates and previews,
 // which HTML exports drop, so a library can move between Firefox and Chrome.
@@ -656,7 +785,11 @@ const browserName = (async () => {
   const brand = navigator.userAgentData?.brands?.map(({ brand }) => brand).find(brand => /^(Google Chrome|Microsoft Edge|Brave|Opera)$/.test(brand));
   return brand?.replace(/^(Google|Microsoft) /, '') || 'your browser';
 })();
-browserName.then(name => { $('browser-import-open').textContent = `Import from ${name}…`; });
+browserName.then(name => {
+  $('browser-import-open').textContent = `Import from ${name}…`;
+  $('welcome-import').textContent = `Import from ${name}`;
+});
+$('welcome-import').addEventListener('click', () => offerBrowserImport({ asked: true }).catch(fail));
 const bookmarkCount = count => `${count.toLocaleString()} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
 async function offerBrowserImport({ asked = false } = {}) {
   const [[browserRoot], name] = await Promise.all([browser.bookmarks.getTree(), browserName]);
@@ -708,6 +841,11 @@ $('chat-toggle').addEventListener('click', async () => {
   } catch (error) { fail(error); }
 });
 $('all-bookmarks').addEventListener('click', () => navigate(null));
+$('rediscover-nav').addEventListener('click', () => showSpecial('rediscover'));
+$('duplicates-nav').addEventListener('click', () => showSpecial('duplicates'));
+$('shuffle').addEventListener('click', () => { state.rediscover = pickRediscover(); render(); });
+$('merge-all').addEventListener('click', () => mergeGroups(findDuplicates()).catch(fail));
+$('welcome-add').addEventListener('click', () => openEditor());
 $('suggest-tags').addEventListener('click', () => suggestEditorTags().catch(fail));
 $('sidebar-add-tag').addEventListener('click', () => {
   $('tag-name').value = ''; $('tag-error').textContent = '';
@@ -795,7 +933,12 @@ $('semantic-toggle').addEventListener('click', () => {
   $('search').focus();
 });
 $('settings').addEventListener('click', () => openSettings());
-for (const id of ['jev-notes', 'jev-highlights']) $(id).addEventListener('change', renderEstimate);
+for (const choice of document.querySelectorAll('[data-theme-choice]')) choice.addEventListener('click', () => setTheme(choice.dataset.themeChoice));
+applyTheme(readTheme());
+darkScheme?.addEventListener('change', () => { if (!document.documentElement.dataset.theme) render(); });
+// Another Marked tab changed the theme.
+document.defaultView.addEventListener('storage', event => { if (event.key === THEME_KEY) { applyTheme(event.newValue || 'system'); render(); } });
+for (const id of ['jev-notes', 'jev-highlights']) $(id).addEventListener('change', () => renderEstimate().catch(() => {}));
 $('jev-reset').addEventListener('click', async () => {
   jevUsage = { calls: 0, inputTokens: 0, outputTokens: 0, since: Date.now() };
   await browser.storage.local.set({ [JEV_USAGE_KEY]: jevUsage }).catch(fail);
@@ -836,19 +979,182 @@ $('settings-form').addEventListener('submit', async event => {
   } finally { submit.disabled = false; }
 });
 $('sort').addEventListener('change', render);
-for (const mode of ['list', 'gallery']) $(mode + '-view').addEventListener('click', () => {
+function setView(mode) {
   view = mode; render();
   browser.storage.local.set({ markedView: mode }).catch(fail);
-});
+}
+for (const mode of ['list', 'gallery']) $(mode + '-view').addEventListener('click', () => setView(mode));
 $('editor').addEventListener('close', () => {
-  pendingPreview = null; pendingPreviewURL = null; showEditorPreview();
+  pendingPreview = null; pendingPreviewURL = null; pendingIcon = null; showEditorPreview();
 });
 $('select-all').addEventListener('change', () => { state.selected = new Set($('select-all').checked ? state.visible.filter(n => !protectedNode(n)).map(n => n.id) : []); render(); });
 $('clear-selection').addEventListener('click', () => { state.selected.clear(); render(); });
 $('delete-selected').addEventListener('click', () => removeItems([...state.selected]).catch(fail));
 document.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => $(el.dataset.close).close()));
+// Key names as this computer shows them.
+const MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '');
+const KEY = { mod: MAC ? '⌘' : 'Ctrl', alt: MAC ? '⌥' : 'Alt', shift: MAC ? '⇧' : 'Shift' };
+function keys(...names) {
+  const span = element('span', 'keys');
+  for (const name of names) span.append(element('kbd', '', name));
+  return span;
+}
+const SHORTCUTS = [
+  [[KEY.mod, 'K'], 'Jump to a bookmark, folder, tag, or command'],
+  [['/'], 'Search'],
+  [['?'], 'Show these shortcuts'],
+  [['esc'], 'Close a dialog'],
+  [[KEY.alt, KEY.shift, 'M'], 'Save the page you’re on, from any tab'],
+  [['mk', 'space'], 'Search Marked from the address bar'],
+  [[KEY.mod, '↵'], 'Save a highlight on a page']
+];
+function showShortcuts() {
+  $('shortcuts-list').replaceChildren(...SHORTCUTS.flatMap(([names, what]) => {
+    const term = element('dt');
+    term.append(keys(...names));
+    return [term, element('dd', '', what)];
+  }));
+  $('shortcuts-dialog').showModal();
+}
+$('palette-open').replaceChildren(keys(MAC ? '⌘K' : 'Ctrl K'));
+$('welcome-tips').replaceChildren(...[
+  [[element('b', '', 'Select text')], ' on any page, then choose ', element('b', '', 'Highlight')],
+  [[keys(KEY.alt, KEY.shift, 'M')], ' saves the page you’re on'],
+  [[keys('mk', 'space')], ' in the address bar searches your library'],
+  [[keys(KEY.mod, 'K')], ' jumps to anything here']
+].map(([lead, ...rest]) => { const tip = element('li'); tip.append(...lead, ...rest); return tip; }));
+
+// ⌘K or Ctrl+K: jump to any bookmark, folder, or tag, or run a command. Before
+// anything is typed, it lists the newest bookmarks and every command.
+const palette = { results: [], active: 0 };
+function commands() {
+  const theme = readTheme();
+  return [
+    ['Add bookmark', 'new save create page', () => openEditor()],
+    ['New folder', 'create', () => openEditor(null, true)],
+    ['Save open tabs', 'session window', () => $('save-tabs').click()],
+    ['Rediscover', 'random old resurface forgotten', () => showSpecial('rediscover')],
+    ['Find duplicates', 'merge copies dedupe', () => showSpecial('duplicates')],
+    [view === 'list' ? 'Show the gallery' : 'Show the list', 'view layout cards previews', () => setView(view === 'list' ? 'gallery' : 'list')],
+    ['Import a bookmarks file', 'html json backup restore', () => $('import').click()],
+    ['Import from this browser', 'chrome firefox bookmarks', () => offerBrowserImport({ asked: true }).catch(fail)],
+    ['Export bookmarks', 'html download file', exportBookmarks],
+    ['Export notes and highlights', 'markdown obsidian notion download', exportNotes],
+    ['Download a backup', 'json move browser', () => $('backup').click()],
+    ['Open chat', 'ai ask question model', () => $('chat-toggle').click()],
+    ['Settings', 'preferences jev typesafe key theme appearance', () => openSettings()],
+    ...[['dark', 'Use the dark theme'], ['light', 'Use the light theme'], ['system', 'Match the system’s theme']]
+      .filter(([value]) => value !== theme).map(([value, label]) => [label, 'appearance night day color mode', () => setTheme(value)]),
+    ['Keyboard shortcuts', 'help keys', showShortcuts]
+  ].map(([label, keywords, run]) => ({ kind: 'command', label, keywords, run }));
+}
+function paletteResults(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  // 3: the name starts with the query; 2: a word in it does; 1: it's in there.
+  const score = (label, extra = '') => {
+    const name = label.toLowerCase(), more = extra.toLowerCase();
+    if (!words.every(word => name.includes(word) || more.includes(word))) return 0;
+    if (name.startsWith(words.join(' '))) return 3;
+    return name.split(/[^\p{L}\p{N}]+/u).some(part => part.startsWith(words[0])) ? 2 : 1;
+  };
+  const results = commands().map(command => ({ ...command, score: words.length ? score(command.label, command.keywords) + 0.2 : 1 })).filter(command => command.score >= 1);
+  if (!words.length) {
+    const newest = [...state.nodes.values()].filter(node => node.url).sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0)).slice(0, 5);
+    return [...newest.map(node => ({ kind: 'bookmark', node, label: title(node) })), ...results];
+  }
+  for (const node of state.nodes.values()) {
+    if (node.id === state.root.id || node.type === 'separator') continue;
+    const found = isFolder(node) ? score(title(node)) : score(title(node), `${node.url} ${(node.tags || []).join(' ')}`);
+    if (found) results.push({ kind: isFolder(node) ? 'folder' : 'bookmark', node, label: title(node), score: found + (isFolder(node) ? 0.1 : 0) });
+  }
+  for (const tag of state.tags) {
+    const found = score(tag);
+    if (found) results.push({ kind: 'tag', tag, label: tag, score: found + 0.1 });
+  }
+  return results.sort((a, b) => b.score - a.score || (b.node?.dateAdded || 0) - (a.node?.dateAdded || 0)).slice(0, 40);
+}
+function renderPalette() {
+  const kinds = { bookmark: 'Open', folder: 'Folder', tag: 'Tag', command: 'Command' };
+  // Before anything is typed, the list has two parts: the newest bookmarks and the commands.
+  const browsing = !$('palette-input').value.trim();
+  let section = '';
+  $('palette-list').replaceChildren(...palette.results.flatMap((result, index) => {
+    const heading = browsing ? (result.kind === 'command' ? 'Commands' : 'Recent') : '';
+    const label = heading && heading !== section ? [element('li', 'palette-section', heading)] : [];
+    section = heading;
+    if (label.length) label[0].setAttribute('role', 'presentation');
+    const item = element('li', 'palette-item');
+    item.id = `palette-${index}`;
+    item.setAttribute('role', 'option');
+    const icon = result.node ? siteIcon(result.node) : element('span', `site-icon ${result.kind}-glyph`, result.kind === 'tag' ? '#' : '›');
+    icon.setAttribute('aria-hidden', 'true');
+    const text = element('span', 'palette-text');
+    text.append(element('span', 'palette-label', result.label));
+    const detail = result.kind === 'bookmark' ? displayDomain(result.node.url) : result.kind === 'folder' ? path(result.node.parentId) : '';
+    if (detail) text.append(element('span', 'palette-detail', detail));
+    item.append(icon, text, element('span', 'palette-kind', kinds[result.kind]));
+    item.addEventListener('mousemove', () => { if (palette.active !== index) { palette.active = index; markActive(); } });
+    item.addEventListener('click', () => runPalette(index));
+    return [...label, item];
+  }));
+  if (!palette.results.length) $('palette-list').append(element('li', 'palette-empty', 'Nothing matches. Try other words.'));
+  markActive();
+}
+function markActive() {
+  for (const item of $('palette-list').querySelectorAll('.palette-item')) item.setAttribute('aria-selected', String(item.id === `palette-${palette.active}`));
+  const active = $(`palette-${palette.active}`);
+  $('palette-input').setAttribute('aria-activedescendant', active ? active.id : '');
+  active?.scrollIntoView?.({ block: 'nearest' });
+}
+function openPalette() {
+  $('palette-input').value = '';
+  palette.results = paletteResults('');
+  palette.active = 0;
+  renderPalette();
+  $('palette').showModal();
+  $('palette-input').focus();
+}
+function runPalette(index) {
+  const result = palette.results[index];
+  if (!result) return;
+  $('palette').close();
+  if (result.kind === 'bookmark') browser.tabs.create({ url: result.node.url }).catch(fail);
+  else if (result.kind === 'folder') navigate(result.node.id);
+  else if (result.kind === 'tag') showTag(result.tag);
+  else result.run();
+}
+$('palette-input').addEventListener('input', () => {
+  palette.results = paletteResults($('palette-input').value);
+  palette.active = 0;
+  renderPalette();
+});
+$('palette-input').addEventListener('keydown', event => {
+  const count = palette.results.length;
+  if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && count) {
+    event.preventDefault();
+    palette.active = (palette.active + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+    markActive();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    runPalette(palette.active);
+  }
+});
+// A click beside the box closes it.
+$('palette').addEventListener('click', event => { if (event.target === $('palette')) $('palette').close(); });
+$('palette-open').addEventListener('click', () => openPalette());
+
 document.addEventListener('keydown', event => {
-  if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('dialog[open]') && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) { event.preventDefault(); $('search').focus(); }
+  // ⌘K or Ctrl+K opens the palette from anywhere, and closes it again.
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    if ($('palette').open) $('palette').close();
+    else if (!document.querySelector('dialog[open]')) openPalette();
+    return;
+  }
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
+  if (event.ctrlKey || event.metaKey || event.altKey || typing || document.querySelector('dialog[open]')) return;
+  if (event.key === '/') { event.preventDefault(); $('search').focus(); }
+  else if (event.key === '?') { event.preventDefault(); showShortcuts(); }
 });
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[STORAGE_KEY]) {
@@ -888,6 +1194,7 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   const capture = await readCapture(params.get('capture'));
   if ($('editor').open && capture?.url === url) {
     if (validPreview(capture.preview)) { pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview(); }
+    if (validIcon(capture.icon)) { pendingIcon = capture.icon; pendingPreviewURL = url; }
     // Don't overwrite anything typed while the capture was loading.
     const abstract = cleanAbstract(capture.abstract);
     if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;

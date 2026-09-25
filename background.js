@@ -1,8 +1,8 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
 import './browser-api.js';
-import { cleanAbstract, cleanHighlightText, safeURL, searchPages } from './bookmarks.js';
+import { cleanAbstract, cleanHighlightText, safeURL, searchPages, validIcon } from './bookmarks.js';
 import { INDEX_KEY, createLibraryStore } from './store.js';
-import { readPageAbstract } from './page-abstract.js';
+import { readPageAbstract, readPageIcon } from './page-abstract.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
@@ -45,12 +45,26 @@ async function capturePreview(tab) {
     const scale = Math.min(480 / image.width, 320 / image.height, 1);
     const canvas = new OffscreenCanvas(Math.max(1, Math.round(image.width * scale)), Math.max(1, Math.round(image.height * scale)));
     canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
-    const data = new Uint8Array(await blob.arrayBuffer());
-    let binary = '';
-    for (const byte of data) binary += String.fromCharCode(byte);
-    return `data:image/jpeg;base64,${btoa(binary)}`;
+    return dataURL(await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 }));
   } finally { image.close(); }
+}
+async function dataURL(blob) {
+  let binary = '';
+  for (const byte of new Uint8Array(await blob.arrayBuffer())) binary += String.fromCharCode(byte);
+  return `data:${blob.type};base64,${btoa(binary)}`;
+}
+
+// The page's icon for the library's lists, read by the page itself, like the
+// abstract. Marked's pages may only contact a few known services, so it never
+// downloads icons. Without one, Marked shows a letter tile instead.
+async function captureIcon(tab) {
+  if (tab?.id == null) return null;
+  let timer;
+  const timeout = new Promise(resolve => { timer = setTimeout(resolve, 2000, []); });
+  try {
+    const [injection] = await Promise.race([browser.scripting.executeScript({ target: { tabId: tab.id }, func: readPageIcon }), timeout]);
+    return validIcon(injection?.result) ? injection.result : null;
+  } finally { clearTimeout(timer); }
 }
 
 // activeTab grants access to this tab only after the user chooses Add to Marked.
@@ -103,11 +117,12 @@ async function addPage(info, tab) {
   // A page already in Marked opens its bookmark instead of adding a second copy.
   const saved = await findBookmark(url).catch(() => null);
   if (saved) return openManager(new URLSearchParams({ edit: saved.id }));
-  const [preview, abstract] = await Promise.all([
+  const [preview, abstract, icon] = await Promise.all([
     capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; }),
-    captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; })
+    captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; }),
+    captureIcon(tab).catch(() => null)
   ]);
-  await openEditor(url, tab?.title || url, preview || abstract ? { ...(preview && { preview }), ...(abstract && { abstract }) } : null);
+  await openEditor(url, tab?.title || url, preview || abstract || icon ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }) } : null);
 }
 
 async function saveTweet(tab) {
@@ -228,11 +243,12 @@ async function highlightPage(tab, message) {
   if (!text || !tab?.url) return null;
   const bookmark = await findBookmark(tab.url);
   if (bookmark) return { saved: bookmark.title || bookmark.url };
-  const [preview, abstract] = await Promise.all([
+  const [preview, abstract, icon] = await Promise.all([
     capturePreview(tab).catch(() => null),
-    captureAbstract(tab, tab.url).catch(() => '')
+    captureAbstract(tab, tab.url).catch(() => ''),
+    captureIcon(tab).catch(() => null)
   ]);
-  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }) });
+  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }) });
   return { opened: true };
 }
 // The page's panel saves a highlight. The bookmark is looked up again from the

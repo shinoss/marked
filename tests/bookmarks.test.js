@@ -68,3 +68,42 @@ test('rejects invalid documents', () => {
   assert.throws(() => parseJSON('invalid json'));
   assert.throws(() => parseJSON('null'));
 });
+
+test('site letters come from the site’s name, with a stable color; icons must be small data images', async () => {
+  const { monogram, validIcon } = await import('../bookmarks.js');
+  assert.equal(monogram('https://en.wikipedia.org/wiki/Attention').letter, 'W');
+  assert.equal(monogram('https://www.github.com/x').letter, 'G');
+  assert.equal(monogram('https://news.bbc.co.uk/').letter, 'B');
+  assert.equal(monogram('https://x.com/jack/status/20').letter, 'X');
+  assert.equal(monogram('not a url').letter, '•');
+  assert.equal(monogram('https://a.example.com/').hue, monogram('https://b.example.com/other').hue, 'one site, one color');
+  assert.ok(validIcon('data:image/png;base64,iVBORw0KGgo='));
+  assert.ok(validIcon('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='));
+  assert.ok(!validIcon('https://example.com/favicon.ico'));
+  assert.ok(!validIcon('data:text/html;base64,PGI+'));
+  assert.ok(!validIcon(`data:image/png;base64,${'A'.repeat(20000)}`));
+});
+
+test('duplicates match the same page despite fragments, www, http, tracking parameters, and a trailing slash', async () => {
+  const { pageIdentity } = await import('../bookmarks.js');
+  const same = ['https://www.example.com/post/', 'http://example.com/post#comments', 'https://example.com/post?utm_source=x&utm_medium=y', 'https://example.com/post?fbclid=1'];
+  assert.equal(new Set(same.map(pageIdentity)).size, 1);
+  assert.notEqual(pageIdentity('https://example.com/post?id=1'), pageIdentity('https://example.com/post?id=2'), 'real parameters count');
+  assert.notEqual(pageIdentity('https://example.com/Post'), pageIdentity('https://example.com/post'), 'paths keep their case');
+});
+
+test('exports notes and highlights as Markdown, with each bookmark’s folder and tags', async () => {
+  const { exportMarkdown } = await import('../bookmarks.js');
+  const root = { children: [{ title: 'Reading', children: [
+    { title: 'On [attention]', url: 'https://example.com/a (1)', tags: ['Deep work'], note: 'Reread before the review.', highlights: [{ text: 'A saved link is a promise.', note: 'Why I take notes.' }] },
+    { title: 'Plain', url: 'https://plain.test/' }
+  ] }] };
+  assert.equal(exportMarkdown(root, new Date('2026-09-25T12:00:00Z')), [
+    '# Notes and highlights from Marked', '', 'Exported 2026-09-25.', '',
+    '## [On \\[attention\\]](https://example.com/a%20%281%29)', '',
+    '*Reading · #Deep-work*', '',
+    'Reread before the review.', '',
+    '> A saved link is a promise.', '',
+    'Why I take notes.', ''
+  ].join('\n'), 'bookmarks without notes or highlights are left out');
+});

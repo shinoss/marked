@@ -213,3 +213,20 @@ test('keeps a small index of pages and their highlights, without previews, and b
   await store.removeMany([created.id]);
   assert.deepEqual((await store.getIndex()).pages.map(entry => entry.id), ['a']);
 });
+
+test('merges copies of a page into the oldest, keeping every tag, note, and highlight; icons live with their address', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const icon = 'data:image/png;base64,iVBORw0KGgo=';
+  const first = await store.create({ parentId: 'home', title: 'First', url: 'https://page.test/', dateAdded: 10, tags: ['AI'], note: 'Why I saved it.', highlights: [{ text: 'One' }] });
+  const second = await store.create({ parentId: 'folder', title: 'Second', url: 'https://www.page.test/#top', dateAdded: 20, tags: ['AI', 'Essays'], note: 'Another reason.', highlights: [{ text: 'One' }, { text: 'Two', note: 'Mine' }], icon, abstract: 'About the page.' });
+  assert.equal(await store.mergeDuplicates([[second.id, first.id]]), 1);
+  const [root] = await store.getTree();
+  const home = root.children[0];
+  const kept = home.children.find(node => node.id === first.id);
+  assert.deepEqual({ title: kept.title, tags: kept.tags, note: kept.note, highlights: kept.highlights.map(h => h.text), icon: kept.icon, abstract: kept.abstract },
+    { title: 'First', tags: ['AI', 'Essays'], note: 'Why I saved it.\n\nAnother reason.', highlights: ['One', 'Two'], icon, abstract: 'About the page.' });
+  assert.equal(home.children.find(node => node.id === 'folder').children.length, 0, 'the newer copy is gone');
+  await store.update(first.id, { title: 'First', url: 'https://elsewhere.test/' });
+  assert.equal('icon' in (await store.getTree())[0].children[0].children.find(node => node.id === first.id), false, 'a new address drops the old site’s icon');
+  assert.equal(await store.mergeDuplicates([[first.id]]), 0);
+});

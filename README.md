@@ -36,11 +36,24 @@ Browser bookmarks are a pile of titles you never open again. Marked keeps the *w
 
 ### Organize and find
 
-Folders, tags, notes, and page abstracts captured when you save. Search everything instantly (press <kbd>/</kbd>), or browse a gallery of page previews and embedded posts from X.
+Folders, tags, notes, and page abstracts captured when you save. Search everything instantly (press <kbd>/</kbd>), or browse a gallery of page previews and embedded posts from X. Each bookmark shows its site's icon, or its initial in the site's color.
 
 <p align="center">
   <img src="docs/images/gallery.png" width="880" alt="Gallery view with page previews and an embedded post from X">
 </p>
+
+### Jump anywhere
+
+Press <kbd>⌘</kbd>+<kbd>K</kbd> (<kbd>Ctrl</kbd>+<kbd>K</kbd> on Windows and Linux) to jump to any bookmark, folder, or tag, or to run a command. Press <kbd>?</kbd> for every shortcut.
+
+<p align="center">
+  <img src="docs/images/palette.png" width="880" alt="The command palette, matching bookmarks, folders, and commands as you type">
+</p>
+
+### Keep it fresh
+
+- **Rediscover** brings back a few things you saved a while ago, favoring ones with notes or highlights.
+- **Duplicates** finds pages you saved more than once and merges them, keeping every tag, note, and highlight.
 
 ### Highlight any sentence
 
@@ -95,13 +108,21 @@ Right-click a post on x.com and choose **Save tweet to Marked**.
   <img src="docs/images/chat.png" width="880" alt="Local chat answering a question about the library, with citations">
 </p>
 
+### Light or dark
+
+Marked follows your system's theme, or pick one in **Settings**.
+
+<p align="center">
+  <img src="docs/images/dark.png" width="880" alt="The gallery in the dark theme">
+</p>
+
 ### Search by meaning
 
 Add a [TypeSafe Jev](https://typesafe.ai) API key in **Settings**, then click **Semantic** to rank bookmarks by meaning instead of keywords.
 
 ### Yours to keep
 
-On first run, Marked offers to import your browser's bookmarks, folders and all, and never changes them. **Backup** moves everything to Marked in another browser; **Export** writes a standard bookmarks file.
+On first run, Marked offers to import your browser's bookmarks, folders and all, and never changes them. **Backup** moves everything to Marked in another browser; **Export** writes a standard bookmarks file, or your notes and highlights as Markdown.
 
 <p align="center">
   <img src="docs/images/browser-import.png" width="880" alt="On first run, Marked offers to import the bookmarks it found in Chrome">

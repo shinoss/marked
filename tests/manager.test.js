@@ -25,7 +25,8 @@ test('manager renders, searches, creates, and moves bookmarks through the API', 
   $('gallery-view').click();
   assert.equal(document.querySelector('.table-wrap').classList.contains('gallery'), true);
   assert.equal($('gallery-view').getAttribute('aria-pressed'), 'true');
-  assert.equal($('items').querySelector('.card-preview').textContent, 'No preview');
+  const card = $('items').querySelector('.card-preview');
+  assert.deepEqual([card.textContent, card.classList.contains('letter-preview')], ['E', true], 'a card without a screenshot shows the site’s letter');
   $('list-view').click();
   assert.equal(document.querySelector('.table-wrap').classList.contains('gallery'), false);
   $('search').value = 'Reading'; $('search').dispatchEvent(new dom.window.Event('input'));
@@ -395,5 +396,125 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   assert.equal($('open-all').hidden, false);
   $('open-all').click(); await settle();
   assert.deepEqual(created, [{ url: 'https://a.test/', active: false }, { url: 'https://b.test/path', active: false }]);
+  dom.window.close();
+});
+
+async function openManager(library, name) {
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const mock = fixture(library);
+  mock.api.storage.local.set({ markedBrowserImportAsked: 1 });
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import(`../manager.js?${name}`);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const $ = id => document.getElementById(id);
+  const key = (init, target = document) => target.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+  const type = text => { $('palette-input').value = text; $('palette-input').dispatchEvent(new dom.window.Event('input')); };
+  const labels = () => [...document.querySelectorAll('#palette-list .palette-label')].map(label => label.textContent);
+  return { dom, mock, $, key, type, labels, settle: (ms = 30) => new Promise(resolve => setTimeout(resolve, ms)) };
+}
+
+test('an empty library welcomes you; the palette jumps anywhere; themes and shortcuts', async () => {
+  let { dom, $ } = await openManager({ id: 'root', children: [] }, 'welcome');
+  assert.equal($('welcome').hidden, false);
+  assert.equal(document.querySelector('#empty h2').textContent, 'Welcome to Marked');
+  assert.equal($('welcome-tips').children.length, 4);
+  $('welcome-add').click();
+  assert.ok($('editor').open, 'Add a bookmark opens the editor');
+  dom.window.close();
+
+  const opened = [];
+  const page = await openManager({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'pasta', parentId: 'reading', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark', dateAdded: 2 },
+    { id: 'essay', parentId: 'reading', title: 'On attention', url: 'https://example.com/essay', type: 'bookmark', dateAdded: 1 }
+  ] }] }, 'palette');
+  ({ dom, $ } = page);
+  page.mock.api.tabs = { create: async details => { opened.push(details); } };
+  assert.equal($('welcome').hidden, true);
+
+  page.key({ key: 'k', metaKey: true });
+  assert.ok($('palette').open, '⌘K opens the palette');
+  assert.deepEqual(page.labels().slice(0, 2), ['Weeknight pasta', 'On attention'], 'newest bookmarks first, then commands');
+  assert.ok(page.labels().includes('Save open tabs'));
+  page.type('past');
+  assert.equal(page.labels()[0], 'Weeknight pasta');
+  page.key({ key: 'Enter' }, $('palette-input'));
+  await page.settle();
+  assert.ok(!$('palette').open);
+  assert.deepEqual(opened, [{ url: 'https://food.test/pasta' }], 'Enter opens the bookmark');
+
+  page.key({ key: 'k', ctrlKey: true });
+  page.type('read');
+  assert.equal(page.labels()[0], 'Reading');
+  page.key({ key: 'Enter' }, $('palette-input'));
+  assert.equal($('page-title').textContent, 'Reading', 'a folder opens');
+
+  page.key({ key: 'k', metaKey: true });
+  page.type('dark');
+  assert.equal(page.labels()[0], 'Use the dark theme');
+  page.key({ key: 'Enter' }, $('palette-input'));
+  assert.equal(document.documentElement.dataset.theme, 'dark');
+  assert.equal(dom.window.localStorage.getItem('markedTheme'), 'dark');
+  page.key({ key: 'k', metaKey: true });
+  page.type('zzqx');
+  assert.equal($('palette-list').textContent, 'Nothing matches. Try other words.');
+  page.key({ key: 'k', metaKey: true });
+  assert.ok(!$('palette').open, '⌘K again closes it');
+
+  $('settings').click();
+  document.querySelector('[data-theme-choice="system"]').click();
+  assert.equal(document.documentElement.dataset.theme, undefined, 'System follows the computer');
+  assert.equal(document.querySelector('[data-theme-choice="system"]').getAttribute('aria-checked'), 'true');
+  $('settings-dialog').close();
+
+  // A real browser returns focus to the page when a dialog closes.
+  document.activeElement.blur();
+  page.key({ key: '?' });
+  assert.ok($('shortcuts-dialog').open);
+  assert.equal($('shortcuts-list').querySelectorAll('dt').length, 7);
+  dom.window.localStorage.clear();
+  dom.window.close();
+});
+
+test('duplicates merge into one bookmark; Rediscover picks old ones; notes export as Markdown', async t => {
+  const old = Date.now() - 30 * 864e5;
+  const page = await openManager({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'a', parentId: 'reading', title: 'On attention', url: 'https://example.com/post', type: 'bookmark', dateAdded: old, note: 'Why I saved it.', tags: ['Essays'] },
+    { id: 'b', parentId: 'reading', title: 'On attention, again', url: 'https://www.example.com/post/#top', type: 'bookmark', dateAdded: old + 1000, highlights: [{ id: 'h', text: 'A passage.', createdAt: 1 }] },
+    { id: 'c', parentId: 'reading', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark', dateAdded: Date.now() }
+  ] }] }, 'duplicates');
+  const { dom, $ } = page;
+  const titles = () => [...$('items').querySelectorAll('.item-title')].map(link => link.textContent);
+  assert.equal($('duplicates-nav').hidden, false);
+  assert.equal($('duplicates-count').textContent, '1');
+  $('duplicates-nav').click();
+  assert.equal($('page-title').textContent, 'Duplicates');
+  assert.deepEqual(titles(), ['On attention', 'On attention, again'], 'oldest first');
+  assert.equal($('items').querySelector('.merge-chip').textContent, 'Merge 2 copies');
+  $('merge-all').click(); await page.settle();
+  $('confirm-dialog').returnValue = 'accept'; $('confirm-dialog').close(); await page.settle(60);
+  const saved = (await browser.storage.local.get()).markedLibraryV1.root.children[0].children;
+  assert.deepEqual(saved.map(node => node.id), ['a', 'c']);
+  assert.deepEqual([saved[0].note, saved[0].highlights.map(h => h.text)], ['Why I saved it.', ['A passage.']]);
+  assert.equal($('toast').textContent, 'Merged 1 copy.');
+  assert.equal(document.querySelector('#empty h2').textContent, 'No duplicates');
+
+  $('rediscover-nav').click();
+  assert.equal($('page-title').textContent, 'Rediscover');
+  assert.ok($('rediscover-nav').classList.contains('active'));
+  assert.deepEqual(titles(), ['On attention'], 'only bookmarks saved more than two weeks ago');
+  assert.equal($('shuffle').hidden, false);
+
+  let exported;
+  t.mock.method(URL, 'createObjectURL', blob => { exported = blob; return 'blob:marked'; });
+  $('export-markdown').click();
+  const markdown = await exported.text();
+  assert.match(markdown, /^# Notes and highlights from Marked/);
+  assert.match(markdown, /## \[On attention\]\(https:\/\/example\.com\/post\)\n\n\*Reading · #Essays\*\n\nWhy I saved it\.\n\n> A passage\./);
+  assert.ok(!markdown.includes('pasta'), 'only bookmarks with notes or highlights');
   dom.window.close();
 });
