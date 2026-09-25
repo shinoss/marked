@@ -4,6 +4,8 @@ import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
+import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
+import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
@@ -15,6 +17,12 @@ let pendingPreviewURL = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
 let pendingHighlight = '';
+// Semantic search with the user's own Jev key; off until a key is saved.
+// preview is temporary: it works without a key and logs requests instead of sending them.
+let jev = { apiKey: '', enabled: false, notes: true, highlights: true, preview: false };
+let jevUsage = null;
+const semantic = { query: '', result: null, status: '', error: '', cost: 0, cached: false, timer: null, controller: null, cache: new Map() };
+const semanticOn = () => jev.enabled && (!!jev.apiKey || jev.preview);
 const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const isFolder = node => node && !node.url && node.type !== 'separator';
 const protectedNode = node => node.id === state.root.id;
@@ -94,6 +102,8 @@ async function load() {
   index(root);
   if (state.folder && !state.nodes.has(state.folder)) state.folder = null;
   for (const id of state.selected) if (!state.nodes.has(id)) state.selected.delete(id);
+  // Cached rankings describe the old library; the next search asks Jev again.
+  semantic.cache.clear();
   render();
 }
 function navigate(id) {
@@ -181,6 +191,12 @@ function render() {
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
   if (sort !== 'default') nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
+  // Jev's matches lead, most relevant first; the remaining keyword matches follow.
+  if (query && semantic.result && semantic.query.toLowerCase() === query) {
+    const lead = semanticMatches(semantic.result.ranked).map(match => state.nodes.get(match.id)).filter(Boolean);
+    const ids = new Set(lead.map(node => node.id));
+    nodes = [...lead, ...nodes.filter(node => !ids.has(node.id))];
+  }
   state.visible = nodes;
   const visibleIds = new Set(nodes.map(n => n.id));
   for (const id of state.selected) if (!visibleIds.has(id)) state.selected.delete(id);
@@ -258,6 +274,7 @@ function render() {
   $('empty').hidden = nodes.length > 0;
   $('empty').querySelector('h2').textContent = query ? 'No bookmarks found' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
   $('empty').querySelector('p').textContent = query ? 'Try another name, URL, folder, note, or tag.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  renderSemanticStatus();
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
 }
@@ -320,10 +337,112 @@ async function readCapture(key) {
     return capture && Date.now() - capture.createdAt < 60000 ? capture : null;
   } catch { return null; }
 }
+function renderSemanticToggle() {
+  $('semantic-toggle').setAttribute('aria-pressed', String(semanticOn()));
+  $('search').placeholder = semanticOn() ? 'Describe what you’re looking for…' : 'Search all bookmarks…';
+}
+function renderSemanticStatus() {
+  const status = $('semantic-status');
+  const query = $('search').value.trim();
+  status.hidden = !semanticOn() || !semantic.status || semantic.query !== query;
+  if (status.hidden) return;
+  const total = jevUsage?.calls ? ` · ${formatCost(jevCost(jevUsage.inputTokens, jevUsage.outputTokens))} in total` : '';
+  if (semantic.status === 'searching') status.textContent = 'Searching by meaning with Jev…';
+  else if (semantic.status === 'error') status.textContent = `Semantic search didn't run: ${semantic.error} Showing keyword matches.`;
+  else if (semantic.status === 'preview') status.textContent = `Preview only: nothing was sent to TypeSafe. This search would cost about ${formatCost(jevCost(semantic.estimated))} (≈${semantic.estimated.toLocaleString()} input tokens; output is free). The request is in the browser console. Showing keyword matches.`;
+  else {
+    const none = semantic.result.exists < 0.35;
+    status.textContent = `${none ? 'No bookmark clearly matches; the closest come first.' : 'Ranked by meaning with Jev.'} ${semantic.cached ? 'Repeated search, no charge' : `This search ${formatCost(semantic.cost)}`}${total}.`;
+  }
+}
+// Runs a Jev search once typing pauses. A newer search cancels an older one, so
+// only the latest query is paid for; repeated queries come from the cache.
+function scheduleSemantic() {
+  clearTimeout(semantic.timer);
+  semantic.controller?.abort();
+  const query = $('search').value.trim();
+  if (!semanticOn() || query.length < 3) {
+    Object.assign(semantic, { query: '', result: null, status: '' });
+    return;
+  }
+  if (semantic.cache.has(query)) {
+    Object.assign(semantic, { query, result: semantic.cache.get(query), status: 'done', cached: true });
+    return;
+  }
+  Object.assign(semantic, { query, result: null, status: 'searching' });
+  semantic.timer = setTimeout(() => runSemantic(query), 400);
+}
+// One line per bookmark, as Jev reads them.
+const searchEntries = (options = jev) => [...state.nodes.values()].filter(node => node.url)
+  .map(node => ({ id: node.id, line: bookmarkLine(node, node.parentId === state.root.id ? '' : path(node.parentId), options) }));
+async function runSemantic(query) {
+  const controller = semantic.controller = new AbortController();
+  let inputTokens = 0, outputTokens = 0, estimated = 0;
+  const onUsage = usage => {
+    inputTokens += Number(usage.input_tokens) || 0;
+    outputTokens += Number(usage.output_tokens) || 0;
+    recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderSemanticStatus(); }, () => {});
+  };
+  try {
+    const result = await semanticSearch(query, searchEntries(), request => {
+      estimated += estimateJevTokens(request);
+      return askJev({ ...request, apiKey: jev.apiKey, preview: jev.preview, signal: controller.signal, onUsage });
+    });
+    if (controller.signal.aborted) return;
+    if (jev.preview) Object.assign(semantic, { result: null, status: 'preview', estimated });
+    else {
+      semantic.cache.set(query, result);
+      Object.assign(semantic, { result, status: 'done', cost: jevCost(inputTokens, outputTokens), cached: false });
+    }
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') return;
+    Object.assign(semantic, { result: null, status: 'error', error: error.message });
+  }
+  if ($('search').value.trim() === query) render();
+}
+async function saveJev() {
+  await browser.storage.local.set({ [JEV_SETTINGS_KEY]: jev });
+}
+function renderUsage() {
+  $('jev-usage').textContent = jevUsage?.calls
+    ? `${jevUsage.calls.toLocaleString()} ${jevUsage.calls === 1 ? 'request' : 'requests'} · ${jevUsage.inputTokens.toLocaleString()} input tokens · ${formatCost(jevCost(jevUsage.inputTokens, jevUsage.outputTokens))} since ${new Date(jevUsage.since).toLocaleDateString()}`
+    : 'No requests yet.';
+  $('jev-reset').disabled = !jevUsage?.calls;
+}
+// What one search of the whole library costs, from the requests it would send
+// with the options ticked in Settings. Nothing is sent.
+async function renderEstimate() {
+  const entries = searchEntries({ notes: $('jev-notes').checked, highlights: $('jev-highlights').checked });
+  let tokens = 0;
+  await semanticSearch('something I saved a while ago', entries, request => { tokens += estimateJevTokens(request); return {}; });
+  $('jev-estimate').textContent = entries.length
+    ? `Each search of your ${entries.length.toLocaleString()} ${entries.length === 1 ? 'bookmark' : 'bookmarks'} costs about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free).`
+    : '';
+}
+function openSettings(message = '') {
+  $('jev-key').value = jev.apiKey;
+  $('jev-notes').checked = jev.notes;
+  $('jev-highlights').checked = jev.highlights;
+  $('jev-preview').checked = jev.preview;
+  $('jev-remove').hidden = !jev.apiKey;
+  $('settings-status').textContent = message;
+  $('settings-error').textContent = '';
+  renderUsage();
+  renderEstimate();
+  $('settings-dialog').showModal();
+  if (!jev.apiKey) $('jev-key').focus();
+}
+function refreshSemantic() {
+  semantic.cache.clear();
+  renderSemanticToggle();
+  scheduleSemantic();
+  render();
+}
 let noteNode = null;
 function showNote(node) {
   noteNode = node;
   $('note-title').textContent = title(node);
+  $('note-site').textContent = displayDomain(node.url);
   $('note-text').textContent = node.note;
   $('note-dialog').showModal();
 }
@@ -540,7 +659,7 @@ const ALL_SITES = ['http://*/*', 'https://*/*'];
 $('allow-sites').addEventListener('click', async () => {
   try { if (await browser.permissions.request({ origins: ALL_SITES })) $('site-access').hidden = true; } catch (error) { fail(error); }
 });
-browser.permissions?.contains({ origins: ALL_SITES }).then(granted => { $('site-access').hidden = granted; }, () => {});
+browser.permissions?.contains?.({ origins: ALL_SITES }).then(granted => { $('site-access').hidden = granted; }, () => {});
 $('note-edit').addEventListener('click', () => { $('note-dialog').close(); if (noteNode) openEditor(noteNode); });
 // Enter adds the typed tag instead of submitting the editor.
 $('new-tag').addEventListener('keydown', event => {
@@ -552,7 +671,60 @@ $('new-bookmark').addEventListener('click', () => openEditor());
 $('new-folder').addEventListener('click', () => openEditor(null, true));
 $('sidebar-add').addEventListener('click', () => openEditor(null, true));
 let searchTimer;
-$('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.selected.clear(); render(); }, 120); });
+$('search').addEventListener('input', () => {
+  scheduleSemantic();
+  clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.selected.clear(); render(); }, 120);
+});
+$('semantic-toggle').addEventListener('click', async () => {
+  if (!jev.apiKey && !jev.preview) { openSettings('Add your TypeSafe API key to search by meaning.'); return; }
+  jev.enabled = !jev.enabled;
+  await saveJev().catch(fail);
+  refreshSemantic();
+  $('search').focus();
+});
+$('settings').addEventListener('click', () => openSettings());
+for (const id of ['jev-notes', 'jev-highlights']) $(id).addEventListener('change', renderEstimate);
+$('jev-reset').addEventListener('click', async () => {
+  jevUsage = { calls: 0, inputTokens: 0, outputTokens: 0, since: Date.now() };
+  await browser.storage.local.set({ [JEV_USAGE_KEY]: jevUsage }).catch(fail);
+  renderUsage(); renderSemanticStatus();
+});
+$('jev-remove').addEventListener('click', async () => {
+  jev = { ...jev, apiKey: '', enabled: false };
+  await saveJev().catch(fail);
+  $('settings-dialog').close(); refreshSemantic();
+});
+$('settings-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const apiKey = $('jev-key').value.trim();
+  const preview = $('jev-preview').checked;
+  const newKey = !!apiKey && apiKey !== jev.apiKey;
+  // Ask for access to TypeSafe while the click still counts as user input.
+  const access = newKey ? browser.permissions.request({ origins: JEV_ORIGINS }).catch(() => false) : Promise.resolve(true);
+  const submit = event.submitter; submit.disabled = true;
+  $('settings-error').textContent = '';
+  try {
+    if (!await access) throw new Error('Marked needs access to api.typesafe.ai to use Jev.');
+    if (newKey && !preview) {
+      // A tiny request confirms the key before anything depends on it.
+      $('settings-status').textContent = 'Checking the key with TypeSafe…';
+      await askJev({
+        apiKey, state: 'Marked is checking that this API key works.',
+        questions: { check: { type: 'noul', instructions: 'Is this text about an API key?' } },
+        onUsage: usage => recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderUsage(); }, () => {})
+      });
+    }
+    // A new key, or turning preview on, switches semantic search on.
+    const turnedOn = newKey || (preview && !jev.preview);
+    jev = { apiKey, notes: $('jev-notes').checked, highlights: $('jev-highlights').checked, preview, enabled: (!!apiKey || preview) && (turnedOn || jev.enabled) };
+    await saveJev();
+    $('settings-dialog').close();
+    refreshSemantic();
+  } catch (error) {
+    $('settings-status').textContent = '';
+    $('settings-error').textContent = error.message;
+  } finally { submit.disabled = false; }
+});
 $('sort').addEventListener('change', render);
 for (const mode of ['list', 'gallery']) $(mode + '-view').addEventListener('click', () => {
   view = mode; render();
@@ -572,9 +744,17 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[STORAGE_KEY]) {
     clearTimeout(refreshTimer); refreshTimer = setTimeout(() => load().catch(fail), 200);
   }
+  // Settings and usage changed in another Marked tab.
+  if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
+  // This tab's own saves arrive here too, unchanged, and are skipped.
+  const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', enabled: false, notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
+  if (settings && ['apiKey', 'enabled', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
 });
-Promise.all([load(), browser.storage.local.get('markedView').then(saved => {
+Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY]).then(saved => {
   view = saved.markedView === 'gallery' ? 'gallery' : 'list';
+  jev = { ...jev, ...(saved[JEV_SETTINGS_KEY] || {}) };
+  jevUsage = saved[JEV_USAGE_KEY] || null;
+  renderSemanticToggle();
 })]).then(async () => {
   render();
   const params = new URLSearchParams(document.location.search);

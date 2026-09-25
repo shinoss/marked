@@ -88,6 +88,12 @@ Open **Chat** and ask questions like *"What unexpected connections do you see?"*
   <img src="docs/images/chat.png" width="880" alt="Local chat answering a question about the library, with citations">
 </p>
 
+### Search by meaning with Jev
+
+Turn on **Semantic** in the search box and describe what you're looking for, such as *"that essay about protecting focus"*. Marked asks TypeSafe's [Jev](https://typesafe.ai) model which bookmarks match, even when they share no words with your query, and puts them first, followed by ordinary keyword matches. It follows TypeSafe's [line-by-line search recipe](https://docs.typesafe.ai/cookbooks/semantic_find.md): each bookmark is one short line, a single request ranks up to 250 of them, and larger libraries are ranked in parallel windows and then merged. Bring your own API key: add it in **Settings**, and Marked checks it with a tiny request before saving it.
+
+Every request's cost is added to a running total, shown after each search (*"This search $0.000076 · $0.0042 in total"*) and in **Settings**, where you can reset it. The estimate uses the token counts TypeSafe reports, at $0.042 per million input tokens; output is free. A typical search of a few hundred bookmarks costs well under a tenth of a cent, and repeating a search costs nothing until your library changes.
+
 ### Yours to keep
 
 - **Independent from your browser's bookmarks.** Marked copies them once, on first run, and never changes them.
@@ -124,6 +130,7 @@ Open **Marked** from the browser's extensions menu. On first run it copies your 
 | Read a note or highlights | Click the yellow **Note** or **N highlights** label on a bookmark. |
 | Tag bookmarks | Use the tag chips in the editor, or **Suggest**. Add new tags with **+** next to **Tags** in the sidebar. |
 | Find anything | Type in the search box, or press <kbd>/</kbd>. |
+| Search by meaning | Add your TypeSafe API key in **Settings**, turn on **Semantic** in the search box, and describe what you want. |
 | Ask a question | Open **Chat**. The first time, choose **Download / load model**. Press <kbd>Enter</kbd> to send, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. |
 | Move to another browser | **Backup** in one browser, **Import** the `marked-backup-….json` file in the other. |
 
@@ -147,13 +154,14 @@ Chat runs **Qwen3 4B** (4-bit) with [WebLLM](https://github.com/mlc-ai/web-llm) 
 
 ## Privacy and permissions
 
-Your bookmarks, notes, tags, abstracts, highlights, and chats stay in your browser. Marked contacts only three outside services:
+Your bookmarks, notes, tags, abstracts, highlights, and chats stay in your browser unless you turn on semantic search. Marked contacts only these outside services:
 
 | Service | When | What it learns |
 | --- | --- | --- |
 | Google Fonts | Each time a Marked page opens (for the Inter font) | That Marked is in use. Without a connection, Marked uses Helvetica Neue. |
 | Hugging Face | Only when you download the chat model | Your connection details |
 | X (`platform.twitter.com`) | Only while the gallery shows a post from X | Which post is displayed. The list view never contacts X. |
+| TypeSafe (`api.typesafe.ai`) | Only for searches with **Semantic** on, using your API key | Your query and one line per bookmark: title, domain, folder, tags, abstract, and, if you allow them in **Settings**, notes and highlights. Full addresses are never sent. TypeSafe says it doesn't train on customer data. |
 
 | Permission | Why Marked needs it |
 | --- | --- |
@@ -164,6 +172,7 @@ Your bookmarks, notes, tags, abstracts, highlights, and chats stay in your brows
 | Access to all websites | Show the **Highlight** button when you select text, and capture a preview and abstract when you highlight a page that isn't saved yet. The script does nothing until you click the button, and sends nothing off your device. |
 | x.com and twitter.com | Find the post under your pointer for **Save tweet to Marked** |
 | Hugging Face (optional) | Download the chat model; requested when you first load it |
+| TypeSafe (optional) | Semantic search; requested when you save an API key |
 
 Browsers describe site access as *"read and change all your data on all websites."* Firefox may leave that access ungranted after an update; Marked then shows an **Allow** banner, and on x.com it asks the first time you save a post.
 
@@ -188,6 +197,7 @@ Reload the Marked tab after UI changes. After changing the manifest or backgroun
 | `highlighter.js` | Content script for the Highlight button and panel |
 | `tweet-capture.js` | Content script that finds the post under the pointer on x.com |
 | `tagger.js` | Tag suggestions (a local stand-in for a future Jev integration) |
+| `jev.js`, `semantic-search.js` | The Jev client, cost tracking, and semantic search |
 | `bookmarks.js`, `backup.js` | Import, export, and backups |
 | `chat.js`, `ai-context.js`, `ai-config.js` | Local chat and what the model sees |
 | `ai/`, `scripts/bundle-ai.js` | The bundled WebLLM worker and runtime |

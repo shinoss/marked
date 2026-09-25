@@ -77,6 +77,10 @@ main { min-width: 0; }
 .search input { width: 100%; min-width: 0; border: 0; padding: 0; }
 .search input:focus-visible { outline: none; }
 .search-hint { display: inline-flex; align-items: center; flex-shrink: 0; white-space: nowrap; color: var(--muted); }
+#semantic-toggle { flex-shrink: 0; padding: 1px 7px; border: 1px solid var(--line); font-size: 12px; line-height: 18px; color: var(--muted); transition: background-color 150ms ease; }
+#semantic-toggle:hover { text-decoration: none; background-color: #f0f0f0; color: #222; }
+#semantic-toggle[aria-pressed="true"] { background: #222; border-color: #222; color: #fff; }
+.semantic-status { margin: -4px 0 12px; color: var(--muted); }
 .search kbd { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font-size: 12px; }
 .transfer, .actions { display: flex; align-items: center; gap: 24px; flex-shrink: 0; }
 .transfer { margin-left: auto; }
@@ -208,6 +212,11 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: default; }
 .note-chip, .highlight-chip { display: inline-flex; align-items: center; padding: 0 7px; border: 1px solid #ead66b; background: #fff3a8; color: #5a4a00; font-size: 12px; line-height: 20px; transition: background-color 150ms ease; }
 .note-chip:hover, .highlight-chip:hover { text-decoration: none; background: #ffea70; }
 .note-text { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }
+/* The bookmark on a black band across the top of the note dialog, so it reads
+   apart from the note below it. */
+.note-head { margin: -32px -32px 24px; padding: 20px 32px; background: #222; color: #fff; }
+.note-head h2 { margin: 0; font-weight: 600; }
+.note-head p { margin-top: 2px; color: #aaa; }
 .row-actions { white-space: nowrap; text-align: right; padding-right: 0; }
 .item-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 6px; transition: background-color 150ms ease; }
 .row-actions button + button { margin-left: 4px; }
@@ -232,6 +241,13 @@ dialog input, dialog select { display: block; width: 100%; margin-top: 8px; }
 dialog textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 0; resize: vertical; }
 dialog p { overflow-wrap: anywhere; }
 .tags-field { margin: 24px 0; }
+.settings-heading { font: inherit; font-weight: 600; margin: 0 0 8px; }
+dialog label.check-field { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+dialog label.check-field input { width: 12px; margin: 0; }
+.usage { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; padding: 10px 12px; border: 1px solid var(--line); }
+.usage-label { display: block; color: var(--muted); }
+.usage button { padding: 0; }
+.dialog-secondary { margin-right: auto; }
 .field-heading { display: flex; justify-content: space-between; align-items: baseline; }
 .field-heading button { padding: 0; color: var(--muted); }
 .tag-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

@@ -7,7 +7,7 @@
   "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["https://huggingface.co/*", "https://*.huggingface.co/*", "https://*.hf.co/*"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co; img-src 'self' data:; worker-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co https://api.typesafe.ai; img-src 'self' data:; worker-src 'self'"
   },
   "action": { "default_title": "Open Marked", "default_icon": { "16": "icons/marked-16.png", "32": "icons/marked-32.png" } },
   "icons": { "16": "icons/marked-16.png", "32": "icons/marked-32.png", "48": "icons/marked-48.png", "128": "icons/marked-128.png" },

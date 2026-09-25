@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { fixture } from './storage-fixture.js';
 import { STORAGE_KEY } from '../store.js';
+import { estimateJevTokens, jevCost, formatCost } from '../jev.js';
 
 test('manager renders, searches, creates, and moves bookmarks through the API', async () => {
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
@@ -96,6 +97,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.equal(row.querySelector('.item-note').textContent, 'Read before the meetup');
   row.querySelector('.note-chip').click();
   assert.ok($('note-dialog').open, 'the Note marker opens the full note');
+  assert.deepEqual([$('note-title').textContent, $('note-site').textContent], [saved.title, new URL(pageURL).hostname.replace(/^www\./, '')], 'the bookmark heads the note');
   assert.equal($('note-text').textContent, 'Read before the meetup');
   $('note-edit').click();
   assert.ok($('editor').open && !$('note-dialog').open);
@@ -163,5 +165,99 @@ test('a highlights label opens the list of highlights, where each can be deleted
   $('search').value = 'second'; $('search').dispatchEvent(new dom.window.Event('input'));
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal($('items').children.length, 0, 'deleted highlights are no longer searchable');
+  dom.window.close();
+});
+
+test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep a running cost, and preview without a key', async t => {
+  const log = t.mock.method(console, 'log', () => {}); // Jev requests are logged; keep the output quiet.
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [
+    { id: 'pasta', parentId: 'unfiled_____', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark' },
+    { id: 'essay', parentId: 'unfiled_____', title: 'On attention', url: 'https://example.com/essays/attention?session=secret', type: 'bookmark', abstract: 'Deciding what deserves your attention.' }
+  ] }] });
+  const permissions = [];
+  mock.api.permissions = { request: async request => { permissions.push(request); return true; } };
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  // A stand-in for api.typesafe.ai that favours bookmarks about attention.
+  const requests = [];
+  let status = 200;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    requests.push({ url, body, auth: init.headers.Authorization });
+    if (status !== 200) return new Response(JSON.stringify({ error: { message: 'bad key' } }), { status });
+    if (body.questions.check) return new Response(JSON.stringify({ answers: { check: { type: 'noul', noul: 0.8 } }, usage: { input_tokens: 40, output_tokens: 5 } }));
+    const lines = body.state.split('\n').map(line => line.split('| '));
+    const probabilities = Object.fromEntries(lines.map(([id, text]) => [id, text.includes('attention') ? 0.9 : 0.1 / (lines.length - 1)]));
+    return new Response(JSON.stringify({ answers: { where: { type: 'choice', probabilities }, exists: { type: 'noul', noul: 0.93 } }, usage: { input_tokens: 2000, output_tokens: 30 } }));
+  };
+  await import('../manager.js?semantic');
+  const settle = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
+  const search = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await settle(550); };
+  const titles = () => [...$('items').querySelectorAll('.item-title')].map(link => link.textContent);
+  await settle();
+
+  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'false');
+  $('semantic-toggle').click();
+  assert.ok($('settings-dialog').open, 'Semantic without a key asks for one');
+  assert.match($('settings-status').textContent, /Add your TypeSafe API key/);
+  $('jev-key').value = '  sk-test  ';
+  $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
+  await settle(50);
+  assert.ok(!$('settings-dialog').open);
+  assert.deepEqual(permissions, [{ origins: ['https://api.typesafe.ai/*'] }]);
+  assert.equal(requests[0].auth, 'Bearer sk-test', 'the key is checked before it is saved');
+  assert.deepEqual((await browser.storage.local.get()).markedJev, { apiKey: 'sk-test', notes: true, highlights: true, preview: false, enabled: true });
+  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'true');
+
+  await search('protecting my focus');
+  assert.equal(requests.length, 2);
+  assert.ok(!requests[1].body.state.includes('secret'), 'full addresses are never sent');
+  assert.deepEqual(titles(), ['On attention'], 'found by meaning with no keyword in common');
+  assert.equal($('semantic-status').textContent, 'Ranked by meaning with Jev. This search $0.000084 · $0.000086 in total.', 'the key check counts toward the total');
+
+  $('search').value = ''; $('search').dispatchEvent(new dom.window.Event('input')); await settle(150);
+  await search('protecting my focus');
+  assert.equal(requests.length, 2, 'a repeated search is answered from the cache');
+  assert.match($('semantic-status').textContent, /Repeated search, no charge/);
+
+  status = 401;
+  await search('pasta');
+  assert.match($('semantic-status').textContent, /didn't run: TypeSafe rejected the API key.*Showing keyword matches\./);
+  assert.deepEqual(titles(), ['Weeknight pasta'], 'keyword matches still show');
+
+  $('settings').click();
+  assert.match($('jev-usage').textContent, /^2 requests · 2,040 input tokens · \$0\.000086 since /);
+  $('jev-reset').click(); await settle();
+  assert.equal($('jev-usage').textContent, 'No requests yet.');
+  $('jev-remove').click(); await settle();
+  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'false');
+  assert.equal((await browser.storage.local.get()).markedJev.apiKey, '');
+
+  // Preview needs no key: each search logs the request Jev would get and sends nothing.
+  $('settings').click(); await settle();
+  assert.match($('jev-estimate').textContent, /^Each search of your 2 bookmarks costs about \$0\.0000\d+ \(≈\d{3} input tokens; output is free\)\.$/);
+  $('jev-preview').checked = true;
+  $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
+  await settle(50);
+  assert.ok(!$('settings-dialog').open);
+  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'true');
+  const sent = requests.length;
+  log.mock.resetCalls();
+  await search('attention');
+  assert.equal(requests.length, sent, 'nothing is sent');
+  const [label, { headers, body }] = log.mock.calls.at(-1).arguments;
+  assert.equal(label, 'Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone');
+  assert.equal(headers.Authorization, 'Bearer <your API key>');
+  assert.equal(body.state, 'B000| Weeknight pasta — food.test — folder: Other Bookmarks\nB001| On attention — example.com — folder: Other Bookmarks — Deciding what deserves your attention.');
+  const tokens = estimateJevTokens(body);
+  assert.equal($('semantic-status').textContent, `Preview only: nothing was sent to TypeSafe. This search would cost about ${formatCost(jevCost(tokens))} (≈${tokens} input tokens; output is free). The request is in the browser console. Showing keyword matches.`);
+  assert.deepEqual(titles(), ['On attention'], 'keyword matches show');
+  delete globalThis.fetch;
   dom.window.close();
 });
