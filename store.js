@@ -1,5 +1,6 @@
-import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, planBrowserImport, validIcon, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
+import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, planBrowserImport, tweetId, validIcon, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
 import { cleanPageText } from './page-text.js';
+import { cleanCard } from './sites.js';
 
 // The bookmarks permission is used only to read the browser's bookmarks when the
 // user imports them. The library lives in extension-local storage and never
@@ -27,8 +28,8 @@ export function indexLibrary(root) {
   const pages = [];
   (function walk(node) {
     if (node.url) {
-      const highlights = (node.highlights || []).map(({ id, text, note }) => ({ id, text, ...(note && { note }) }));
-      pages.push({ id: node.id, url: node.url, title: node.title || '', dateAdded: node.dateAdded || 0, ...(highlights.length && { highlights }) });
+      const highlights = (node.highlights || []).map(({ id, text, note, color }) => ({ id, text, ...(note && { note }), ...(color && { color }) }));
+      pages.push({ id: node.id, url: node.url, title: node.title || '', dateAdded: node.dateAdded || 0, ...(highlights.length && { highlights }), ...(node.card && { card: true }) });
     }
     node.children?.forEach(walk);
   })(root);
@@ -108,6 +109,8 @@ export function createLibraryStore(api, locks = navigator.locks) {
     const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
     if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
     if (validIcon(details.icon)) node.icon = details.icon;
+    const card = type === 'bookmark' && cleanCard(details.card);
+    if (card) node.card = card;
     if (type === 'bookmark') {
       const abstract = cleanAbstract(details.abstract), note = cleanNote(details.note), tags = cleanTags(details.tags), highlights = cleanHighlights(details.highlights);
       if (abstract) node.abstract = abstract;
@@ -118,14 +121,16 @@ export function createLibraryStore(api, locks = navigator.locks) {
     parent.children.push(node);
     return node;
   }
-  function move(root, id, parentId) {
+  // Moves a node into parentId, before the child beforeId or at the end.
+  function move(root, id, parentId, beforeId = null) {
     const node = editable(root, id);
     const parent = destination(root, parentId);
     if (find(node, parentId)) throw new Error('A folder cannot be moved into itself or a descendant.');
     const old = destination(root, node.parentId);
     old.children = old.children.filter(child => child.id !== id);
     node.parentId = parentId;
-    parent.children.push(node);
+    const at = beforeId ? parent.children.findIndex(child => child.id === beforeId) : -1;
+    if (at >= 0) parent.children.splice(at, 0, node); else parent.children.push(node);
   }
   return {
     async getTree() { return [(await initialize()).root]; },
@@ -154,12 +159,17 @@ export function createLibraryStore(api, locks = navigator.locks) {
         const node = editable(root, id);
         if (parentId && node.parentId !== parentId) move(root, id, parentId);
         node.title = changes.title;
-        // A new address is a different page: its preview, icon, and text go.
+        // A new address is a different page: its preview, icon, card, and text go.
         if (changes.url !== undefined && changes.url !== node.url) {
           node.url = changes.url;
           delete node.preview;
           delete node.icon;
+          delete node.card;
           moved = true;
+        }
+        if (changes.card !== undefined && node.url) {
+          const card = cleanCard(changes.card);
+          if (card) node.card = card; else delete node.card;
         }
         if (changes.preview === null) delete node.preview;
         if (changes.abstract !== undefined && node.url) {
@@ -177,7 +187,37 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
       }, async () => { if (moved) await api.storage.local.remove(textKey(id)); });
     },
-    moveMany(ids, parentId) { return mutate(root => ids.forEach(id => move(root, id, parentId))); },
+    // Moves ids, in order, into parentId before beforeId (or at the end), and
+    // returns where each was, for placeMany to put them back.
+    moveMany(ids, parentId, beforeId = null) {
+      return mutate(root => {
+        const places = ids.map(id => {
+          const parent = destination(root, editable(root, id).parentId);
+          return { id, parentId: parent.id, index: parent.children.findIndex(child => child.id === id) };
+        });
+        // Moving next to one of the items being moved: anchor on the next item that stays.
+        let anchor = beforeId;
+        if (anchor && ids.includes(anchor)) {
+          const siblings = destination(root, parentId).children;
+          anchor = siblings.slice(siblings.findIndex(child => child.id === anchor)).find(child => !ids.includes(child.id))?.id ?? null;
+        }
+        ids.forEach(id => move(root, id, parentId, anchor));
+        return places;
+      });
+    },
+    // Puts nodes back where moveMany found them.
+    placeMany(places) {
+      return mutate(root => {
+        for (const { id, parentId, index } of [...places].sort((a, b) => a.index - b.index)) {
+          const node = find(root, id), parent = find(root, parentId);
+          if (!node || !Array.isArray(parent?.children) || find(node, parentId)) continue;
+          const old = find(root, node.parentId);
+          if (old?.children) old.children = old.children.filter(child => child.id !== id);
+          node.parentId = parentId;
+          parent.children.splice(Math.min(index, parent.children.length), 0, node);
+        }
+      });
+    },
     removeMany(ids) {
       return mutate(root => {
         const selected = new Set(ids);
@@ -239,6 +279,16 @@ export function createLibraryStore(api, locks = navigator.locks) {
         return cleaned;
       });
     },
+    // Changes a highlight's note or color.
+    updateHighlight(id, highlightId, changes) {
+      return mutate(root => {
+        const node = editable(root, id);
+        const index = (node.highlights || []).findIndex(highlight => highlight.id === highlightId);
+        if (index < 0) throw new Error('This highlight no longer exists. Refresh and try again.');
+        node.highlights[index] = cleanHighlight({ ...node.highlights[index], ...changes });
+        return node.highlights[index];
+      });
+    },
     removeHighlight(id, highlightId) {
       return mutate(root => {
         const node = editable(root, id);
@@ -276,11 +326,13 @@ export function createLibraryStore(api, locks = navigator.locks) {
     // Restored backups bring their page texts, kept under the new bookmarks.
     importTree(nodes, parentId, title) {
       const texts = {};
+      // New items share one date, so sorting by date keeps them in their order.
+      const now = Date.now();
       return mutate((root, library) => {
-        const container = add(root, { parentId, title, type: 'folder' });
+        const container = add(root, { parentId, title, type: 'folder', dateAdded: now });
         function append(list, parentId) {
           for (const node of list) {
-            const created = add(root, { ...node, parentId, type: node.type === 'separator' ? 'separator' : node.url ? 'bookmark' : 'folder' });
+            const created = add(root, { ...node, dateAdded: Number.isFinite(node.dateAdded) && node.dateAdded > 0 ? node.dateAdded : now, parentId, type: node.type === 'separator' ? 'separator' : node.url ? 'bookmark' : 'folder' });
             remember(library, created.tags);
             const text = created.url && cleanPageText(node.text);
             if (text?.text) texts[textKey(created.id)] = text;
@@ -312,7 +364,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
           const seen = new Set();
           const highlights = nodes.flatMap(node => node.highlights || []).filter(highlight => !seen.has(highlight.text) && seen.add(highlight.text));
           if (highlights.length) keep.highlights = highlights.slice(0, HIGHLIGHTS_PER_BOOKMARK);
-          for (const field of ['abstract', 'preview', 'icon']) {
+          for (const field of ['abstract', 'preview', 'icon', 'card']) {
             const found = keep[field] || copies.find(node => node[field])?.[field];
             if (found) keep[field] = found;
           }
@@ -336,6 +388,42 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
         if (Object.keys(adopted).length) await api.storage.local.set(adopted);
         return removed;
+      });
+    },
+    // Posts from X, newest first, into the folder named title at the top of the
+    // library (made if needed). Posts already anywhere in Marked are skipped.
+    // Returns how many were added and already known, and the folder.
+    importTweets(tweets, title = 'X bookmarks') {
+      return mutate(root => {
+        const known = new Set();
+        (function walk(node) {
+          const id = node.url && tweetId(node.url);
+          if (id) known.add(id);
+          node.children?.forEach(walk);
+        })(root);
+        const folder = root.children.find(child => Array.isArray(child.children) && !child.url && child.title === title) || add(root, { parentId: root.id, title, type: 'folder' });
+        let added = 0, skipped = 0;
+        for (const tweet of tweets) {
+          const id = tweetId(tweet.url);
+          if (!id || known.has(id)) { skipped++; continue; }
+          known.add(id);
+          add(root, { title: tweet.title, url: tweet.url, abstract: tweet.abstract, dateAdded: tweet.dateAdded, type: 'bookmark' }, folder);
+          added++;
+        }
+        return { added, known: skipped, folderId: folder.id };
+      });
+    },
+    // Sets the cards of several bookmarks at once: { id: card }.
+    setCards(cards) {
+      return mutate(root => {
+        let count = 0;
+        for (const [id, value] of Object.entries(cards)) {
+          const node = find(root, id), card = cleanCard(value);
+          if (!node?.url || !card) continue;
+          node.card = card;
+          count++;
+        }
+        return count;
       });
     },
     // Page texts by bookmark id, for those of ids that have one.

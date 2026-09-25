@@ -4,6 +4,8 @@ import { cleanAbstract, cleanHighlightText, safeURL, searchPages, tweetId, valid
 import { INDEX_KEY, createLibraryStore } from './store.js';
 import { readPageAbstract, readPageIcon } from './page-abstract.js';
 import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
+import { fetchSite, siteOf } from './sites.js';
+import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
@@ -89,13 +91,27 @@ async function captureText(tab, url, options) {
   if (tab?.id == null || !/^https?:/.test(url) || tweetId(url) || !await keepText()) return null;
   return captureTabText(browser, tab.id, url, options);
 }
+// A post on Hacker News or GitHub gets a card, and its thread
+// or discussion as its text, from the site's own API.
+async function captureSite(url) {
+  if (!siteOf(url)) return null;
+  try { return await fetchSite(url, { timeout: 8000 }); } catch (error) { console.warn('No card for this page', error); return null; }
+}
 // A saved page without its text gets it when it's next open in a tab. Only
 // articles, when it happens by itself: never the text of an inbox or an
-// account page that happens to be bookmarked.
+// account page that happens to be bookmarked. A saved post gets its card.
 async function fillText(tab, page, { articlesOnly = true } = {}) {
   page ??= tab?.url && await findBookmark(tab.url);
-  if (!page) return;
+  if (!page || (articlesOnly && !await keepText())) return;
   const store = createLibraryStore(browser);
+  if (siteOf(page.url)) {
+    if (page.card) return;
+    const site = await captureSite(page.url);
+    if (!site?.card) return;
+    await store.setCards({ [page.id]: site.card });
+    if (site.text && await keepText()) await store.setText(page.id, { ...site.text, via: 'visit' });
+    return;
+  }
   if ((await store.getTexts([page.id]))[page.id]?.text) return;
   const text = await captureText(tab, tab.url, { articlesOnly });
   if (text) await store.setText(page.id, { ...text, via: 'visit' }, { replace: false });
@@ -143,13 +159,17 @@ async function addPage(info, tab) {
     fillText(tab, saved, { articlesOnly: false }).catch(error => console.warn('Page text unavailable', error));
     return openManager(new URLSearchParams({ edit: saved.id }));
   }
-  const [preview, abstract, icon, text] = await Promise.all([
+  const [preview, abstract, icon, page, site] = await Promise.all([
     capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; }),
     captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; }),
     captureIcon(tab).catch(() => null),
-    captureText(tab, url).catch(error => { console.warn('Page text unavailable; saving without it', error); return null; })
+    captureText(tab, url).catch(error => { console.warn('Page text unavailable; saving without it', error); return null; }),
+    captureSite(url)
   ]);
-  await openEditor(url, tab?.title || url, preview || abstract || icon || text ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(text && { text }) } : null);
+  // A post's own thread or discussion reads better than what the page shows of it.
+  const text = site?.text && await keepText() ? site.text : page;
+  const card = site?.card;
+  await openEditor(url, tab?.title || url, preview || abstract || icon || text || card ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(text && { text }), ...(card && { card }) } : null);
 }
 
 async function saveTweet(tab) {
@@ -170,7 +190,12 @@ async function saveTweet(tab) {
   // It shares a process with the page, so accept only a canonical tweet URL.
   if (!TWEET_URL.test(tweet?.url)) return;
   const text = cleanAbstract(tweet.text);
-  await openEditor(tweet.url, tweetTitle(tweet.author, tweet.handle, text), text ? { abstract: text } : null);
+  // A thread, unrolled on the tweet's own page, becomes the text of the bookmark.
+  const posts = (Array.isArray(tweet.thread) ? tweet.thread : []).map(cleanAbstract).filter(Boolean).slice(0, 50);
+  const thread = posts.length > 1 && await keepText()
+    ? { text: posts.flatMap((post, index) => [`${index + 1}/${posts.length}`, post]).join('\n\n'), kinds: posts.flatMap(() => ['by', 'p']).join(' ') }
+    : null;
+  await openEditor(tweet.url, tweetTitle(tweet.author, tweet.handle, text), text || thread ? { ...(text && { abstract: text }), ...(thread && { text: thread }) } : null);
 }
 
 // Titles a tweet after X's page titles, adding the handle: Name (@handle) on X: “text”.
@@ -217,13 +242,48 @@ async function findBookmark(url) {
   return (await savedPages()).get(pageKey(url)) ?? null;
 }
 
-// The toolbar button shows a check on pages already in Marked.
+// Saved bookmarks related to the page in each tab, found by comparing its title
+// and headings with the library's stored index: { key, count, page } by tab id.
+// Kept in session storage too, for a click after the worker slept.
+const pageRelated = new Map();
+let relatedCache = null;
+async function relatedIndex() {
+  if (!relatedCache) {
+    const compact = (await browser.storage.local.get(RELATED_KEY))[RELATED_KEY];
+    relatedCache = compact?.version === 1 ? expandIndex(compact) : null;
+  }
+  return relatedCache;
+}
+async function relateTab(tab, topics) {
+  if (tab?.id == null || !/^https?:/.test(tab.url || '') || !topics) return;
+  const browsing = (await browser.storage.local.get(BROWSING_KEY))[BROWSING_KEY];
+  const index = browsing?.related === false ? null : await relatedIndex();
+  const page = { url: tab.url, title: String(topics.title || '').slice(0, 300), abstract: [topics.description, ...(Array.isArray(topics.headings) ? topics.headings : [])].map(part => String(part || '').slice(0, 300)).join(' ').slice(0, 1500), text: String(topics.lead || '').slice(0, 1000) };
+  // Two telling words in common at least, or it's a coincidence.
+  const matches = index ? similar(index, weigh(index, documentTerms(page)), { limit: 9, min: 0.12 }).filter(match => match.shared.length >= 2) : [];
+  const key = `related:${tab.id}`;
+  if (matches.length) {
+    const found = { key: pageKey(tab.url), count: matches.length, page };
+    pageRelated.set(tab.id, found);
+    await browser.storage.session.set({ [key]: found });
+  } else {
+    pageRelated.delete(tab.id);
+    await browser.storage.session.remove?.(key);
+  }
+  await updateBadges([tab]);
+}
+
+// The toolbar button shows a check on pages already in Marked, and on other
+// pages how many saved bookmarks relate to them.
 async function updateBadges(tabs) {
   const byPage = await savedPages();
   await Promise.all(tabs.map(async ({ id, url }) => {
     const saved = !!url && byPage.has(pageKey(url));
-    await browser.action.setBadgeText({ tabId: id, text: saved ? '✓' : '' });
-    await browser.action.setTitle({ tabId: id, title: saved ? 'Open Marked (this page is saved)' : 'Open Marked' });
+    const related = !saved && url && pageRelated.get(id)?.key === pageKey(url) ? pageRelated.get(id) : null;
+    const text = saved ? '✓' : related ? String(related.count) : '';
+    await browser.action.setBadgeText({ tabId: id, text });
+    if (text) await browser.action.setBadgeBackgroundColor({ tabId: id, color: saved ? '#2c5949' : '#5b6474' });
+    await browser.action.setTitle({ tabId: id, title: saved ? 'Open Marked (this page is saved)' : related ? `Open Marked (${related.count === 1 ? 'a saved bookmark relates' : `${related.count} saved bookmarks relate`} to this page)` : 'Open Marked' });
   }).map(update => update.catch(() => {})));
 }
 const updateAllBadges = () => browser.tabs.query({}).then(updateBadges).catch(error => console.warn('Could not update the toolbar badge', error));
@@ -231,12 +291,17 @@ browser.action.setBadgeBackgroundColor({ color: '#2c5949' });
 browser.action.setBadgeTextColor?.({ color: '#ffffff' });
 browser.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.url || change.status === 'complete') updateBadges([tab]).catch(() => {});
-  if (change.status === 'complete') fillText(tab).catch(error => console.warn('Page text unavailable', error));
+  if (change.status === 'complete') {
+    fillText(tab).catch(error => console.warn('Page text unavailable', error));
+    startXImport(tabId).catch(error => console.warn('Could not start importing from X', error));
+  }
 });
 // Saving, editing, or deleting in Marked updates every open tab.
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[INDEX_KEY]) updateAllBadges();
+  if (area === 'local' && changes[RELATED_KEY]) relatedCache = null;
 });
+browser.tabs.onRemoved?.addListener(tabId => { pageRelated.delete(tabId); browser.storage.session.remove?.(`related:${tabId}`)?.catch(() => {}); });
 browser.runtime.onStartup?.addListener(updateAllBadges);
 browser.runtime.onInstalled?.addListener(updateAllBadges);
 
@@ -263,6 +328,49 @@ browser.omnibox?.onInputEntered.addListener((text, disposition) => {
   opening.catch(error => console.error('Could not open the search', error));
 });
 
+// Importing the bookmarks from X: Marked opens X's bookmarks page, and once it
+// loads, asks the content script there to collect them; each batch comes back
+// here to be saved. The job lives in session storage, so it outlasts a
+// sleeping service worker, and only that tab may send posts.
+const X_IMPORT = 'markedXImport';
+async function importFromX() {
+  const tab = await browser.tabs.create({ url: 'https://x.com/i/bookmarks', active: true });
+  await browser.storage.session.set({ [X_IMPORT]: { tabId: tab.id, startedAt: Date.now() } });
+}
+// One at a time: a page can report finishing its load twice in a row.
+let xStarting = Promise.resolve();
+function startXImport(tabId) {
+  xStarting = xStarting.catch(() => {}).then(() => askToCollect(tabId));
+  return xStarting;
+}
+async function askToCollect(tabId) {
+  const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
+  if (job?.tabId !== tabId || job.asked) return;
+  await browser.storage.session.set({ [X_IMPORT]: { ...job, asked: true } });
+  const ask = () => browser.tabs.sendMessage(tabId, { type: 'marked:collect-bookmarks', pace: 900 }, { frameId: 0 });
+  try { await ask(); }
+  catch {
+    await browser.scripting.executeScript({ target: { tabId }, files: ['tweet-capture.js'] });
+    await ask();
+  }
+}
+async function saveXBookmarks(tab, message) {
+  const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
+  if (job?.tabId !== tab.id) throw new Error('Start the import from Marked’s Import menu.');
+  // X lists the newest bookmark first; dates count down from the import's start to keep that order.
+  const tweets = (Array.isArray(message.tweets) ? message.tweets : []).slice(0, 200).filter(tweet => TWEET_URL.test(tweet?.url)).map(tweet => {
+    const text = cleanAbstract(tweet.text);
+    return { url: tweet.url, title: tweetTitle(String(tweet.author || ''), String(tweet.handle || ''), text), abstract: text, dateAdded: job.startedAt - Math.max(0, Number(tweet.order) || 0) };
+  });
+  const { added, known, folderId } = await createLibraryStore(browser).importTweets(tweets);
+  await browser.storage.session.set({ [X_IMPORT]: { ...job, folderId } });
+  return { added, known };
+}
+async function openXBookmarks() {
+  const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
+  await openManager(new URLSearchParams(job?.folderId ? { folder: job.folderId } : {}));
+}
+
 // highlighter.js asks about a passage the user chose to highlight. A saved page
 // answers with its title, and the page shows its own panel for the note; a new
 // page opens the editor, prefilled as Add to Marked, with the passage.
@@ -271,13 +379,15 @@ async function highlightPage(tab, message) {
   if (!text || !tab?.url) return null;
   const bookmark = await findBookmark(tab.url);
   if (bookmark) return { saved: bookmark.title || bookmark.url };
-  const [preview, abstract, icon, page] = await Promise.all([
+  const [preview, abstract, icon, captured, site] = await Promise.all([
     capturePreview(tab).catch(() => null),
     captureAbstract(tab, tab.url).catch(() => ''),
     captureIcon(tab).catch(() => null),
-    captureText(tab, tab.url).catch(() => null)
+    captureText(tab, tab.url).catch(() => null),
+    captureSite(tab.url)
   ]);
-  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(page && { text: page }) });
+  const page = site?.text && await keepText() ? site.text : captured;
+  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(page && { text: page }), ...(site?.card && { card: site.card }) });
   return { opened: true };
 }
 // The page's panel saves a highlight. The bookmark is looked up again from the
@@ -285,12 +395,26 @@ async function highlightPage(tab, message) {
 async function saveHighlight(tab, message) {
   const bookmark = tab?.url && await findBookmark(tab.url);
   if (!bookmark) throw new Error('This page is no longer in Marked.');
-  await createLibraryStore(browser).addHighlight(bookmark.id, { text: message.text, note: message.note });
+  await createLibraryStore(browser).addHighlight(bookmark.id, { text: message.text, note: message.note, color: message.color });
   return { ok: true };
 }
 // Chrome 123 does not accept promises from listeners, so reply through sendResponse.
 browser.runtime.onMessage.addListener((message, sender, reply) => {
   if (!sender.tab) return;
+  // From Marked's own pages.
+  if (message?.type === 'marked:import-x' && sender.url?.startsWith(browser.runtime.getURL(''))) {
+    importFromX().then(() => reply({ ok: true }), error => reply({ error: error.message }));
+    return true;
+  }
+  // From X's bookmarks page, while Marked imports them.
+  if (message?.type === 'marked:x-bookmarks') {
+    saveXBookmarks(sender.tab, message).then(reply, error => reply({ error: error.message }));
+    return true;
+  }
+  if (message?.type === 'marked:open-x-bookmarks') {
+    openXBookmarks().catch(error => console.error('Could not open Marked', error));
+    return;
+  }
   if (message?.type === 'marked:highlight') {
     highlightPage(sender.tab, message).then(reply, error => { console.error('Could not open the highlight', error); reply(null); });
     return true;
@@ -299,9 +423,13 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
     saveHighlight(sender.tab, message).then(reply, error => reply({ error: error.message }));
     return true;
   }
-  // highlighter.js asks on every page for the passages saved on it, to mark them.
+  // highlighter.js asks on every page for the passages saved on it, to mark
+  // them, and says what an unsaved page is about, to count related bookmarks.
   if (message?.type === 'marked:page-highlights') {
-    findBookmark(sender.tab.url || sender.url).then(page => reply(page?.highlights?.length ? { highlights: page.highlights } : null), () => reply(null));
+    findBookmark(sender.tab.url || sender.url).then(page => {
+      reply(page?.highlights?.length ? { highlights: page.highlights } : null);
+      if (!page) relateTab(sender.tab, message.topics).catch(error => console.warn('Could not find related bookmarks', error));
+    }, () => reply(null));
     return true;
   }
 });
@@ -317,14 +445,39 @@ browser.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
-// Alt+Shift+M adds the current page, as Add to Marked does.
+// Alt+Shift+M adds the current page, as Add to Marked does. Alt+Shift+H
+// highlights the selection, through the page's highlighter; a tab opened
+// before Marked was installed gets the highlighter first.
+async function highlightSelection(tab) {
+  if (tab?.id == null) return;
+  // Marked's reader highlights in its own page, which content scripts can't reach.
+  if (tab.url?.startsWith(browser.runtime.getURL('reader.html'))) {
+    await browser.runtime.sendMessage({ type: 'marked:reader-highlight', tabId: tab.id });
+    return;
+  }
+  const ask = () => browser.tabs.sendMessage(tab.id, { type: 'marked:highlight-selection' }, { frameId: 0 });
+  try { await ask(); }
+  catch {
+    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['highlighter.js'] });
+    await ask();
+  }
+}
 browser.commands?.onCommand.addListener(async (command, tab) => {
-  if (command !== 'add-to-marked') return;
+  if (command !== 'add-to-marked' && command !== 'highlight-selection') return;
   tab ??= (await browser.tabs.query({ active: true, currentWindow: true }))[0];
-  addPage({}, tab).catch(error => console.error('Could not open Add to Marked', error));
+  if (command === 'add-to-marked') addPage({}, tab).catch(error => console.error('Could not open Add to Marked', error));
+  else highlightSelection(tab).catch(error => console.warn('Could not highlight on this page', error));
 });
 
-browser.action.onClicked.addListener(async () => {
+browser.action.onClicked.addListener(async tab => {
+  // On a page with related bookmarks, the button shows them.
+  const related = tab?.id != null && (pageRelated.get(tab.id) ?? (await browser.storage.session.get(`related:${tab.id}`))[`related:${tab.id}`]);
+  if (related && related.key === pageKey(tab.url)) {
+    const key = `capture-${crypto.randomUUID()}`;
+    await browser.storage.session.set({ [key]: { ...related.page, createdAt: Date.now() } });
+    await browser.tabs.create({ url: `${browser.runtime.getURL('manager.html')}?related=${key}` });
+    return;
+  }
   const url = browser.runtime.getURL('manager.html');
   const tabs = await browser.tabs.query({});
   const existing = tabs.find(tab => tab.url === url);

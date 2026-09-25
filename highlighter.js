@@ -66,11 +66,16 @@ if (!globalThis.markedHighlighter) {
   const button = (label, primary, action) => {
     const element = make('button', `all:initial;cursor:pointer;padding:6px 10px;border-radius:3px;font:inherit;${primary ? 'background:#0f1419;color:#fff' : 'color:#0f1419'}`, label);
     element.type = 'button';
+    // Hover sets values rather than clearing them: a cleared value would drop the
+    // all:initial reset and show the browser's button color, dark on dark pages.
     element.addEventListener('mouseenter', () => { element.style.opacity = '.8'; if (!primary) element.style.background = '#f0f0f0'; });
-    element.addEventListener('mouseleave', () => { element.style.opacity = ''; if (!primary) element.style.background = ''; });
+    element.addEventListener('mouseleave', () => { element.style.opacity = '1'; if (!primary) element.style.background = 'transparent'; });
     element.addEventListener('click', action);
     return element;
   };
+  // Highlight colors: a swatch and border shade, and the tint marked on the page.
+  const EDGE = { yellow: '#f2d94e', green: '#5cc98a', blue: '#5b9df0', pink: '#f07aa9', purple: '#a384f0' };
+  const TINT = { yellow: 'rgba(255,221,0,.45)', green: 'rgba(92,201,138,.4)', blue: 'rgba(91,157,240,.35)', pink: 'rgba(240,122,169,.35)', purple: 'rgba(163,132,240,.35)' };
   // Keys typed in the panel stay out of the page's keyboard shortcuts.
   for (const type of ['keydown', 'keyup', 'keypress']) host.addEventListener(type, event => event.stopPropagation());
   let text = '', panel = false, anchor = null, closing;
@@ -99,11 +104,35 @@ if (!globalThis.markedHighlighter) {
     note.addEventListener('focus', () => { note.style.borderColor = '#0f1419'; });
     note.addEventListener('blur', () => { note.style.borderColor = '#cfd9de'; });
     const error = make('div', 'color:#b00020;margin-top:6px');
+    let color = 'yellow';
+    const quote = make('div', `margin:10px 0;padding:2px 0 2px 10px;border-left:3px solid ${EDGE.yellow};max-height:96px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere`, text.trim());
+    const swatches = make('div', 'display:flex;gap:8px;margin:0 0 10px 2px');
+    swatches.setAttribute('role', 'group');
+    swatches.setAttribute('aria-label', 'Color');
+    const choose = name => {
+      color = name;
+      quote.style.borderLeftColor = EDGE[name];
+      for (const swatch of swatches.children) {
+        const chosen = swatch.dataset.color === name;
+        swatch.setAttribute('aria-pressed', String(chosen));
+        swatch.style.boxShadow = `0 0 0 2px #fff, 0 0 0 3px ${chosen ? '#0f1419' : 'transparent'}`;
+      }
+    };
+    for (const name of Object.keys(EDGE)) {
+      const swatch = make('button', `all:initial;cursor:pointer;width:16px;height:16px;border-radius:50%;background:${EDGE[name]}`);
+      swatch.type = 'button';
+      swatch.dataset.color = name;
+      swatch.title = name[0].toUpperCase() + name.slice(1);
+      swatch.setAttribute('aria-label', swatch.title);
+      swatch.addEventListener('click', () => { choose(name); note.focus(); });
+      swatches.append(swatch);
+    }
+    choose(color);
     const save = async () => {
       saveButton.disabled = true;
       let reply;
-      try { reply = await api.runtime.sendMessage({ type: 'marked:save-highlight', text, note: note.value }); } catch {}
-      if (reply?.ok) { say('Highlight saved to Marked.'); markPassages([{ text, note: note.value.trim() }]); }
+      try { reply = await api.runtime.sendMessage({ type: 'marked:save-highlight', text, note: note.value, color }); } catch {}
+      if (reply?.ok) { say('Highlight saved to Marked.'); markPassages([{ text, note: note.value.trim(), color }]); }
       else { error.textContent = reply?.error || 'Marked could not save the highlight. Try again.'; saveButton.disabled = false; }
     };
     const saveButton = button('Save highlight', true, save);
@@ -112,8 +141,7 @@ if (!globalThis.markedHighlighter) {
     box.replaceChildren(
       make('div', 'font-weight:600', 'Highlight'),
       make('div', 'color:#536471;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', `On “${title}”`),
-      make('div', 'margin:10px 0;padding:2px 0 2px 10px;border-left:3px solid #f2d94e;max-height:96px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere', text.trim()),
-      note, error, actions
+      quote, swatches, note, error, actions
     );
     note.addEventListener('keydown', event => {
       if (event.key === 'Escape') close();
@@ -147,6 +175,26 @@ if (!globalThis.markedHighlighter) {
     document.documentElement.append(host);
     place();
   };
+  // Alt+Shift+H, a Marked shortcut that background.js passes on, highlights the
+  // selection as the Highlight button would.
+  api.runtime.onMessage?.addListener((message, sender, reply) => {
+    if (message?.type !== 'marked:highlight-selection') return;
+    reply(true);
+    if (panel) return;
+    const selection = getSelection();
+    text = selectedText(selection);
+    clearTimeout(closing);
+    document.documentElement.append(host);
+    if (!text) {
+      anchor = { top: 12, bottom: 12, right: innerWidth / 2 };
+      say('Select some text, then press the shortcut again.');
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const rects = range.getClientRects?.() ?? [];
+    anchor = rects[rects.length - 1] ?? range.getBoundingClientRect?.() ?? { top: 0, bottom: 0, right: 0 };
+    highlight();
+  });
   // An open panel stays until it is saved or cancelled.
   const later = event => { if (!panel && !event.composedPath().includes(host)) setTimeout(show, 0); };
   document.addEventListener('mouseup', later, true);
@@ -154,10 +202,10 @@ if (!globalThis.markedHighlighter) {
   document.addEventListener('selectionchange', () => { if (!panel && getSelection()?.isCollapsed) close(); });
   addEventListener('scroll', () => { if (!panel) close(); hideNote(); }, { capture: true, passive: true });
 
-  // Saved passages, marked in yellow. Hovering one shows its note in Marked's
-  // own closed box; notes are kept here, never in the page, so the site's
-  // scripts can't read them.
-  const MARK = 'all:unset;background:rgba(255,221,0,.45);color:inherit;border-radius:2px';
+  // Saved passages, marked in their colors. Hovering one shows its note in
+  // Marked's own closed box; notes are kept here, never in the page, so the
+  // site's scripts can't read them.
+  const mark = color => `all:unset;background:${TINT[color] || TINT.yellow};color:inherit;border-radius:2px`;
   const notes = new WeakMap();
   let noteHost = null, card = null;
   function hideNote() { noteHost?.remove(); }
@@ -183,29 +231,48 @@ if (!globalThis.markedHighlighter) {
     const pieces = [], missing = [];
     for (const passage of passages) {
       const found = locate(page, passage.text);
-      if (found.length) pieces.push(...found.map(piece => ({ ...piece, note: passage.note || '' })));
+      if (found.length) pieces.push(...found.map(piece => ({ ...piece, note: passage.note || '', color: passage.color })));
       else missing.push(passage);
     }
     // From the end of the page back, so splitting a text node keeps earlier offsets valid.
     pieces.sort((a, b) => b.order - a.order || b.from - a.from);
-    for (const { node, from, to, note } of pieces) {
+    for (const { node, from, to, note, color } of pieces) {
       if (to > node.data.length || node.parentElement?.closest('marked-highlight')) continue;
       const middle = node.splitText(from);
       middle.splitText(to - from);
-      const mark = document.createElement('marked-highlight');
-      mark.style.cssText = MARK;
-      middle.replaceWith(mark);
-      mark.append(middle);
-      notes.set(mark, note);
-      mark.addEventListener('mouseenter', () => showNote(mark));
-      mark.addEventListener('mouseleave', hideNote);
+      const marked = document.createElement('marked-highlight');
+      marked.style.cssText = mark(color);
+      middle.replaceWith(marked);
+      marked.append(middle);
+      notes.set(marked, note);
+      marked.addEventListener('mouseenter', () => showNote(marked));
+      marked.addEventListener('mouseleave', hideNote);
     }
     return missing;
   }
+  // What the page is about, for Marked to count the saved bookmarks related to
+  // it: its title, description, main headings, and opening paragraphs, leaving
+  // out menus and sidebars. It stays in the browser.
+  const aside = 'nav, aside, footer, [role="navigation"], [role="complementary"]';
+  const words = element => element.textContent.replace(/\s+/g, ' ').trim();
+  const topics = () => {
+    const main = document.querySelector('main, [role="main"], article') || document.body;
+    let lead = '';
+    for (const paragraph of main?.querySelectorAll('p') || []) {
+      if (lead.length >= 1000) break;
+      if (!paragraph.closest(aside) && words(paragraph).length >= 60) lead += `${words(paragraph)} `;
+    }
+    return {
+      title: document.title.slice(0, 300),
+      description: (document.querySelector('meta[name="description" i], meta[property="og:description" i]')?.content || '').slice(0, 500),
+      headings: [...document.querySelectorAll('h1, h2')].filter(heading => !heading.closest(aside)).slice(0, 8).map(heading => words(heading).slice(0, 150)).filter(Boolean),
+      lead: lead.trim().slice(0, 1000)
+    };
+  };
   // Pages that build their text after loading get two more tries.
   (async () => {
     let reply;
-    try { reply = await api.runtime.sendMessage({ type: 'marked:page-highlights' }); } catch { return; }
+    try { reply = await api.runtime.sendMessage({ type: 'marked:page-highlights', topics: topics() }); } catch { return; }
     let missing = reply?.highlights || [];
     for (const wait of [0, 1500, 5000]) {
       if (!missing.length || !document.body) return;

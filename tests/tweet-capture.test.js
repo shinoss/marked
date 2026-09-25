@@ -6,8 +6,8 @@ import { JSDOM } from 'jsdom';
 const source = await readFile(new URL('../tweet-capture.js', import.meta.url), 'utf8');
 
 // Runs the content script as browsers do: a classic script in the page's window.
-function load(body) {
-  const { window } = new JSDOM(`<!DOCTYPE html><body>${body}</body>`, { url: 'https://x.com/home', runScripts: 'outside-only' });
+function load(body, url = 'https://x.com/home') {
+  const { window } = new JSDOM(`<!DOCTYPE html><body>${body}</body>`, { url, runScripts: 'outside-only' });
   const page = { window, $: selector => window.document.querySelector(selector), timers: [], shadows: [] };
   window.setTimeout = (callback, delay) => page.timers.push({ callback, delay });
   // Record closed shadow roots so the test can read the notice.
@@ -134,7 +134,8 @@ test('replies with the tweet from the last right-click, once, and otherwise show
   const page = load(signedIn);
   const ask = () => page.ask({ type: 'marked:tweet-under-pointer' });
   page.rightClick('#text');
-  assert.deepEqual(ask(), jack);
+  const reply = ask();
+  assert.deepEqual({ ...reply, thread: [...reply.thread] }, { ...jack, thread: [] }, 'on a timeline, a tweet is just itself');
   assert.deepEqual(page.notices(), []);
   assert.equal(ask(), null, 'each right-click is used once');
   page.rightClick('#text');
@@ -162,4 +163,55 @@ test('background.js injects this same notice where the content script is missing
   const notice = text => text.match(/^function showNotice\(text\) \{$[\s\S]*?^\}$/m)?.[0];
   assert.ok(notice(source));
   assert.equal(notice(background), notice(source));
+});
+
+test('on its own page, a tweet brings the thread its author wrote around it', () => {
+  const tweet = (handle, id, words) => `<article data-testid="tweet"><div data-testid="User-Name"><a href="/${handle}" role="link"><span>${handle}</span></a><a href="/${handle}/status/${id}"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a></div><div data-testid="tweetText" dir="auto"><span id="t${id}">${words}</span></div></article>`;
+  const thread = [tweet('ada', 1, 'Before the thread.'), tweet('jack', 20, 'One: the start.'), tweet('jack', 21, 'Two: the middle.'), tweet('jack', 22, 'Three: the end.'), tweet('bob', 23, 'A reply from someone else.'), tweet('jack', 24, 'Jack, later, to Bob.')].join('');
+  const page = load(thread, 'https://x.com/jack/status/20');
+  page.rightClick('#t21');
+  const saved = page.ask({ type: 'marked:tweet-under-pointer' });
+  assert.equal(saved.url, 'https://x.com/jack/status/21');
+  assert.deepEqual([...saved.thread], ['One: the start.', 'Two: the middle.', 'Three: the end.'], 'only the author’s posts next to it');
+  page.rightClick('#t23');
+  assert.deepEqual([...page.ask({ type: 'marked:tweet-under-pointer' }).thread], [], 'a reply by someone else is just itself');
+});
+
+test('on X’s bookmarks page, Marked collects every post as it scrolls, and stops at the end or where it left off', async () => {
+  const post = id => `<article data-testid="tweet"><div data-testid="User-Name"><a href="/ada" role="link"><span>Ada</span></a><a href="/ada/status/${id}"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a></div><div data-testid="tweetText" dir="auto"><span>Post ${id}</span></div></article>`;
+  const run = async (page, replies) => {
+    const sent = [];
+    page.window.chrome.runtime.sendMessage = async message => { sent.push(message); return message.type === 'marked:x-bookmarks' ? replies.shift() ?? { added: 0, known: 0 } : true; };
+    page.ask({ type: 'marked:collect-bookmarks', pace: 10 });
+    for (let i = 0; i < 30; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      const timer = page.timers.find(item => item.delay >= 10);
+      if (!timer) continue;
+      page.timers.splice(page.timers.indexOf(timer), 1);
+      timer.callback();
+    }
+    return sent;
+  };
+  const panel = page => page.shadows.find(({ root }) => root.host.localName === 'marked-progress').root;
+  const page = load(post(3) + post(2), 'https://x.com/i/bookmarks');
+  // X shows more posts, one of them again, as the page scrolls down.
+  let scrolls = 0;
+  page.window.scrollBy = () => { if (++scrolls === 1) page.window.document.body.insertAdjacentHTML('beforeend', post(2) + post(1)); };
+  const sent = await run(page, [{ added: 2, known: 0 }, { added: 0, known: 1 }]);
+  const batches = JSON.parse(JSON.stringify(sent.filter(message => message.type === 'marked:x-bookmarks').map(message => message.tweets.map(tweet => [tweet.url, tweet.order]))));
+  assert.deepEqual(batches, [[['https://x.com/ada/status/3', 0], ['https://x.com/ada/status/2', 1]], [['https://x.com/ada/status/1', 2]]], 'each post once, in the page’s order');
+  assert.equal(panel(page).textContent, 'Saved 2 new posts from your X bookmarks to Marked; 1 was already there.Open in Marked');
+  panel(page).querySelector('button').click();
+  assert.deepEqual({ ...sent.at(-1) }, { type: 'marked:open-x-bookmarks' });
+
+  // A later import stops where the last one ended.
+  const again = load(Array.from({ length: 45 }, (item, index) => post(100 + index)).join(''), 'https://x.com/i/bookmarks');
+  again.window.scrollBy = () => {};
+  const repeat = await run(again, [{ added: 0, known: 45 }]);
+  assert.equal(repeat.filter(message => message.type === 'marked:x-bookmarks').length, 1);
+  assert.match(panel(again).textContent, /^Saved 0 new posts from your X bookmarks to Marked; 45 were already there\./);
+
+  const signedOut = load('<p>Log in</p>', 'https://x.com/i/flow/login');
+  await run(signedOut, []);
+  assert.equal(panel(signedOut).textContent, 'Sign in to X, open your bookmarks, and try again.Close');
 });

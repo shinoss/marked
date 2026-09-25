@@ -107,3 +107,10 @@ test('exports notes and highlights as Markdown, with each bookmark’s folder an
     'Why I take notes.', ''
   ].join('\n'), 'bookmarks without notes or highlights are left out');
 });
+
+test('a highlight keeps a color other than yellow, the color of every other highlight', async () => {
+  const { cleanHighlight } = await import('../bookmarks.js');
+  assert.equal(cleanHighlight({ text: 'Green', color: 'green', createdAt: 1 }).color, 'green');
+  assert.equal('color' in cleanHighlight({ text: 'Yellow', color: 'yellow' }), false, 'yellow is never stored');
+  assert.equal('color' in cleanHighlight({ text: 'Odd', color: 'chartreuse' }), false);
+});

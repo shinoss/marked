@@ -217,10 +217,10 @@ test('a highlight on a saved page is answered with its title, and the page saves
   const tab = { id: 3, url: 'https://example.com/article#part-2', title: 'Article' };
   assert.deepEqual(await ask({ type: 'marked:highlight', text: '  A  passage ' }, tab), { saved: 'The essay' }, 'the newest bookmark of the page, ignoring #fragments');
   assert.equal(opened.length, 0, 'the page shows its own panel');
-  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: ' A  passage ', note: ' Why ' }, tab), { ok: true });
+  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: ' A  passage ', note: ' Why ', color: 'purple' }, tab), { ok: true });
   const root = (await mock.api.storage.local.get()).markedLibraryV1.root;
   const [highlight] = root.children[1].children[0].highlights;
-  assert.deepEqual({ text: highlight.text, note: highlight.note }, { text: 'A passage', note: 'Why' });
+  assert.deepEqual({ text: highlight.text, note: highlight.note, color: highlight.color }, { text: 'A passage', note: 'Why', color: 'purple' });
   assert.deepEqual(await ask({ type: 'marked:save-highlight', text: 'X' }, { id: 4, url: 'https://other.test/' }), { error: 'This page is no longer in Marked.' });
 });
 
@@ -336,4 +336,108 @@ test('Add to Marked on a saved page without its text keeps the text, then opens 
   for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(new URL(opened[0].url).searchParams.get('edit'), saved.id);
   assert.equal((await mock.api.storage.local.get())[`markedText:${saved.id}`].text, 'The saved page.');
+});
+
+test('Alt+Shift+H asks the page to highlight its selection, adding the highlighter where it is missing', async () => {
+  const sent = [], injected = [];
+  let present = false;
+  browser.tabs.sendMessage = async (tabId, message, options) => { sent.push([tabId, message.type, options.frameId]); if (!present) throw new Error('Could not establish connection.'); return true; };
+  browser.scripting = { executeScript: async details => { injected.push(details.files); present = true; return []; } };
+  await onCommand('highlight-selection', { id: 9, url: 'https://example.com/' });
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(sent, [[9, 'marked:highlight-selection', 0], [9, 'marked:highlight-selection', 0]]);
+  assert.deepEqual(injected, [['highlighter.js']], 'a tab opened before Marked gets the highlighter first');
+  const told = [];
+  browser.runtime.sendMessage = async message => { told.push(message); };
+  await onCommand('highlight-selection', { id: 5, url: 'moz-extension://marked/reader.html?id=essay' });
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(told, [{ type: 'marked:reader-highlight', tabId: 5 }], 'Marked’s reader highlights in its own page');
+  assert.deepEqual(manifest.commands['highlight-selection'].suggested_key, { default: 'Alt+Shift+H' });
+});
+
+test('Add to Marked on a post reads its site’s API for a card and its thread', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const mock = await useLibrary([]);
+  const saved = {};
+  browser.storage.session.set = async value => Object.assign(saved, value);
+  browser.scripting = { executeScript: async details => [{ result: details.func?.name === 'readPageText' ? { url: 'https://news.ycombinator.com/item?id=100', text: 'The page as shown.' } : null }] };
+  const answers = {
+    'https://hacker-news.firebaseio.com/v0/item/100.json': { id: 100, type: 'story', by: 'pg', title: 'Show HN: Marked', score: 5, descendants: 1, time: 1, kids: [101] },
+    'https://hacker-news.firebaseio.com/v0/item/101.json': { id: 101, by: 'dang', text: 'Nice.' }
+  };
+  const fetched = [];
+  globalThis.fetch = async url => { fetched.push(url); return new Response(JSON.stringify(answers[url] ?? null)); };
+  opened.length = 0;
+  await onClick({ menuItemId: 'add-to-marked' }, { id: 4, url: 'https://news.ycombinator.com/item?id=100', title: 'Show HN: Marked | Hacker News' });
+  const capture = saved[new URL(opened[0].url).searchParams.get('capture')];
+  assert.deepEqual([capture.card.site, capture.card.title, capture.card.stats], ['hn', 'Show HN: Marked', { score: 5, comments: 1 }]);
+  assert.equal(capture.text.text, 'Top comments\n\ndang\n\nNice.', 'the discussion, not the page as shown');
+  assert.deepEqual(fetched, Object.keys(answers));
+  delete globalThis.fetch;
+  void mock;
+});
+
+test('importing from X opens its bookmarks page, collects there, and saves only that tab’s posts', async () => {
+  const mock = await useLibrary([]);
+  const session = {};
+  browser.storage.session.get = async key => ({ [key]: session[key] });
+  browser.storage.session.set = async value => Object.assign(session, value);
+  const created = [], sent = [];
+  browser.tabs.create = async details => { created.push(details); return { id: 42 }; };
+  browser.tabs.sendMessage = async (tabId, message) => { sent.push([tabId, message.type]); return true; };
+  const manager = { id: 9, url: 'moz-extension://marked/manager.html' };
+  const reply = message => new Promise(resolve => { onMessage(message, { tab: manager, url: manager.url }, resolve); });
+  assert.deepEqual(await reply({ type: 'marked:import-x' }), { ok: true });
+  assert.deepEqual(created, [{ url: 'https://x.com/i/bookmarks', active: true }]);
+  onTabUpdated(42, { status: 'complete' }, { id: 42, url: 'https://x.com/i/bookmarks' });
+  onTabUpdated(42, { status: 'complete' }, { id: 42, url: 'https://x.com/i/bookmarks' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(sent, [[42, 'marked:collect-bookmarks']], 'once the page loads, and once only');
+  const tweets = [{ url: 'https://x.com/ada/status/3', author: 'Ada', handle: 'ada', text: 'Newest', order: 0 }, { url: 'https://x.com/ada/status/2', author: 'Ada', handle: 'ada', text: 'Older', order: 1 }, { url: 'javascript:alert(1)', order: 2 }];
+  assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets }, { id: 42, url: 'https://x.com/i/bookmarks' }), { added: 2, known: 0 });
+  assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets }, { id: 7, url: 'https://x.com/i/bookmarks' }), { error: 'Start the import from Marked’s Import menu.' }, 'no other tab');
+  const folder = (await mock.api.storage.local.get()).markedLibraryV1.root.children.find(node => node.title === 'X bookmarks');
+  assert.deepEqual(folder.children.map(node => node.title), ['Ada (@ada) on X: “Newest”', 'Ada (@ada) on X: “Older”']);
+  assert.ok(folder.children[0].dateAdded > folder.children[1].dateAdded, 'X’s order, newest first');
+  onMessage({ type: 'marked:open-x-bookmarks' }, { tab: { id: 42 } }, () => {});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(new URL(created.at(-1).url).searchParams.get('folder'), folder.id, 'Open in Marked shows the folder');
+});
+
+test('the Marked button counts saved bookmarks related to an unsaved page, and opens them', async () => {
+  const { buildIndex, compactIndex, documentTerms } = await import('../related.js');
+  const mock = await useLibrary([{ title: 'Saved essay', url: 'https://example.com/essay' }]);
+  const index = buildIndex([
+    { id: 'attention', terms: documentTerms({ title: 'Attention (machine learning)', tags: ['AI'], text: 'Attention lets a transformer weigh tokens.' }) },
+    { id: 'transformer', terms: documentTerms({ title: 'Transformer architecture', tags: ['AI'], text: 'Transformers use attention over tokens.' }) },
+    { id: 'pasta', terms: documentTerms({ title: 'Weeknight pasta', text: 'Boil water.' }) }
+  ]);
+  await mock.api.storage.local.set({ markedRelatedV1: compactIndex(index) });
+  onStorageChanged({ markedRelatedV1: {} }, 'local');
+  const session = {};
+  browser.storage.session.get = async key => ({ [key]: session[key] });
+  browser.storage.session.set = async value => Object.assign(session, value);
+  browser.storage.session.remove = async key => { delete session[key]; };
+  const titles = [];
+  browser.action.setTitle = async details => { titles.push(details); };
+  badges.length = 0;
+  const tab = { id: 11, url: 'https://blog.test/how-attention-works' };
+  const topics = { title: 'How attention works in transformers', description: 'Tokens, attention, and transformer models.', headings: ['Attention'] };
+  await ask({ type: 'marked:page-highlights', topics }, tab);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(badges.at(-1), { tabId: 11, text: '2' });
+  assert.equal(titles.at(-1).title, 'Open Marked (2 saved bookmarks relate to this page)');
+  const created = [];
+  browser.tabs.create = async details => { created.push(details); return { id: 12 }; };
+  await onAction(tab);
+  const key = new URL(created[0].url).searchParams.get('related');
+  assert.deepEqual([session[key].url, session[key].title], ['https://blog.test/how-attention-works', 'How attention works in transformers'], 'Marked opens on the page’s related bookmarks');
+
+  await mock.api.storage.local.set({ markedBrowsing: { related: false } });
+  await ask({ type: 'marked:page-highlights', topics }, { id: 13, url: 'https://blog.test/other' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(badges.at(-1), { tabId: 13, text: '' }, 'Settings can turn the count off');
+  await ask({ type: 'marked:page-highlights', topics }, { id: 14, url: 'https://example.com/essay' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(badges.filter(badge => badge.tabId === 14).length, 0, 'a saved page keeps its check');
 });

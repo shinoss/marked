@@ -106,3 +106,10 @@ test('Export’s Backup downloads a Marked file that Import restores with dates 
   t.mock.timers.runAll();
   dom.window.close();
 });
+
+test('a backup keeps each post’s card', () => {
+  const root = { id: 'root', children: [{ id: 'p', parentId: 'root', title: 'Post', url: 'https://news.ycombinator.com/item?id=1', card: { site: 'hn', kind: 'story', handle: 'pg', stats: { score: 3 }, fetchedAt: 4 } }] };
+  const [node] = parseBackup(JSON.parse(exportBackup(root))).nodes;
+  assert.deepEqual(node.card, { site: 'hn', kind: 'story', handle: 'pg', stats: { score: 3 }, fetchedAt: 4 });
+  assert.equal(parseBackup({ format: 'marked', version: 1, children: [{ title: 'P', url: 'https://x.test/', card: { site: 'nope' } }] }).nodes[0].card, undefined);
+});

@@ -5,6 +5,13 @@
 
 // Whether to keep the text of pages as they're saved and revisited: { keep }.
 export const PAGE_TEXT_SETTINGS_KEY = 'markedPageText';
+// How far each saved text has been read in Marked's reader, by bookmark id:
+// { p: 0 to 1, i: the paragraph at the top, at: when }.
+export const READING_KEY = 'markedReadingV1';
+// What each paragraph of a text is, space-separated in order: a paragraph,
+// a heading, a list item, a quotation, code, or who wrote what follows (in a
+// thread or a discussion).
+export const BLOCK_KINDS = ['p', 'h2', 'h3', 'li', 'q', 'pre', 'by'];
 // About 30,000 words, more than a long feature article; longer pages are cut.
 export const PAGE_TEXT_LIMIT = 200000;
 const VIA = ['page', 'visit', 'tabs', 'download', 'backup'];
@@ -12,7 +19,8 @@ const VIA = ['page', 'visit', 'tabs', 'download', 'backup'];
 // Injected into the page with scripting.executeScript right after
 // vendor/readability.js, so it must not reference anything outside itself.
 // Marked's own pages also call it on a page they downloaded, as source.
-// Returns the article's text, one paragraph per block, with blank lines between.
+// Returns the article's text, one paragraph per block, with blank lines between,
+// and what kind of block each paragraph is.
 // With articlesOnly, a page that doesn't read like an article (an inbox, an
 // account page, an app) is skipped, as Firefox's Reader View would skip it.
 export function readPageText(source, { articlesOnly = false } = {}) {
@@ -24,11 +32,11 @@ export function readPageText(source, { articlesOnly = false } = {}) {
   // Page furniture, left out when a page isn't an article and all its text is read.
   const CHROME = 'nav, header, footer, aside, form, dialog, menu, [hidden], [aria-hidden="true"], [role="navigation"], [role="banner"], [role="contentinfo"], [role="dialog"]';
   function paragraphs(root, skip) {
-    const parts = [];
-    let line = '';
+    const parts = [], kinds = [];
+    let line = '', kind = 'p';
     const flush = () => {
       const text = line.replace(/\s+/g, ' ').trim();
-      if (text && text !== '•') parts.push(text);
+      if (text && text !== '•') { parts.push(text); kinds.push(kind); }
       line = '';
     };
     (function walk(node) {
@@ -39,19 +47,23 @@ export function readPageText(source, { articlesOnly = false } = {}) {
         if (SKIP.test(tag) || (skip && child.matches(skip))) continue;
         if (tag === 'PRE') {
           flush();
-          const text = child.textContent.replace(/[^\S\n]+/g, ' ').trim();
-          if (text) parts.push(text);
+          // Code keeps its lines, but never a blank one, which would split it.
+          const text = child.textContent.replace(/[^\S\n]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+          if (text) { parts.push(text); kinds.push('pre'); }
           continue;
         }
         if (!BLOCK.test(tag)) { walk(child); continue; }
         flush();
+        const outer = kind;
+        kind = /^H[12]$/.test(tag) ? 'h2' : /^H[3-6]$/.test(tag) ? 'h3' : tag === 'LI' ? 'li' : tag === 'BLOCKQUOTE' ? 'q' : kind;
         if (tag === 'LI') line = '• ';
         walk(child);
         flush();
+        kind = outer;
       }
     })(root);
     flush();
-    return parts;
+    return { parts, kinds };
   }
   let article = null;
   try {
@@ -59,20 +71,21 @@ export function readPageText(source, { articlesOnly = false } = {}) {
     // serializer hands back its article element instead of HTML.
     if (typeof Readability === 'function') article = new Readability(doc.cloneNode(true), { serializer: element => element }).parse();
   } catch {}
-  let parts = article?.content ? paragraphs(article.content) : [];
+  let found = article?.content ? paragraphs(article.content) : { parts: [], kinds: [] };
   // A page that isn't an article (a product, a tool, a list) keeps all its
   // text instead, without the menus Readability would have kept with it.
-  if (parts.join('').length < 200 && doc.body) {
+  if (found.parts.join('').length < 200 && doc.body) {
     const all = paragraphs(doc.body, CHROME);
-    if (all.length) parts = all;
+    if (all.parts.length) found = all;
   }
-  let text = '', truncated = false;
-  for (const part of parts) {
+  let text = '', truncated = false, kept = 0;
+  for (const part of found.parts) {
     const room = LIMIT - text.length - (text ? 2 : 0);
     if (room <= 0) { truncated = true; break; }
     const cut = part.lastIndexOf(' ', room);
     const piece = part.length > room ? part.slice(0, cut > room * 0.8 ? cut : room) : part;
     text += (text ? '\n\n' : '') + piece;
+    kept++;
     if (piece.length < part.length) { truncated = true; break; }
   }
   let words = 0;
@@ -82,7 +95,7 @@ export function readPageText(source, { articlesOnly = false } = {}) {
   const clean = value => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
   return {
     url: source ? '' : location.href,
-    text, words, truncated,
+    text, words, truncated, kinds: found.kinds.slice(0, kept).join(' '),
     title: clean(article?.title), byline: clean(article?.byline), siteName: clean(article?.siteName),
     published: clean(article?.publishedTime), lang: clean(article?.lang || doc.documentElement?.lang).slice(0, 20)
   };
@@ -112,6 +125,10 @@ export function cleanPageText(value) {
   }
   record.text = text;
   record.words = Number.isInteger(value.words) && value.words >= 0 && value.words <= text.length ? value.words : countWords(text);
+  // One kind per paragraph; a shortened text keeps the kinds of what's left.
+  const kinds = typeof value.kinds === 'string' ? value.kinds.split(' ') : [];
+  const count = text.split('\n\n').length;
+  if (kinds.length >= count && kinds.every(kind => BLOCK_KINDS.includes(kind)) && kinds.slice(0, count).some(kind => kind !== 'p')) record.kinds = kinds.slice(0, count).join(' ');
   if (value.truncated === true) record.truncated = true;
   for (const field of ['title', 'byline', 'siteName', 'published', 'lang']) {
     const found = short(field, field === 'lang' ? 20 : 300);
@@ -190,6 +207,14 @@ function decode(bytes, type) {
 }
 
 export const readingMinutes = words => Math.max(1, Math.round(words / 230));
+// Where a reader is in a text: not started, part way (with minutes left), or done.
+export function readingStatus(text, progress) {
+  const minutes = readingMinutes(text.words);
+  const p = progress?.p || 0;
+  if (p >= 0.97) return { state: 'read', label: 'Read' };
+  if (p >= 0.03) return { state: 'reading', label: `${Math.max(1, Math.ceil(minutes * (1 - p)))} min left` };
+  return { state: 'new', label: `${minutes} min read` };
+}
 
 // A search's words, lowercased; "quoted words" stay together as one phrase.
 export function searchTerms(query) {

@@ -1,0 +1,80 @@
+/* Marked's reader: a page's saved text, set for reading. styles.css supplies
+   the colors, themes, menus, and buttons; this file lays out the page. */
+:root[data-reader-theme="sepia"] {
+  color-scheme: light;
+  --fg: #3d3326; --bg: #f6efdf; --line: #e3d7be; --muted: #7a6c55; --soft: #857660; --faint: #b0a38a;
+  --hover: #ede3cc; --hover-strong: #e3d7be; --row-hover: #f0e7d3; --note-fg: #54483a;
+  --invert-bg: #3d3326; --invert-fg: #f6efdf;
+}
+:root { --reader-size: 19px; --reader-measure: 37em; }
+:root[data-width="narrow"] { --reader-measure: 32em; }
+:root[data-width="wide"] { --reader-measure: 44em; }
+body.reader-page { display: block; max-width: none; min-height: 100vh; padding: 0; background: var(--bg); }
+
+.reader-progress { position: fixed; inset: 0 0 auto; z-index: 4; height: 2px; background: var(--fg); transform: scaleX(0); transform-origin: left; }
+.reader-bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.reader-bar .brand { flex: 0 0 auto; }
+.reader-site { min-width: 0; overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; }
+.reader-tools { display: flex; align-items: center; gap: 4px; margin: 0 -7px 0 auto; }
+.reader-tools .icon-button:last-child::after { left: auto; right: 0; transform: translateY(-3px); }
+.reader-tools .icon-button:last-child:hover::after, .reader-tools .icon-button:last-child:focus-visible::after { transform: none; }
+
+.reader-menu { min-width: 0; padding: 14px 16px; }
+.reader-option { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.reader-option + .reader-option { margin-top: 12px; }
+.reader-option > span { color: var(--muted); }
+.reader-menu .segmented { margin: 0; }
+.reader-menu .segmented button { display: inline-block; width: auto; padding: 3px 12px; }
+.reader-menu .segmented button:hover { background: var(--hover); }
+
+.reader-main { padding: 56px 24px 160px; }
+.reader-article { max-width: var(--reader-measure); margin: 0 auto; font-size: var(--reader-size); line-height: 1.7; overflow-wrap: break-word; }
+:root[data-font="serif"] .reader-article { font-family: Literata, Georgia, "Times New Roman", serif; }
+:root[data-font="sans"] .reader-article { font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.reader-article h1 { margin: 0 0 14px; font-size: 1.85em; font-weight: 650; line-height: 1.18; letter-spacing: -0.015em; }
+.reader-meta { margin: 0 0 40px; font: 13px/1.5 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--muted); }
+#reader-truncated { margin-top: -28px; }
+.reader-body p, .reader-body ul, .reader-body blockquote, .reader-body pre { margin: 0 0 1.1em; }
+.reader-body h2 { margin: 1.8em 0 .55em; font-size: 1.32em; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; }
+.reader-body h3 { margin: 1.5em 0 .5em; font-size: 1.1em; font-weight: 650; line-height: 1.35; }
+.reader-body ul { padding-left: 1.3em; }
+.reader-body li { margin-bottom: .4em; }
+.reader-body blockquote { margin-left: 0; padding-left: 1em; border-left: 3px solid var(--line); color: var(--note-fg); font-style: italic; }
+.reader-body pre { padding: 12px 14px; overflow-x: auto; background: var(--row-hover); border: 1px solid var(--line); font: .8em/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
+.reader-body mark.passage { border-radius: 2px; cursor: pointer; }
+.reader-body mark.flash { animation: reader-flash 1.4s ease-out 2; }
+@keyframes reader-flash { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--hl, var(--hl-yellow)) 60%, transparent); } }
+/* A post's card above its text, and who wrote each part of a thread or discussion. */
+.reader-card { margin: -16px 0 36px; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.reader-card .site-card { height: auto; max-height: 420px; border: 1px solid var(--line); border-top: 3px solid var(--site); background: var(--row-hover); }
+.reader-card .site-card-text { display: none; }
+.reader-body p.by { margin: 2em 0 .35em; font: 600 12px/1.5 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: .02em; color: var(--muted); }
+.reader-body p.by:first-child { margin-top: 0; }
+.reader-end { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line); font: 13px/1.5 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--muted); text-align: center; }
+.reader-related { margin-top: 48px; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.reader-related h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.reader-related ol { margin: 0; padding: 0; list-style: none; }
+.reader-related li { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; border-top: 1px solid var(--line); }
+.related-title { font-size: 15px; font-weight: 500; text-decoration: none; }
+.related-title:hover { text-decoration: underline; }
+.related-meta { font-size: 12px; color: var(--muted); }
+.reader-empty { font: 15px/1.6 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.reader-empty .welcome-actions { margin-top: 20px; }
+.reader-empty .error { margin-top: 16px; }
+.reader-empty a.button-outline { text-decoration: none; }
+
+/* Beside a selection or a highlight: colors, a note, and for a saved one, delete. */
+.reader-selection { position: fixed; z-index: 10; display: flex; flex-direction: column; gap: 10px; max-width: 320px; padding: 10px 12px; border: 1px solid var(--fg); background: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, .12); font: 13px/1.45 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.reader-selection .row { display: flex; align-items: center; gap: 14px; }
+.reader-selection .swatches { gap: 10px; }
+.reader-selection .text-button { margin: 0; }
+.reader-selection textarea { display: block; width: 260px; min-height: 64px; padding: 6px 8px; font: inherit; color: inherit; background: none; border: 1px solid var(--line); resize: vertical; }
+.reader-selection .highlight-note { max-height: 160px; overflow-y: auto; white-space: pre-wrap; color: var(--note-fg); }
+@media (prefers-reduced-motion: no-preference) { .reader-selection:not([hidden]) { animation: marked-rise 140ms cubic-bezier(.2, .8, .2, 1); } }
+
+@media (max-width: 650px) {
+  :root { --reader-size: 17px; }
+  .reader-bar { padding: 0 16px; }
+  .reader-site { display: none; }
+  .reader-main { padding: 32px 16px 120px; }
+}

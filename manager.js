@@ -1,8 +1,11 @@
 import './browser-api.js';
-import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram, HIGHLIGHT_COLORS } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX } from './store.js';
-import { captureTabText, cleanPageText, fetchPageText, passageAround, readingMinutes, searchTerms, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
+import { captureTabText, cleanPageText, fetchPageText, passageAround, readingStatus, searchTerms, PAGE_TEXT_SETTINGS_KEY, READING_KEY } from './page-text.js';
+import { markText, loadReadability, renderCard, cardStats } from './text-view.js';
+import { cleanCard, fetchSite, siteOf } from './sites.js';
+import { buildIndex, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
@@ -11,7 +14,7 @@ const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
 // special is 'rediscover' or 'duplicates' while one of those views is open.
-const state = { root: null, nodes: new Map(), folder: null, tag: null, special: null, rediscover: [], tags: [], selected: new Set(), expanded: new Set(), visible: [], editing: null };
+const state = { root: null, nodes: new Map(), folder: null, tag: null, special: null, rediscover: [], tags: [], selected: new Set(), expanded: new Set(), visible: [], editing: null, highlightFilter: { color: null, site: '', since: '' } };
 let toastTimer, refreshTimer, loadVersion = 0;
 let view = 'list';
 let pendingPreview = null;
@@ -20,12 +23,20 @@ let pendingPreviewURL = null;
 let pendingIcon = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
-let pendingHighlight = '';
-// The page's text, when it came with the page from Add to Marked.
-let pendingText = null;
+let pendingHighlight = '', pendingColor = 'yellow';
+// The page's text, and a post's card, when they came with the page from Add to Marked.
+let pendingText = null, pendingCard = null;
 // Saved page texts by bookmark id, read after the library; search looks through them.
 const pageTexts = new Map();
 let textSettings = { keep: true };
+// Related bookmarks: an index of each bookmark's most telling words, built
+// when first needed after a change, and a smaller copy stored for the reader
+// and the Marked button. browsing: whether that button counts related saves.
+let relatedIndex = null, relatedSaveTimer = null, storedRelated = '';
+let browsing = { related: true };
+// How far each text has been read in Marked's reader, by bookmark id.
+let reading = {};
+const readerURL = (node, params = {}) => `reader.html?${new URLSearchParams({ id: node.id, ...params })}`;
 // Semantic search with the user's own Jev key. Jev is asked only when the user
 // chooses Semantic, never while typing.
 // preview is temporary: it works without a key and logs requests instead of sending them.
@@ -100,14 +111,30 @@ function iconButton(kind, action, className, label) {
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', kind === 'trash'
-    ? 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7'
-    : 'M14 5l5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14z');
+  path.setAttribute('d', {
+    trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7',
+    pencil: 'M14 5l5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14z',
+    related: 'M9.5 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM14.5 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z'
+  }[kind]);
   svg.append(path);
   el.append(svg);
   return el;
 }
-function toast(message, undo = null) {
+const colorOf = highlight => highlight.color || 'yellow';
+const colorName = color => color[0].toUpperCase() + color.slice(1);
+// A row of color swatches, the chosen one ringed.
+function swatches(chosen, choose, className = 'swatches') {
+  const group = element('div', className);
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', 'Color');
+  for (const color of HIGHLIGHT_COLORS) {
+    const swatch = button('', () => choose(color), `swatch hl-${color}`, colorName(color));
+    swatch.setAttribute('aria-pressed', String(color === chosen));
+    group.append(swatch);
+  }
+  return group;
+}
+function toast(message, undo = null, undone = 'Restored to Marked.') {
   clearTimeout(toastTimer);
   const notice = $('toast');
   notice.replaceChildren(element('span', '', message));
@@ -117,7 +144,7 @@ function toast(message, undo = null) {
       undoButton.disabled = true;
       try {
         await undo();
-        toast('Restored to Marked.');
+        toast(undone);
       } catch (error) {
         notice.querySelector('span').textContent = `Could not restore: ${error.message}. Try Undo again.`;
         undoButton.disabled = false;
@@ -129,6 +156,12 @@ function toast(message, undo = null) {
   }
 }
 function fail(error) { toast(error.message || String(error)); }
+// A breadcrumb for a folder; dropping items on it moves them there.
+function crumb(label, id) {
+  const link = button(label, () => navigate(id === state.root.id ? null : id));
+  link.dataset.id = id;
+  return link;
+}
 function ancestors(id) {
   const result = [];
   let node = state.nodes.get(id);
@@ -142,6 +175,7 @@ function defaultFolder() {
 }
 async function load() {
   const version = ++loadVersion;
+  relatedIndex = null;
   const [[root], tags] = await Promise.all([library.getTree(), library.getTags()]);
   if (version !== loadVersion) return;
   state.root = root;
@@ -199,6 +233,49 @@ function pickRediscover(count = 8) {
   }
   return picked;
 }
+let relatedShared = new Map();
+function relatedList() {
+  const matches = relatedMatches(state.relatedTo);
+  relatedShared = new Map(matches.map(match => [match.id, match.shared]));
+  return matches.map(match => state.nodes.get(match.id)).filter(Boolean);
+}
+// What a bookmark is about, for comparing it with others.
+const termsOf = node => documentTerms({ title: title(node), tags: node.tags || [], note: node.note || '', highlights: node.highlights || [], abstract: node.abstract || '', card: node.card, text: pageTexts.get(node.id)?.text || '' });
+function relatedIndexNow() {
+  if (!relatedIndex) {
+    relatedIndex = buildIndex([...state.nodes.values()].filter(node => node.url).map(node => ({ id: node.id, terms: termsOf(node) })));
+    clearTimeout(relatedSaveTimer);
+    relatedSaveTimer = setTimeout(saveRelatedIndex, 1500);
+  }
+  return relatedIndex;
+}
+// The small copy for the reader and the background, written only when it changed.
+function saveRelatedIndex() {
+  if (!relatedIndex) return;
+  const compact = compactIndex(relatedIndex);
+  const signature = JSON.stringify([compact.n, compact.docs]);
+  if (signature === storedRelated) return;
+  storedRelated = signature;
+  browser.storage.local.set({ [RELATED_KEY]: compact }).catch(() => {});
+}
+// Bookmarks like the one with source.id, or like a page described by source.page.
+function relatedMatches(source) {
+  const index = relatedIndexNow();
+  if (source.id) return similar(index, index.vectors.get(source.id) ?? weigh(index, termsOf(state.nodes.get(source.id))), { exclude: new Set([source.id]), limit: 12 });
+  const same = new Set([...state.nodes.values()].filter(node => node.url && pageIdentity(node.url) === pageIdentity(source.page.url)).map(node => node.id));
+  return similar(index, weigh(index, documentTerms(source.page)), { exclude: same, limit: 12 });
+}
+function showRelated(source) {
+  Object.assign(state, { special: 'related', folder: null, tag: null, relatedTo: source });
+  state.selected.clear();
+  $('search').value = '';
+  render();
+}
+// Texts started in the reader and not finished, most recently read first.
+function continuing() {
+  return [...state.nodes.values()].filter(node => node.url && pageTexts.get(node.id)?.text && readingStatus(pageTexts.get(node.id), reading[node.id]).state === 'reading')
+    .sort((a, b) => (reading[b.id].at || 0) - (reading[a.id].at || 0));
+}
 // Bookmarks for the same page, grouped, oldest first in each group.
 function findDuplicates() {
   const groups = new Map();
@@ -242,6 +319,14 @@ function renderTree() {
   $('folder-tree').replaceChildren();
   $('all-bookmarks').classList.toggle('active', !state.folder && !state.tag && !state.special && !$('search').value.trim());
   $('rediscover-nav').classList.toggle('active', state.special === 'rediscover');
+  const started = continuing().length;
+  $('continue-nav').hidden = !started && state.special !== 'continue';
+  $('continue-nav').classList.toggle('active', state.special === 'continue');
+  $('continue-count').textContent = started ? started.toLocaleString() : '';
+  const highlightCount = [...state.nodes.values()].reduce((sum, node) => sum + (node.highlights?.length || 0), 0);
+  $('highlights-nav').hidden = !highlightCount && state.special !== 'highlights';
+  $('highlights-nav').classList.toggle('active', state.special === 'highlights');
+  $('highlights-count').textContent = highlightCount ? highlightCount.toLocaleString() : '';
   $('duplicates-nav').classList.toggle('active', state.special === 'duplicates');
   renderTags();
   $('total').textContent = [...state.nodes.values()].filter(n => n.url).length.toLocaleString();
@@ -255,6 +340,8 @@ function renderTree() {
   })(state.root);
   function append(node, depth) {
     const row = element('div', 'folder-row');
+    row.dataset.id = node.id;
+    row.draggable = true;
     row.style.paddingLeft = `${depth * 14}px`;
     const children = (node.children || []).filter(isFolder);
     const expanded = state.expanded.has(node.id);
@@ -283,6 +370,10 @@ function renderTree() {
 function render() {
   if (!state.root) return;
   renderTree();
+  const highlighting = state.special === 'highlights';
+  $('highlight-tools').hidden = $('highlight-list').hidden = !highlighting;
+  $('search').placeholder = highlighting ? 'Search highlights…' : 'Search all bookmarks…';
+  if (highlighting) { renderHighlights(); return; }
   document.querySelector('.table-wrap').classList.toggle('gallery', view === 'gallery');
   $('list-view').setAttribute('aria-pressed', String(view === 'list'));
   $('gallery-view').setAttribute('aria-pressed', String(view === 'gallery'));
@@ -304,6 +395,8 @@ function render() {
   let nodes = query ? searchLibrary(terms, passages)
     : special === 'rediscover' ? state.rediscover.map(id => state.nodes.get(id)).filter(Boolean)
     : special === 'duplicates' ? duplicates.flat()
+    : special === 'continue' ? continuing()
+    : special === 'related' ? relatedList()
     : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
@@ -323,19 +416,24 @@ function render() {
   $('open-all').title = `Open the ${bookmarks === 1 ? 'bookmark' : `${bookmarks.toLocaleString()} bookmarks`} shown here in new tabs`;
   const visibleIds = new Set(nodes.map(n => n.id));
   for (const id of state.selected) if (!visibleIds.has(id)) state.selected.delete(id);
-  const specialTitle = { rediscover: 'Rediscover', duplicates: 'Duplicates' }[special];
+  const about = special === 'related' && (state.relatedTo.id ? title(state.nodes.get(state.relatedTo.id) || {}) : state.relatedTo.page.title);
+  const specialTitle = { rediscover: 'Rediscover', duplicates: 'Duplicates', continue: 'Continue reading', related: `Like “${about}”` }[special];
   $('page-title').textContent = query ? 'Search results' : specialTitle || tag || (current ? title(current) : 'All bookmarks');
-  $('breadcrumbs').replaceChildren(button('Library', () => navigate(null)));
+  $('breadcrumbs').replaceChildren(crumb('Library', state.root.id));
   if (tag) $('breadcrumbs').append(element('span', '', '/'), element('span', '', 'Tags'));
   $('shuffle').hidden = special !== 'rediscover' || !nodes.length;
   $('merge-all').hidden = special !== 'duplicates' || !copies;
   $('view-note').hidden = !special || !nodes.length;
-  $('view-note').textContent = special === 'rediscover' ? 'A few things you saved a while ago, picked at random. The ones with notes and highlights come up more often.'
+  $('view-note').textContent = special === 'related' ? 'Bookmarks that share its most telling words: in titles, tags, notes, highlights, and saved text.'
+    : special === 'continue' ? 'Pages you started reading in Marked, the latest first.'
+    : special === 'rediscover' ? 'A few things you saved a while ago, picked at random. The ones with notes and highlights come up more often.'
     : `${duplicates.length.toLocaleString()} ${duplicates.length === 1 ? 'page is' : 'pages are'} saved more than once. Merging keeps the oldest bookmark with every tag, note, and highlight.`;
-  if (current) for (const node of ancestors(current.id)) $('breadcrumbs').append(element('span', '', '/'), button(title(node), () => navigate(node.id)));
+  if (current) for (const node of ancestors(current.id)) $('breadcrumbs').append(element('span', '', '/'), crumb(title(node), node.id));
   const fragment = document.createDocumentFragment();
   for (const node of nodes) {
     const row = element('tr', state.selected.has(node.id) ? 'selected' : '');
+    row.dataset.id = node.id;
+    row.draggable = !protectedNode(node);
     const group = groupStarts.get(node.id);
     if (group) row.classList.add('group-start');
     const checkCell = element('td', 'check-cell');
@@ -367,7 +465,16 @@ function render() {
       details.append(added);
     }
     const page = node.url && pageTexts.get(node.id);
-    if (page?.text) details.append(button(`${readingMinutes(page.words)} min read`, () => showText(node), 'item-read', `Read the text saved from ${title(node)}`));
+    if (page?.text) {
+      const status = readingStatus(page, reading[node.id]);
+      const read = element('a', `item-read ${status.state}`, status.label);
+      read.href = readerURL(node);
+      read.target = '_blank';
+      read.title = `Read the text saved from ${title(node)} in Marked`;
+      details.append(read);
+    }
+    const stats = node.card && cardStats(node.card);
+    if (stats) details.append(element('span', 'item-stats', stats));
     // Tags and the note marker share one line. Gallery cards keep the line even
     // when empty so page cards are the same height; X posts show the note itself.
     const labels = element('span', 'item-tags');
@@ -379,13 +486,15 @@ function render() {
     if (!isFolder(node)) details.append(labels);
     metadata.append(domain, details);
     text.append(link, metadata);
+    const shared = special === 'related' && relatedShared.get(node.id);
+    if (shared?.length) text.append(element('p', 'item-reason', `Shares ${shared.length > 1 ? `${shared.slice(0, -1).join(', ')} and ${shared.at(-1)}` : shared[0]}`));
     const passage = passages.get(node.id);
     if (passage) {
-      const quote = element('button', 'item-passage');
-      quote.type = 'button';
-      quote.title = 'Show this in the saved text';
+      const quote = element('a', 'item-passage');
+      quote.href = readerURL(node, { q: query });
+      quote.target = '_blank';
+      quote.title = 'Read this in the saved text';
       markText(quote, `${passage.cutBefore ? '…' : ''}${passage.text}${passage.cutAfter ? '…' : ''}`, { terms });
-      quote.addEventListener('click', () => showText(node, terms));
       text.append(quote);
     }
     if (node.note) {
@@ -400,6 +509,9 @@ function render() {
       row.classList.add('tweet-row');
       preview.classList.add('tweet');
       preview.append(tweetEmbed(tweet));
+    } else if (node.card) {
+      preview.classList.add('card-site');
+      preview.append(renderCard(document, node.card));
     } else if (validPreview(node.preview)) {
       const image = element('img'); image.src = node.preview; image.alt = ''; image.loading = 'lazy';
       preview.append(image);
@@ -413,6 +525,7 @@ function render() {
     main.append(preview, siteIcon(node), text); nameCell.append(main);
     const location = element('td', 'item-location', path(node.parentId)); location.title = path(node.parentId);
     const actions = element('td', 'row-actions');
+    if (node.url) actions.append(iconButton('related', () => showRelated({ id: node.id }), 'item-action', `More like ${title(node)}`));
     if (!protectedNode(node)) actions.append(iconButton('pencil', () => openEditor(node), 'item-action', `Edit ${title(node)}`), iconButton('trash', () => removeItems([node.id]).catch(fail), 'item-action', `Delete ${title(node)}`));
     row.append(checkCell, nameCell);
     if (showLocation) row.append(location);
@@ -426,8 +539,8 @@ function render() {
   $('welcome').hidden = !welcome;
   $('empty').classList.toggle('welcoming', welcome);
   document.querySelector('.list-toolbar').hidden = welcome;
-  $('empty').querySelector('h2').textContent = welcome ? 'Welcome to Marked' : query ? 'No bookmarks found' : special === 'rediscover' ? 'Nothing to rediscover yet' : special === 'duplicates' ? 'No duplicates' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
-  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try other words. Search looks through names, addresses, folders, notes, tags, highlights, and the text of saved pages.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  $('empty').querySelector('h2').textContent = welcome ? 'Welcome to Marked' : query ? 'No bookmarks found' : special === 'rediscover' ? 'Nothing to rediscover yet' : special === 'duplicates' ? 'No duplicates' : special === 'continue' ? 'Nothing to continue' : special === 'related' ? 'Nothing like it yet' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
+  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try other words. Search looks through names, addresses, folders, notes, tags, highlights, and the text of saved pages.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : special === 'continue' ? 'Pages you start reading in Marked wait here until you finish them.' : special === 'related' ? 'As you save more, bookmarks that share its words show up here.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
   renderSemanticStatus();
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
@@ -449,52 +562,6 @@ function searchLibrary(terms, passages) {
     passages.set(node.id, passageAround(page.text, page.lower, missing[0]));
     return true;
   });
-}
-// Appends text to parent, marking the passages the user highlighted and the
-// words searched for.
-function markText(parent, text, { terms = [], highlights = [] } = {}) {
-  const ranges = [];
-  for (const passage of highlights) {
-    const at = text.indexOf(passage);
-    if (passage && at >= 0) ranges.push([at, at + passage.length, 'passage']);
-  }
-  const lower = text.toLowerCase();
-  if (lower.length === text.length) {
-    for (const term of terms) for (let at = lower.indexOf(term); term && at >= 0; at = lower.indexOf(term, at + term.length)) ranges.push([at, at + term.length, 'term']);
-  }
-  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-  let cursor = 0;
-  for (const [start, end, kind] of ranges) {
-    if (start < cursor) continue;
-    if (start > cursor) parent.append(text.slice(cursor, start));
-    parent.append(element('mark', kind, text.slice(start, end)));
-    cursor = end;
-  }
-  if (cursor < text.length) parent.append(text.slice(cursor));
-}
-// The text saved from a bookmark's page, with the user's highlights marked and,
-// when it's opened from a search, the words searched for, scrolled into view.
-let textNode = null;
-function showText(node, terms = []) {
-  const page = pageTexts.get(node.id);
-  if (!page?.text) return;
-  textNode = node;
-  $('text-title').textContent = title(node);
-  const saved = new Date(page.capturedAt).toLocaleDateString([], { dateStyle: 'medium' });
-  $('text-meta').textContent = [displayDomain(node.url), page.byline, `${readingMinutes(page.words)} min read`, `saved ${saved}`].filter(Boolean).join(' · ');
-  $('text-truncated').hidden = !page.truncated;
-  const highlights = (node.highlights || []).map(highlight => highlight.text);
-  $('text-body').replaceChildren(...page.text.split('\n\n').map(paragraph => {
-    const block = element('p');
-    markText(block, paragraph, { terms, highlights });
-    return block;
-  }));
-  const url = safeURL(node.url);
-  $('text-open').hidden = !url;
-  if (url) $('text-open').href = url;
-  $('text-dialog').showModal();
-  $('text-body').scrollTop = 0;
-  $('text-body').querySelector('mark.term')?.scrollIntoView?.({ block: 'center' });
 }
 // X's official post embed. Its frame reports its height with a postMessage.
 // Heights X last reported, so a reload starts each post at its real size
@@ -534,7 +601,7 @@ function showHighlights(id) {
   if (!node?.highlights?.length) { if ($('highlights-dialog').open) $('highlights-dialog').close(); return; }
   $('highlights-title').textContent = `Highlights on “${title(node)}”`;
   $('highlights-list').replaceChildren(...node.highlights.map(highlight => {
-    const item = element('li');
+    const item = element('li', `hl-${colorOf(highlight)}`);
     const quote = element('blockquote', 'quote', highlight.text);
     const remove = iconButton('trash', async () => {
       try { await library.removeHighlight(id, highlight.id); await load(); showHighlights(id); } catch (error) { fail(error); }
@@ -545,6 +612,96 @@ function showHighlights(id) {
     return item;
   }));
   if (!$('highlights-dialog').open) $('highlights-dialog').showModal();
+}
+// The Highlights view: every highlight in the library, newest first, narrowed
+// by color, site, when it was made, and the search box.
+function allHighlights() {
+  const list = [];
+  for (const node of state.nodes.values()) for (const highlight of node.highlights || []) list.push({ node, highlight });
+  return list.sort((a, b) => (b.highlight.createdAt || 0) - (a.highlight.createdAt || 0));
+}
+// Where a highlight opens: in the reader when its page's text is saved, else
+// the page, scrolled to the passage by a text fragment (both browsers follow them).
+function highlightLink(node, highlight) {
+  if (pageTexts.get(node.id)?.text) return readerURL(node, { highlight: highlight.id });
+  const url = safeURL(node.url);
+  if (!url) return '';
+  const words = highlight.text.split(/\s+/);
+  const part = text => encodeURIComponent(text).replace(/-/g, '%2D').replace(/,/g, '%2C');
+  const passage = words.length > 12 ? `${part(words.slice(0, 5).join(' '))},${part(words.slice(-5).join(' '))}` : part(highlight.text);
+  return `${url.split('#')[0]}#:~:text=${passage}`;
+}
+function renderHighlights() {
+  const filter = state.highlightFilter;
+  const terms = searchTerms($('search').value.trim().toLowerCase());
+  const days = { week: 7, month: 31, year: 366 }[filter.since];
+  const all = allHighlights();
+  // Every filter but color, so each color's count says what choosing it shows.
+  const matching = all.filter(({ node, highlight }) => (!filter.site || displayDomain(node.url) === filter.site)
+    && (!days || Date.now() - (highlight.createdAt || 0) < days * 864e5)
+    && terms.every(term => `${highlight.text} ${highlight.note || ''} ${title(node)}`.toLowerCase().includes(term)));
+  const shown = filter.color ? matching.filter(({ highlight }) => colorOf(highlight) === filter.color) : matching;
+  $('page-title').textContent = 'Highlights';
+  $('breadcrumbs').replaceChildren(crumb('Library', state.root.id));
+  for (const id of ['open-all', 'shuffle', 'merge-all', 'view-note', 'semantic-status', 'welcome']) $(id).hidden = true;
+  document.querySelector('.list-toolbar:not(.highlight-tools)').hidden = true;
+  document.querySelector('.table-wrap').hidden = true;
+  $('highlight-count').textContent = `${shown.length.toLocaleString()} ${shown.length === 1 ? 'highlight' : 'highlights'}`;
+  $('highlight-colors').replaceChildren(...[null, ...HIGHLIGHT_COLORS].map(color => {
+    const count = color ? matching.filter(({ highlight }) => colorOf(highlight) === color).length : matching.length;
+    const chip = button(color ? count.toLocaleString() : 'All', () => { filter.color = color; render(); }, color ? `color-chip hl-${color}` : 'color-chip', color ? `${colorName(color)}: ${count}` : 'Every color');
+    chip.setAttribute('aria-pressed', String(filter.color === color));
+    chip.hidden = !!color && !count && filter.color !== color;
+    return chip;
+  }));
+  // Sites, most highlighted first.
+  const sites = new Map();
+  for (const { node } of all) sites.set(displayDomain(node.url), (sites.get(displayDomain(node.url)) || 0) + 1);
+  const option = (label, value) => { const choice = element('option', '', label); choice.value = value; return choice; };
+  $('highlight-site').replaceChildren(option('All sites', ''), ...[...sites].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([site, count]) => option(`${site} (${count})`, site)));
+  $('highlight-site').value = filter.site;
+  $('highlight-since').value = filter.since;
+  $('highlight-list').replaceChildren(...shown.map(({ node, highlight }) => highlightItem(node, highlight, terms)));
+  $('empty').hidden = shown.length > 0;
+  $('empty').classList.remove('welcoming');
+  $('empty').querySelector('h2').textContent = all.length ? 'No highlights match' : 'No highlights yet';
+  $('empty').querySelector('p').textContent = all.length ? 'Try another color, site, time, or search.' : `Select text on any page, then choose Highlight or press ${KEY.alt}${MAC ? '' : '+'}${KEY.shift}${MAC ? '' : '+'}H.`;
+  state.visible = [];
+  renderSelection();
+}
+function highlightItem(node, highlight, terms) {
+  const color = colorOf(highlight);
+  const item = element('li', `highlight-item hl-${color}`);
+  const quote = element('blockquote', 'quote');
+  markText(quote, highlight.text, { terms });
+  item.append(quote);
+  if (highlight.note) item.append(element('p', 'highlight-note', highlight.note));
+  const source = element('div', 'highlight-source');
+  const page = element('a', 'highlight-page', title(node));
+  const url = safeURL(node.url);
+  if (url) { page.href = url; page.target = '_blank'; page.rel = 'noopener noreferrer'; }
+  page.title = node.url;
+  const age = element('time', 'item-age', relativeAge(highlight.createdAt));
+  if (highlight.createdAt) age.dateTime = new Date(highlight.createdAt).toISOString();
+  const open = element('a', 'highlight-open', 'Show passage');
+  const link = highlightLink(node, highlight);
+  if (link) { open.href = link; open.target = '_blank'; open.rel = 'noopener noreferrer'; }
+  open.hidden = !link;
+  const actions = element('span', 'highlight-actions');
+  actions.append(swatches(color, next => recolor(node, highlight, next).catch(fail), 'swatches small'), open, iconButton('trash', () => deleteHighlight(node, highlight).catch(fail), 'item-action', 'Delete highlight'));
+  source.append(siteIcon(node), page, element('span', 'item-url', displayDomain(node.url)), age, actions);
+  item.append(source);
+  return item;
+}
+async function recolor(node, highlight, color) {
+  if (colorOf(highlight) === color) return;
+  await library.updateHighlight(node.id, highlight.id, { color });
+  await load();
+}
+async function deleteHighlight(node, highlight) {
+  await library.removeHighlight(node.id, highlight.id);
+  await load();
+  toast('Highlight deleted.', async () => { await library.addHighlight(node.id, highlight); await load(); }, 'Highlight restored.');
 }
 // Reads a capture the background stored for this request, if it is still fresh.
 async function readCapture(key) {
@@ -663,6 +820,7 @@ function openSettings(section = settingsSection, { message = '', after = null } 
   renderUsage();
   renderEstimate().catch(() => {});
   renderTextSettings();
+  $('browsing-related').checked = browsing.related;
   showSettingsSection(section);
   $('settings-dialog').showModal();
   if (section === 'semantic' && !jev.apiKey) $('jev-key').focus();
@@ -677,8 +835,9 @@ const pageCount = count => `${count.toLocaleString()} ${count === 1 ? 'page' : '
 function formatBytes(bytes) {
   return bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} KB` : `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
 }
+// Bookmarks without their text, or a post without its card.
 function textsMissing() {
-  return [...state.nodes.values()].filter(node => node.url && downloadable(node) && !pageTexts.get(node.id)?.text);
+  return [...state.nodes.values()].filter(node => node.url && downloadable(node) && (!pageTexts.get(node.id)?.text || (!node.card && siteOf(node.url))));
 }
 function renderTextSettings() {
   $('text-keep').checked = textSettings.keep;
@@ -702,18 +861,13 @@ function renderTextSettings() {
   $('text-download').hidden = running || !missing.length;
   $('text-download').textContent = `Download text for ${bookmarkCount(missing.length)}`;
 }
-// Readability, for reading the pages Marked downloads. A plain script that
-// defines Readability as a global, just as pages get it when Marked reads them.
-let readabilityLoading = null;
-function loadReadability() {
-  if (typeof globalThis.Readability === 'function') return Promise.resolve();
-  return readabilityLoading ??= new Promise((resolve, reject) => {
-    const script = element('script');
-    script.src = 'vendor/readability.js';
-    script.onload = () => resolve();
-    script.onerror = () => { readabilityLoading = null; script.remove(); reject(new Error('Marked’s page reader is missing. Run npm run bundle, then reload Marked.')); };
-    document.head.append(script);
-  });
+// A post's card and its thread or discussion, from its site's API.
+async function readSite(node, signal) {
+  const { card, text } = await fetchSite(node.url, { signal });
+  if (card) await library.setCards({ [node.id]: card });
+  const saved = text && await library.setText(node.id, { ...text, via: 'download' });
+  if (saved) pageTexts.set(node.id, saved);
+  return saved || null;
 }
 async function downloadTexts() {
   // Reading other sites needs access to them. Ask while the click still counts
@@ -728,20 +882,24 @@ async function downloadTexts() {
   let saved = 0, failed = 0;
   renderTextSettings();
   try {
-    await loadReadability();
+    // Posts read their sites' APIs; only other pages need Readability.
+    if (targets.some(node => !siteOf(node.url))) await loadReadability();
     const queue = [...targets];
     await Promise.all(Array.from({ length: 4 }, async () => {
       while (queue.length && !controller.signal.aborted) {
         const node = queue.shift();
-        let text;
-        try { text = { ...await fetchPageText(node.url, { signal: controller.signal }), via: 'download' }; }
-        catch (error) {
+        let stored = null, read = false;
+        try {
+          // A post reads its site's API; any other page, its own address.
+          stored = siteOf(node.url) ? await readSite(node, controller.signal)
+            : await library.setText(node.id, { ...await fetchPageText(node.url, { signal: controller.signal }), via: 'download' }, { replace: false });
+          read = true;
+        } catch (error) {
           if (controller.signal.aborted) return;
-          text = { error: error.message, via: 'download' };
+          stored = await library.setText(node.id, { error: error.message, via: 'download' }, { replace: false }).catch(() => null);
         }
-        const stored = await library.setText(node.id, text, { replace: false }).catch(() => null);
         if (stored) pageTexts.set(node.id, stored);
-        if (stored?.text) saved++; else failed++;
+        if (read) saved++; else failed++;
         textDownload.done++;
         if ($('settings-dialog').open) renderTextSettings();
       }
@@ -753,8 +911,9 @@ async function downloadTexts() {
     $('text-status').textContent = error.message;
   } finally {
     textDownload.controller = null;
+    // Cards arrived in the library, too.
+    await load().catch(() => {});
     renderTextSettings();
-    render();
   }
 }
 // Settings changed: cached answers are stale, and keyword matches return.
@@ -816,9 +975,13 @@ function openEditor(node = null, folder = false) {
   $('new-tag').value = ''; $('tags-hint').textContent = '';
   renderTagOptions();
   $('editor-error').textContent = '';
-  pendingHighlight = ''; $('highlight-field').hidden = true; $('edit-highlight-note').value = '';
+  pendingHighlight = ''; pendingColor = 'yellow'; $('highlight-field').hidden = true; $('edit-highlight-note').value = '';
   fillFolders($('edit-parent'), new Set(node ? [node.id] : []), node?.parentId || defaultFolder());
   $('editor').showModal(); $('edit-name').focus();
+}
+function renderEditorColors() {
+  $('edit-highlight-colors').replaceChildren(...swatches(pendingColor, color => { pendingColor = color; renderEditorColors(); }).children);
+  $('edit-highlight').className = `quote hl-${pendingColor}`;
 }
 function renderTagOptions() {
   $('edit-tags').replaceChildren(...cleanTags([...state.tags, ...editorTags], Infinity).map(tag => {
@@ -897,17 +1060,19 @@ $('editor-form').addEventListener('submit', async event => {
     if (pendingPreview) {
       changes.preview = !folder && $('save-preview').checked && url === pendingPreviewURL ? pendingPreview : null;
     }
-    if (pendingHighlight && !state.editing) changes.highlights = [{ text: pendingHighlight, note: $('edit-highlight-note').value }];
+    if (pendingHighlight && !state.editing) changes.highlights = [{ text: pendingHighlight, note: $('edit-highlight-note').value, color: pendingColor }];
     if (pendingIcon && !state.editing && url === pendingPreviewURL) changes.icon = pendingIcon;
     const parentId = $('edit-parent').value;
     if (state.editing) {
       await library.update(state.editing.id, changes, parentId);
     } else {
-      const created = await library.create({ ...changes, parentId, type: folder ? 'folder' : 'bookmark' });
-      if (pendingText && url === pendingPreviewURL && textSettings.keep) {
+      const captured = url === pendingPreviewURL;
+      const created = await library.create({ ...changes, ...(pendingCard && captured && { card: pendingCard }), parentId, type: folder ? 'folder' : 'bookmark' });
+      if (pendingText && captured && textSettings.keep) {
         const saved = await library.setText(created.id, { ...pendingText, via: 'page' }).catch(() => null);
         if (saved) pageTexts.set(created.id, saved);
       }
+      if (!folder && !(pendingCard && captured) && siteOf(url)) readSite(created).catch(error => console.warn('No card for this bookmark', error));
     }
     $('editor').close(); await load(); toast('Saved to Marked.');
   } catch (error) { $('editor-error').textContent = error.message; }
@@ -925,6 +1090,148 @@ $('move-form').addEventListener('submit', async event => {
     $('move-dialog').close(); state.selected.clear(); await load(); toast('Items moved.');
   } catch (error) { $('move-error').textContent = error.message; }
   finally { event.submitter.disabled = false; }
+});
+// Drag and drop: bookmarks and folders go into any folder (in the list, the
+// sidebar, or the breadcrumbs), and within a folder shown in saved order they
+// can be arranged by hand. Alt+↑ and Alt+↓ do the same from the keyboard.
+const DRAG_TYPE = 'application/x-marked-items';
+const rowOf = id => [...$('items').rows].find(row => row.dataset.id === id);
+let drag = null, expandTimer = null;
+const canArrange = () => !!state.folder && !state.tag && !state.special && !$('search').value.trim() && $('sort').value === 'default';
+// A folder can take the dragged items unless it is one of them or inside one.
+const canTake = folder => isFolder(folder) && !drag.ids.some(id => id === folder.id || ancestors(folder.id).some(parent => parent.id === id));
+function clearDrop() {
+  for (const marked of document.querySelectorAll('.drop-before, .drop-after, .drop-into')) marked.classList.remove('drop-before', 'drop-after', 'drop-into');
+}
+// Where a drop on this row lands: 'into' a folder (its middle), or 'before' or
+// 'after' it (across a list row's height, or a card's width) when arranging.
+function dropPlace(row, event) {
+  const target = state.nodes.get(row.dataset.id);
+  if (!drag || !target || drag.ids.includes(target.id)) return null;
+  const rect = row.getBoundingClientRect();
+  const gallery = view === 'gallery';
+  const along = gallery ? (event.clientX - rect.left) / (rect.width || 1) : (event.clientY - rect.top) / (rect.height || 1);
+  const arrange = canArrange() && target.parentId === state.folder;
+  if (canTake(target) && (!arrange || (along > 0.25 && along < 0.75))) return 'into';
+  if (!arrange) return null;
+  return along < 0.5 ? 'before' : 'after';
+}
+// The child that comes after node in its folder, skipping the ones being moved.
+function nextSibling(node) {
+  const siblings = state.nodes.get(node.parentId)?.children || [];
+  return siblings.slice(siblings.findIndex(child => child.id === node.id) + 1).find(child => !drag.ids.includes(child.id))?.id ?? null;
+}
+async function moveItems(ids, parentId, beforeId = null) {
+  const places = await library.moveMany(ids, parentId, beforeId);
+  state.selected.clear();
+  await load();
+  // Arranging within the folder on screen needs no message; moving elsewhere can be undone.
+  if (places.every(place => place.parentId === parentId)) return;
+  const destination = state.nodes.get(parentId);
+  const what = ids.length === 1 ? `“${title(state.nodes.get(ids[0]))}”` : `${ids.length} items`;
+  toast(`Moved ${what} to ${destination.id === state.root.id ? 'the top of the library' : `“${title(destination)}”`}.`, async () => {
+    await library.placeMany(places);
+    await load();
+  }, 'Moved back.');
+}
+function startDrag(event, ids) {
+  drag = { ids };
+  const nodes = ids.map(id => state.nodes.get(id));
+  const urls = nodes.filter(node => node.url).map(node => node.url);
+  event.dataTransfer.effectAllowed = 'copyMove';
+  event.dataTransfer.setData(DRAG_TYPE, ids.join(','));
+  // Dropped outside Marked, bookmarks are their addresses: a new tab, a message, a document.
+  if (urls.length) event.dataTransfer.setData('text/uri-list', urls.join('\r\n'));
+  event.dataTransfer.setData('text/plain', urls.length ? urls.join('\n') : nodes.map(title).join('\n'));
+  if (ids.length > 1) {
+    const label = element('div', 'drag-label', `${ids.length} items`);
+    document.body.append(label);
+    event.dataTransfer.setDragImage?.(label, 12, 12);
+    setTimeout(() => label.remove(), 0);
+  }
+  document.body.classList.add('dragging');
+  for (const id of ids) rowOf(id)?.classList.add('dragged');
+}
+function endDrag() {
+  drag = null;
+  clearTimeout(expandTimer);
+  clearDrop();
+  document.body.classList.remove('dragging');
+  for (const row of document.querySelectorAll('.dragged')) row.classList.remove('dragged');
+}
+$('items').addEventListener('dragstart', event => {
+  const row = event.target.closest?.('tr[data-id]');
+  if (!row || !row.draggable) return;
+  // A selected row carries the whole selection with it.
+  const ids = state.selected.has(row.dataset.id) ? topLevelIds([...state.selected]) : [row.dataset.id];
+  if (!ids.length) { event.preventDefault(); return; }
+  startDrag(event, ids);
+});
+$('items').addEventListener('dragover', event => {
+  const row = event.target.closest?.('tr[data-id]');
+  const place = row && dropPlace(row, event);
+  clearDrop();
+  if (!place) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  row.classList.add(`drop-${place}`);
+});
+$('items').addEventListener('drop', event => {
+  const row = event.target.closest?.('tr[data-id]');
+  const place = row && dropPlace(row, event);
+  if (!place) return;
+  event.preventDefault();
+  const target = state.nodes.get(row.dataset.id), ids = drag.ids;
+  const move = place === 'into' ? moveItems(ids, target.id) : moveItems(ids, state.folder, place === 'before' ? target.id : nextSibling(target));
+  endDrag();
+  move.catch(fail);
+});
+// Folders in the sidebar and the breadcrumbs take drops too; a closed folder
+// opens after a moment, so items can go deeper.
+$('folder-tree').addEventListener('dragstart', event => {
+  const row = event.target.closest?.('.folder-row[data-id]');
+  if (row) startDrag(event, [row.dataset.id]);
+});
+for (const area of ['folder-tree', 'breadcrumbs']) {
+  const targetOf = event => event.target.closest?.('[data-id]');
+  $(area).addEventListener('dragover', event => {
+    const target = targetOf(event), folder = target && drag && state.nodes.get(target.dataset.id);
+    if (!folder || !canTake(folder)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (target.classList.contains('drop-into')) return;
+    clearDrop();
+    target.classList.add('drop-into');
+    clearTimeout(expandTimer);
+    if (area === 'folder-tree' && !state.expanded.has(folder.id) && folder.children?.some(isFolder)) {
+      expandTimer = setTimeout(() => { state.expanded.add(folder.id); renderTree(); }, 700);
+    }
+  });
+  $(area).addEventListener('drop', event => {
+    const target = targetOf(event), folder = target && drag && state.nodes.get(target.dataset.id);
+    if (!folder || !canTake(folder)) return;
+    event.preventDefault();
+    const ids = drag.ids;
+    endDrag();
+    moveItems(ids, folder.id).catch(fail);
+  });
+}
+document.addEventListener('dragend', endDrag);
+// Alt+↑ and Alt+↓ move the focused bookmark within its folder, in saved order.
+$('items').addEventListener('keydown', async event => {
+  if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') || !canArrange()) return;
+  const row = event.target.closest?.('tr[data-id]');
+  const siblings = (state.nodes.get(state.folder)?.children || []).filter(child => child.type !== 'separator');
+  const index = siblings.findIndex(child => child.id === row?.dataset.id);
+  const up = event.key === 'ArrowUp';
+  if (index < 0 || !siblings[index + (up ? -1 : 1)]) return;
+  event.preventDefault();
+  const focused = [...row.querySelectorAll('input, a, button')].indexOf(event.target);
+  try {
+    await library.moveMany([row.dataset.id], state.folder, up ? siblings[index - 1].id : siblings[index + 2]?.id ?? null);
+    await load();
+  } catch (error) { fail(error); return; }
+  rowOf(row.dataset.id)?.querySelectorAll('input, a, button')[Math.max(0, focused)]?.focus();
 });
 function download(contents, type, name, extension) {
   const url = URL.createObjectURL(new Blob([contents], { type }));
@@ -953,15 +1260,31 @@ function exportNotes() {
 for (const [id, run] of [['export-backup', downloadBackup], ['export-html', exportBookmarks], ['export-markdown', exportNotes]]) {
   $(id).addEventListener('click', () => { $('export-menu').hidePopover?.(); Promise.resolve(run()).catch(fail); });
 }
-// The menu opens under Export, lined up with its right edge; popovers
+// Each menu opens under its button, lined up with its right edge; popovers
 // otherwise sit in the middle of the page.
-$('export-menu').addEventListener('toggle', event => {
-  if (event.newState !== 'open') return;
-  const anchor = $('export').getBoundingClientRect(), menu = $('export-menu');
-  menu.style.top = `${anchor.bottom + 8}px`;
-  menu.style.left = `${Math.max(8, Math.min(anchor.right - menu.offsetWidth, document.defaultView.innerWidth - menu.offsetWidth - 8))}px`;
-});
-$('import').addEventListener('click', () => $('import-file').click());
+for (const [menu, owner] of [['export-menu', 'export'], ['import-menu', 'import']]) {
+  $(menu).addEventListener('toggle', event => {
+    if (event.newState !== 'open') return;
+    const anchor = $(owner).getBoundingClientRect();
+    $(menu).style.top = `${anchor.bottom + 8}px`;
+    $(menu).style.left = `${Math.max(8, Math.min(anchor.right - $(menu).offsetWidth, document.defaultView.innerWidth - $(menu).offsetWidth - 8))}px`;
+  });
+}
+// Import: a bookmarks file or backup, the browser's bookmarks, or X's.
+$('import-file-open').addEventListener('click', () => { $('import-menu').hidePopover?.(); $('import-file').click(); });
+$('import-browser').addEventListener('click', () => { $('import-menu').hidePopover?.(); offerBrowserImport({ asked: true }).catch(fail); });
+$('import-x').addEventListener('click', () => { $('import-menu').hidePopover?.(); importFromX().catch(fail); });
+// Marked opens X's bookmarks page in a new tab and saves every post there into
+// an "X bookmarks" folder, as the page shows them; it needs you signed in to X.
+async function importFromX() {
+  // Firefox asks for access to X while the click still counts as user input.
+  const access = browser.permissions?.request?.({ origins: ['https://x.com/*', 'https://twitter.com/*'] }).catch(() => true);
+  if (await access === false) { toast('Marked needs access to x.com to read your bookmarks there.'); return; }
+  const reply = await browser.runtime.sendMessage({ type: 'marked:import-x' });
+  if (reply?.error) throw new Error(reply.error);
+  toast('Collecting your bookmarks on X. Keep that tab open until it says it’s done.');
+}
+
 $('import-file').addEventListener('change', async () => {
   const file = $('import-file').files[0]; $('import-file').value = '';
   if (!file) return;
@@ -1053,6 +1376,10 @@ $('chat-toggle').addEventListener('click', async () => {
 });
 $('all-bookmarks').addEventListener('click', () => navigate(null));
 $('rediscover-nav').addEventListener('click', () => showSpecial('rediscover'));
+$('highlights-nav').addEventListener('click', () => showSpecial('highlights'));
+$('continue-nav').addEventListener('click', () => showSpecial('continue'));
+$('highlight-site').addEventListener('change', () => { state.highlightFilter.site = $('highlight-site').value; render(); });
+$('highlight-since').addEventListener('change', () => { state.highlightFilter.since = $('highlight-since').value; render(); });
 $('duplicates-nav').addEventListener('click', () => showSpecial('duplicates'));
 $('shuffle').addEventListener('click', () => { state.rediscover = pickRediscover(); render(); });
 $('merge-all').addEventListener('click', () => mergeGroups(findDuplicates()).catch(fail));
@@ -1187,6 +1514,10 @@ for (const [id, option] of [['jev-notes', 'notes'], ['jev-highlights', 'highligh
     renderEstimate().catch(() => {});
   });
 }
+$('browsing-related').addEventListener('change', () => {
+  browsing = { ...browsing, related: $('browsing-related').checked };
+  browser.storage.local.set({ [BROWSING_KEY]: browsing }).catch(fail);
+});
 $('text-keep').addEventListener('change', () => {
   textSettings = { ...textSettings, keep: $('text-keep').checked };
   browser.storage.local.set({ [PAGE_TEXT_SETTINGS_KEY]: textSettings }).catch(fail);
@@ -1253,7 +1584,7 @@ function setView(mode) {
 }
 for (const mode of ['list', 'gallery']) $(mode + '-view').addEventListener('click', () => setView(mode));
 $('editor').addEventListener('close', () => {
-  pendingPreview = null; pendingPreviewURL = null; pendingIcon = null; pendingText = null; showEditorPreview();
+  pendingPreview = null; pendingPreviewURL = null; pendingIcon = null; pendingText = null; pendingCard = null; showEditorPreview();
 });
 $('select-all').addEventListener('change', () => { state.selected = new Set($('select-all').checked ? state.visible.filter(n => !protectedNode(n)).map(n => n.id) : []); render(); });
 $('clear-selection').addEventListener('click', () => { state.selected.clear(); render(); });
@@ -1273,8 +1604,10 @@ const SHORTCUTS = [
   [['?'], 'Show these shortcuts'],
   [['esc'], 'Close a dialog'],
   [[KEY.alt, KEY.shift, 'M'], 'Save the page you’re on, from any tab'],
+  [[KEY.alt, KEY.shift, 'H'], 'Highlight the text selected on a page'],
   [['mk', 'space'], 'Search Marked from the address bar'],
-  [[KEY.mod, '↵'], 'Save a highlight on a page']
+  [[KEY.mod, '↵'], 'Save a highlight on a page'],
+  [[KEY.alt, '↑', '↓'], 'Move a bookmark up or down, in saved order']
 ];
 function showShortcuts() {
   $('shortcuts-list').replaceChildren(...SHORTCUTS.flatMap(([names, what]) => {
@@ -1302,9 +1635,12 @@ function commands() {
     ['New folder', 'create', () => openEditor(null, true)],
     ['Save open tabs', 'session window', () => $('save-tabs').click()],
     ['Rediscover', 'random old resurface forgotten', () => showSpecial('rediscover')],
+    ['Highlights', 'quotes passages notes colors', () => showSpecial('highlights')],
+    ['Continue reading', 'reader progress unfinished', () => showSpecial('continue')],
     ['Find duplicates', 'merge copies dedupe', () => showSpecial('duplicates')],
     [view === 'list' ? 'Show the gallery' : 'Show the list', 'view layout cards previews', () => setView(view === 'list' ? 'gallery' : 'list')],
-    ['Import a bookmarks file', 'html json backup restore', () => $('import').click()],
+    ['Import a bookmarks file', 'html json backup restore', () => $('import-file').click()],
+    ['Import bookmarks from X', 'twitter tweets posts saved', () => importFromX().catch(fail)],
     ['Import from this browser', 'chrome firefox bookmarks', () => offerBrowserImport({ asked: true }).catch(fail)],
     ['Export bookmarks', 'html download file', exportBookmarks],
     ['Export notes and highlights', 'markdown obsidian notion download', exportNotes],
@@ -1438,17 +1774,22 @@ browser.storage.onChanged.addListener((changes, area) => {
     if (changes[key].newValue) pageTexts.set(id, changes[key].newValue); else pageTexts.delete(id);
   }
   if (texts.length) {
+    relatedIndex = null;
     clearTimeout(textTimer);
     textTimer = setTimeout(() => { render(); if ($('settings-dialog').open) renderTextSettings(); }, 200);
   }
   if (area === 'local' && changes[PAGE_TEXT_SETTINGS_KEY]) textSettings = { keep: true, ...changes[PAGE_TEXT_SETTINGS_KEY].newValue };
+  if (area === 'local' && changes[READING_KEY]) { reading = changes[READING_KEY].newValue || {}; clearTimeout(textTimer); textTimer = setTimeout(render, 200); }
   // Settings and usage changed in another Marked tab.
   if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
   // This tab's own saves arrive here too, unchanged, and are skipped.
   const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
   if (settings && ['apiKey', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
 });
-Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY, PAGE_TEXT_SETTINGS_KEY]).then(saved => {
+Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY, PAGE_TEXT_SETTINGS_KEY, READING_KEY, RELATED_KEY, BROWSING_KEY]).then(saved => {
+  reading = saved[READING_KEY] || {};
+  storedRelated = saved[RELATED_KEY] ? JSON.stringify([saved[RELATED_KEY].n, saved[RELATED_KEY].docs]) : '';
+  browsing = { related: true, ...saved[BROWSING_KEY] };
   view = saved.markedView === 'gallery' ? 'gallery' : 'list';
   jev = { ...jev, ...(saved[JEV_SETTINGS_KEY] || {}) };
   jevUsage = saved[JEV_USAGE_KEY] || null;
@@ -1456,13 +1797,22 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
 })]).then(async () => {
   render();
   askFirstImport();
-  loadTexts().catch(fail);
+  // With the texts in, the Marked button and the reader get an up-to-date index.
+  loadTexts().then(() => setTimeout(() => relatedIndexNow(), 1000)).catch(fail);
   const params = new URLSearchParams(document.location.search);
-  if (!['add', 'edit', 'q'].some(key => params.has(key))) return;
+  if (!['add', 'edit', 'q', 'folder', 'related'].some(key => params.has(key))) return;
   // Consume the request so refreshing the tab does not repeat it.
   document.defaultView.history.replaceState(null, '', document.location.pathname);
   // A search typed after "mk" in the address bar.
   if (params.has('q')) { $('search').value = params.get('q'); render(); return; }
+  // The Marked button asked what's related to the page it was on.
+  if (params.has('related')) {
+    const page = await readCapture(params.get('related'));
+    if (page?.url) { await loadTexts(); showRelated({ page }); } else toast('That page is no longer open.');
+    return;
+  }
+  // A folder to show, such as the one an import filled.
+  if (params.has('folder')) { if (isFolder(state.nodes.get(params.get('folder')))) navigate(params.get('folder')); return; }
   // Add to Marked on a page that's already saved edits its bookmark.
   if (params.has('edit')) {
     const node = state.nodes.get(params.get('edit'));
@@ -1481,6 +1831,8 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
     if (validIcon(capture.icon)) { pendingIcon = capture.icon; pendingPreviewURL = url; }
     const text = cleanPageText(capture.text);
     if (text?.text) { pendingText = text; pendingPreviewURL = url; }
+    const card = cleanCard(capture.card);
+    if (card) { pendingCard = card; pendingPreviewURL = url; }
     // Don't overwrite anything typed while the capture was loading.
     const abstract = cleanAbstract(capture.abstract);
     if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;
@@ -1488,6 +1840,7 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
     if (pendingHighlight) {
       $('edit-highlight').textContent = pendingHighlight;
       $('highlight-field').hidden = false;
+      renderEditorColors();
     }
   }
   await suggestEditorTags(true);

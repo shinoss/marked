@@ -39,6 +39,8 @@ export function cleanNote(value) {
 // Passages the user highlighted on a page, each with an optional note.
 export const HIGHLIGHT_LIMIT = 2000;
 export const HIGHLIGHTS_PER_BOOKMARK = 100;
+// Yellow is every highlight's color unless another is chosen, so it's never stored.
+export const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'];
 export function cleanHighlightText(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, HIGHLIGHT_LIMIT) : '';
 }
@@ -46,10 +48,12 @@ export function cleanHighlight(value) {
   const text = cleanHighlightText(value?.text);
   if (!text) return null;
   const note = cleanNote(value.note);
+  const color = HIGHLIGHT_COLORS.includes(value.color) && value.color !== 'yellow' ? value.color : '';
   return {
     id: typeof value.id === 'string' && value.id ? value.id.slice(0, 100) : crypto.randomUUID(),
     text,
     ...(note && { note }),
+    ...(color && { color }),
     createdAt: Number.isFinite(value.createdAt) && value.createdAt > 0 ? value.createdAt : Date.now()
   };
 }

@@ -85,6 +85,8 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.deepEqual(pressed(), ['Technology', 'AI', 'Robotics']);
   assert.equal($('highlight-field').hidden, false, 'a highlight from the page is shown in the editor');
   assert.equal($('edit-highlight').textContent, 'A key passage.');
+  $('edit-highlight-colors').querySelector('.hl-green').click();
+  assert.ok($('edit-highlight').classList.contains('hl-green'), 'the passage shows the color chosen for it');
   $('edit-highlight-note').value = 'Why it matters';
   $('edit-note').value = '  Read before the meetup ';
   $('edit-abstract').value += ' Edited.';
@@ -93,7 +95,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.equal(saved.abstract, 'Agents that learn by imagining outcomes. Edited.');
   assert.equal(saved.note, 'Read before the meetup');
   assert.deepEqual(saved.tags, ['AI', 'Technology', 'Robotics']);
-  assert.deepEqual(saved.highlights.map(({ text, note }) => ({ text, note })), [{ text: 'A key passage.', note: 'Why it matters' }]);
+  assert.deepEqual(saved.highlights.map(({ text, note, color }) => ({ text, note, color })), [{ text: 'A key passage.', note: 'Why it matters', color: 'green' }]);
   const { capturedAt, ...text } = (await browser.storage.local.get())[`markedText:${saved.id}`];
   assert.deepEqual(text, { via: 'page', text: 'The whole post, word for word.', words: 6 }, 'the page’s text is kept with it');
   const row = $('items').querySelector('tr');
@@ -361,6 +363,10 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   assert.equal(dom.window.location.search, '', 'a refresh doesn’t repeat it');
   dom.window.close();
 
+  ({ dom, $ } = await open('?folder=reading', 'folder'));
+  assert.equal($('page-title').textContent, 'Reading', 'a link can open a folder, as an import’s does');
+  dom.window.close();
+
   ({ dom, $ } = await open('?edit=essay', 'edit'));
   assert.ok($('editor').open);
   assert.equal($('editor-title').textContent, 'Edit bookmark');
@@ -489,7 +495,7 @@ test('an empty library welcomes you; the palette jumps anywhere; themes and shor
   document.activeElement.blur();
   page.key({ key: '?' });
   assert.ok($('shortcuts-dialog').open);
-  assert.equal($('shortcuts-list').querySelectorAll('dt').length, 7);
+  assert.equal($('shortcuts-list').querySelectorAll('dt').length, 9);
   dom.window.localStorage.clear();
   dom.window.close();
 });
@@ -558,20 +564,24 @@ test('search finds words in the text saved from pages, shows where, and opens th
   assert.deepEqual(titles(), [], 'but all of them in one bookmark');
 
   await search('currency');
-  $('items').querySelector('.item-passage').click();
-  assert.ok($('text-dialog').open);
-  assert.equal($('text-title').textContent, 'On attention');
-  assert.equal($('text-meta').textContent, `example.com · Ada Writer · 3 min read · saved ${new Date(Date.UTC(2026, 8, 1, 12)).toLocaleDateString([], { dateStyle: 'medium' })}`);
-  assert.equal($('text-body').querySelectorAll('p').length, 3);
-  assert.deepEqual([...$('text-body').querySelectorAll('mark.term')].map(mark => mark.textContent), ['currency'], 'the words searched for are marked');
-  assert.deepEqual([...$('text-body').querySelectorAll('mark.passage')].map(mark => mark.textContent), ['A saved link is a promise to your future self.'], 'and so is the highlight');
-  assert.equal($('text-open').href, 'https://example.com/essay');
-  $('text-dialog').close();
+  assert.equal($('items').querySelector('.item-passage').href, 'https://extension.local/reader.html?id=essay&q=currency', 'the passage opens the reader at the match');
   await search('');
-  $('items').querySelector('.item-read').click();
-  assert.ok($('text-dialog').open, 'the reading time opens the text too');
-  assert.equal($('text-body').querySelectorAll('mark.term').length, 0);
-  dom.window.close();
+  assert.equal($('items').querySelector('.item-read').href, 'https://extension.local/reader.html?id=essay', 'the reading time opens the reader');
+  assert.equal($('continue-nav').hidden, true, 'nothing started yet');
+  page.dom.window.close();
+
+  // Part-read in the reader: minutes left, and a place in Continue reading.
+  const later = await openManager({ id: 'root', children: [{ id: 'essay', parentId: 'root', title: 'On attention', url: 'https://example.com/essay', type: 'bookmark' }, { id: 'done', parentId: 'root', title: 'Finished', url: 'https://done.test/', type: 'bookmark' }] }, 'page-text-reading', {
+    'markedText:essay': { text: essay, words: 800, capturedAt: 1 }, 'markedText:done': { text: essay, words: 100, capturedAt: 1 },
+    markedReadingV1: { essay: { p: 0.4, i: 1, at: 5 }, done: { p: 1, i: 2, at: 6 } }
+  });
+  const reads = () => [...later.$('items').querySelectorAll('.item-read')].map(link => [link.textContent, link.className]);
+  assert.deepEqual(reads(), [['2 min left', 'item-read reading'], ['Read', 'item-read read']]);
+  assert.equal(later.$('continue-count').textContent, '1');
+  later.$('continue-nav').click();
+  assert.equal(later.$('page-title').textContent, 'Continue reading');
+  assert.deepEqual([...later.$('items').querySelectorAll('.item-title')].map(link => link.textContent), ['On attention']);
+  later.dom.window.close();
 });
 
 test('Settings shows how much page text is kept, downloads it for older bookmarks, and deletes it', async () => {
@@ -618,4 +628,246 @@ test('Settings shows how much page text is kept, downloads it for older bookmark
   assert.equal($('text-status').textContent, 'Deleted the text of 3 pages.');
   delete globalThis.fetch;
   dom.window.close();
+});
+
+test('bookmarks drag into folders, arrange by hand in saved order, and move with Alt+arrows', async () => {
+  const page = await openManager({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'a', parentId: 'reading', title: 'A', url: 'https://a.test/', type: 'bookmark' },
+    { id: 'b', parentId: 'reading', title: 'B', url: 'https://b.test/', type: 'bookmark' },
+    { id: 'c', parentId: 'reading', title: 'C', url: 'https://c.test/', type: 'bookmark' },
+    { id: 'later', parentId: 'reading', title: 'Later', type: 'folder', children: [] }
+  ] }] }, 'drag');
+  const { dom, $ } = page;
+  const saved = async () => { const reading = (await browser.storage.local.get()).markedLibraryV1.root.children[0]; return [reading.children.map(n => n.id).join(''), reading.children.find(n => n.id === 'later').children.map(n => n.id).join('')]; };
+  const row = id => [...$('items').rows].find(r => r.dataset.id === id);
+  const transfer = () => ({ data: {}, types: [], setData(type, value) { this.data[type] = value; this.types.push(type); }, setDragImage() {} });
+  const fire = (target, type, init = {}, dataTransfer = page.transfer) => {
+    const event = new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, ...init });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    target.dispatchEvent(event);
+    return event;
+  };
+  // A row is 40px tall: its top quarter means before, its middle means into a folder.
+  const at = (id, fraction) => { const r = row(id); r.getBoundingClientRect = () => ({ top: 0, left: 0, height: 40, width: 400 }); return { clientY: 40 * fraction }; };
+  const dragTo = async (from, to, fraction) => {
+    page.transfer = transfer();
+    fire(row(from), 'dragstart');
+    const over = fire(row(to), 'dragover', at(to, fraction));
+    const allowed = over.defaultPrevented;
+    if (allowed) fire(row(to), 'drop', at(to, fraction));
+    fire(document, 'dragend');
+    await page.settle();
+    return allowed;
+  };
+  $('folder-tree').querySelector('.folder-link').click();
+  $('sort').value = 'default'; $('sort').dispatchEvent(new dom.window.Event('change'));
+
+  page.transfer = transfer();
+  fire(row('c'), 'dragstart');
+  assert.deepEqual([page.transfer.data['text/uri-list'], page.transfer.data['application/x-marked-items']], ['https://c.test/', 'c'], 'a bookmark drags as its address, too');
+  fire(document, 'dragend');
+  assert.equal(await dragTo('c', 'a', 0.1), true);
+  assert.deepEqual(await saved(), ['cab' + 'later', ''], 'dropped before A');
+  assert.equal(await dragTo('c', 'b', 0.9), true);
+  assert.deepEqual(await saved(), ['abc' + 'later', ''], 'and after B');
+  assert.equal(await dragTo('b', 'later', 0.5), true);
+  assert.deepEqual(await saved(), ['aclater', 'b'], 'into a folder');
+  assert.equal($('toast').querySelector('span').textContent, 'Moved “B” to “Later”.');
+  [...$('toast').querySelectorAll('button')].find(button => button.textContent === 'Undo').click(); await page.settle();
+  assert.deepEqual(await saved(), ['abclater', ''], 'Undo puts it back');
+  assert.equal($('toast').textContent, 'Moved back.');
+
+  // Onto a folder in the sidebar, with the selection.
+  const sidebar = id => [...$('folder-tree').querySelectorAll('.folder-row')].find(r => r.dataset.id === id);
+  row('a').querySelector('input').click(); row('c').querySelector('input').click();
+  page.transfer = transfer();
+  fire(row('a'), 'dragstart');
+  assert.equal(page.transfer.data['application/x-marked-items'], 'a,c', 'a selected row carries the selection');
+  assert.equal(fire(sidebar('later'), 'dragover').defaultPrevented, true);
+  assert.ok(sidebar('later').classList.contains('drop-into'));
+  fire(sidebar('later'), 'drop'); fire(document, 'dragend');
+  await page.settle();
+  assert.deepEqual(await saved(), ['blater', 'ac']);
+  assert.equal($('toast').querySelector('span').textContent, 'Moved 2 items to “Later”.');
+
+  // Only saved order can be arranged; a folder can't go inside itself.
+  $('sort').value = 'title'; $('sort').dispatchEvent(new dom.window.Event('change'));
+  assert.equal(await dragTo('b', 'later', 0.1), true, 'near a folder’s edge still means into it');
+  assert.deepEqual(await saved(), ['later', 'acb']);
+  sidebar('later').querySelector('.folder-link').click();
+  $('sort').value = 'default'; $('sort').dispatchEvent(new dom.window.Event('change'));
+  page.transfer = transfer();
+  fire(sidebar('later'), 'dragstart');
+  assert.equal(fire(sidebar('later'), 'dragover').defaultPrevented, false, 'not into itself');
+  assert.equal(fire($('breadcrumbs').querySelector('[data-id="reading"]'), 'dragover').defaultPrevented, true, 'but into the folder around it, from the breadcrumbs');
+  fire(document, 'dragend');
+
+  // Alt+arrows move the focused row.
+  row('c').querySelector('input').focus();
+  row('c').querySelector('input').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true, cancelable: true }));
+  await page.settle();
+  assert.deepEqual(await saved(), ['later', 'cab']);
+  assert.equal(document.activeElement, row('c').querySelector('input'), 'focus stays on the moved row');
+  dom.window.close();
+});
+
+test('Highlights lists every highlight, newest first, by color, site, time, and search; each can change color or go', async () => {
+  const day = 864e5, now = Date.now();
+  const page = await openManager({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'essay', parentId: 'reading', title: 'On attention', url: 'https://example.com/essay', type: 'bookmark', highlights: [
+      { id: 'h1', text: 'Attention is a budget.', note: 'Core idea', createdAt: now - 2 * day },
+      { id: 'h2', text: 'A saved link is a promise to your future self, and most of those promises are never kept.', color: 'green', createdAt: now - 40 * day }
+    ] },
+    { id: 'wiki', parentId: 'reading', title: 'Transformer', url: 'https://en.wikipedia.org/wiki/Transformer', type: 'bookmark', highlights: [
+      { id: 'h3', text: 'Self-attention relates positions.', color: 'blue', createdAt: now - day }
+    ] },
+    { id: 'plain', parentId: 'reading', title: 'Plain', url: 'https://plain.test/', type: 'bookmark' }
+  ] }] }, 'highlights-view');
+  const { dom, $ } = page;
+  const quotes = () => [...$('highlight-list').querySelectorAll('.quote')].map(quote => quote.textContent.slice(0, 22));
+  const chips = () => [...$('highlight-colors').children].filter(chip => !chip.hidden).map(chip => chip.getAttribute('aria-label') || chip.textContent);
+  const chip = label => [...$('highlight-colors').children].find(item => (item.getAttribute('aria-label') || item.textContent).startsWith(label));
+  const change = (id, value) => { $(id).value = value; $(id).dispatchEvent(new dom.window.Event('change')); };
+  assert.equal($('highlights-count').textContent, '3');
+  $('highlights-nav').click();
+  assert.equal($('page-title').textContent, 'Highlights');
+  assert.ok(document.querySelector('.table-wrap').hidden && !$('highlight-list').hidden);
+  assert.deepEqual(quotes(), ['Self-attention relates', 'Attention is a budget.', 'A saved link is a prom'], 'newest first');
+  assert.equal($('highlight-count').textContent, '3 highlights');
+  assert.deepEqual(chips(), ['Every color', 'Yellow: 1', 'Green: 1', 'Blue: 1'], 'colors in use, with counts');
+
+  chip('Green').click();
+  assert.deepEqual(quotes(), ['A saved link is a prom']);
+  chip('Every').click();
+  change('highlight-site', 'en.wikipedia.org');
+  assert.deepEqual(quotes(), ['Self-attention relates']);
+  change('highlight-site', '');
+  change('highlight-since', 'month');
+  assert.deepEqual(quotes(), ['Self-attention relates', 'Attention is a budget.'], 'past month');
+  change('highlight-since', '');
+  $('search').value = 'core idea'; $('search').dispatchEvent(new dom.window.Event('input'));
+  await page.settle(150);
+  assert.equal($('page-title').textContent, 'Highlights', 'the search box searches highlights here');
+  assert.deepEqual(quotes(), ['Attention is a budget.'], 'notes count');
+  $('search').value = 'zzz'; $('search').dispatchEvent(new dom.window.Event('input'));
+  await page.settle(150);
+  assert.equal(document.querySelector('#empty h2').textContent, 'No highlights match');
+  $('search').value = ''; $('search').dispatchEvent(new dom.window.Event('input'));
+  await page.settle(150);
+
+  const [first, , last] = $('highlight-list').children;
+  assert.deepEqual([first.querySelector('.highlight-page').textContent, first.querySelector('.highlight-page').href], ['Transformer', 'https://en.wikipedia.org/wiki/Transformer']);
+  assert.equal(first.querySelector('.highlight-open').href, 'https://en.wikipedia.org/wiki/Transformer#:~:text=Self%2Dattention%20relates%20positions.', 'the passage opens on its page');
+  assert.equal(last.querySelector('.highlight-open').href, 'https://example.com/essay#:~:text=A%20saved%20link%20is%20a,those%20promises%20are%20never%20kept.', 'a long one by its first and last words');
+  first.querySelector('.swatch.hl-pink').click(); await page.settle();
+  const stored = async () => (await browser.storage.local.get()).markedLibraryV1.root.children[0].children;
+  assert.equal((await stored())[1].highlights[0].color, 'pink');
+  assert.deepEqual(chips(), ['Every color', 'Yellow: 1', 'Green: 1', 'Pink: 1']);
+  $('highlight-list').children[0].querySelector('.item-action').click(); await page.settle();
+  assert.equal((await stored())[1].highlights, undefined);
+  assert.deepEqual(quotes(), ['Attention is a budget.', 'A saved link is a prom']);
+  [...$('toast').querySelectorAll('button')].find(button => button.textContent === 'Undo').click(); await page.settle();
+  assert.equal((await stored())[1].highlights[0].text, 'Self-attention relates positions.', 'Undo brings it back');
+  assert.equal($('toast').textContent, 'Highlight restored.');
+  $('all-bookmarks').click();
+  assert.ok(!document.querySelector('.table-wrap').hidden && $('highlight-list').hidden);
+  assert.equal($('search').placeholder, 'Search all bookmarks…');
+  dom.window.close();
+});
+
+test('posts show as cards in the gallery and as stats in the list; downloads and new bookmarks read their sites', async () => {
+  const card = { site: 'github', kind: 'issue', title: 'Why Rust?', community: 'rust-lang/rust', number: 12, handle: 'ferris', state: 'open', text: 'Memory safety.', stats: { comments: 1234 }, fetchedAt: 1 };
+  const page = await openManager({ id: 'root', children: [
+    { id: 'post', parentId: 'root', title: 'Why Rust? · Issue #12', url: 'https://github.com/rust-lang/rust/issues/12', type: 'bookmark', card, dateAdded: 2 },
+    { id: 'story', parentId: 'root', title: 'Show HN', url: 'https://news.ycombinator.com/item?id=100', type: 'bookmark', dateAdded: 1 }
+  ] }, 'cards', { 'markedText:post': { text: 'Memory safety.', words: 2, capturedAt: 1 } });
+  const { dom, $ } = page;
+  const row = id => [...$('items').rows].find(r => r.dataset.id === id);
+  assert.equal(row('post').querySelector('.item-stats').textContent, 'Open · 1.2K comments');
+  $('gallery-view').click();
+  const shown = row('post').querySelector('.site-card');
+  assert.deepEqual(['where', 'who', 'title', 'state', 'text', 'stats'].map(part => shown.querySelector(`.site-card-${part}`).textContent), ['rust-lang/rust #12', 'ferris', 'Why Rust?', 'Open', 'Memory safety.', '1.2K comments']);
+  assert.ok(shown.closest('.card-preview').classList.contains('card-site'), 'in place of a picture');
+  $('list-view').click();
+
+  const answers = {
+    'https://hacker-news.firebaseio.com/v0/item/100.json': { id: 100, type: 'story', by: 'pg', title: 'Show HN: Marked', score: 5, descendants: 1, time: 1, kids: [101] },
+    'https://hacker-news.firebaseio.com/v0/item/101.json': { id: 101, by: 'dang', text: 'Nice.' },
+    'https://api.github.com/repos/lucidrains/dreamer4': { full_name: 'lucidrains/dreamer4', description: 'Dreamer 4', stargazers_count: 7, language: 'Python' }
+  };
+  const fetched = [];
+  globalThis.fetch = async url => { fetched.push(url); return answers[url] ? new Response(JSON.stringify(answers[url])) : new Response('', { status: 404 }); };
+  page.mock.api.permissions = { request: async () => true };
+  $('settings').click(); $('settings-tab-text').click();
+  assert.equal($('text-download').textContent, 'Download text for 1 bookmark', 'the story has no text or card yet');
+  $('text-download').click(); await page.settle(100);
+  assert.equal($('text-status').textContent, 'Saved the text of 1 page.');
+  assert.ok(fetched.every(url => url.startsWith('https://hacker-news.firebaseio.com/')), 'through Hacker News’s API');
+  $('settings-dialog').close();
+  assert.equal(row('story').querySelector('.item-stats').textContent, '5 points · 1 comment');
+  assert.equal(row('story').querySelector('.item-read').textContent, '1 min read');
+
+  $('new-bookmark').click();
+  $('edit-name').value = 'dreamer4'; $('edit-url').value = 'https://github.com/lucidrains/dreamer4';
+  $('editor-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('editor-form').querySelector('[type=submit]') }));
+  await page.settle(100);
+  const saved = (await browser.storage.local.get()).markedLibraryV1.root.children.find(node => node.url === 'https://github.com/lucidrains/dreamer4');
+  assert.deepEqual([saved.card.site, saved.card.title, saved.card.stats], ['github', 'lucidrains/dreamer4', { stars: 7 }], 'a post added by hand gets its card');
+  delete globalThis.fetch;
+  dom.window.close();
+});
+
+test('Import offers a bookmarks file, the browser’s bookmarks, or X’s', async () => {
+  const page = await openManager({ id: 'root', children: [] }, 'import-menu');
+  const { dom, $ } = page;
+  const requested = [], sent = [];
+  page.mock.api.permissions = { request: async request => { requested.push(request); return true; } };
+  page.mock.api.runtime = { sendMessage: async message => { sent.push(message); return { ok: true }; } };
+  let picked = false;
+  $('import-file').click = () => { picked = true; };
+  $('import-file-open').click();
+  assert.ok(picked, 'a file to import');
+  $('import-x').click(); await page.settle();
+  assert.deepEqual(requested, [{ origins: ['https://x.com/*', 'https://twitter.com/*'] }], 'Firefox asks for access to X first');
+  assert.deepEqual(sent, [{ type: 'marked:import-x' }]);
+  assert.match($('toast').textContent, /^Collecting your bookmarks on X\./);
+  dom.window.close();
+});
+
+test('More like this shows the bookmarks that share a bookmark’s telling words, and why; the Marked button can ask about a page', async () => {
+  const library = { id: 'root', children: [
+    { id: 'transformer', parentId: 'root', title: 'Transformer (deep learning architecture)', url: 'https://t.test/', type: 'bookmark', tags: ['AI'], dateAdded: 3 },
+    { id: 'attention', parentId: 'root', title: 'Attention (machine learning)', url: 'https://a.test/', type: 'bookmark', tags: ['AI'], note: 'Read before the transformer one.', dateAdded: 2 },
+    { id: 'pasta', parentId: 'root', title: 'Weeknight pasta', url: 'https://p.test/', type: 'bookmark', tags: ['Cooking'], dateAdded: 1 }
+  ] };
+  const page = await openManager(library, 'related', { 'markedText:transformer': { text: 'A transformer relates tokens with multi-head attention.', words: 7, capturedAt: 1 } });
+  const { dom, $ } = page;
+  const row = id => [...$('items').rows].find(item => item.dataset.id === id);
+  const titles = () => [...$('items').querySelectorAll('.item-title')].map(link => link.textContent);
+  assert.equal(row('transformer').querySelector('.row-actions button').getAttribute('aria-label'), 'More like Transformer (deep learning architecture)');
+  row('transformer').querySelector('.row-actions button').click();
+  assert.equal($('page-title').textContent, 'Like “Transformer (deep learning architecture)”');
+  assert.deepEqual(titles(), ['Attention (machine learning)'], 'not the pasta');
+  assert.match($('items').querySelector('.item-reason').textContent, /^Shares \w+, \w+ and \w+$/);
+  await page.settle(1700);
+  const stored = (await browser.storage.local.get()).markedRelatedV1;
+  assert.equal(stored.n, 3, 'a small copy is stored for the reader and the Marked button');
+  dom.window.close();
+
+  // The Marked button, on a page about attention, asks for its related bookmarks.
+  const asked = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html?related=capture-page' });
+  globalThis.document = asked.window.document;
+  asked.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  asked.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new asked.window.Event('close')); };
+  const mock = fixture(library);
+  await mock.api.storage.local.set({ markedBrowserImportAsked: 1 });
+  const session = { 'capture-page': { url: 'https://blog.test/attention', title: 'How attention works', abstract: 'Attention in machine learning', createdAt: Date.now() } };
+  mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js?related-page');
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(asked.window.document.getElementById('page-title').textContent, 'Like “How attention works”');
+  assert.equal([...asked.window.document.querySelectorAll('#items .item-title')][0].textContent, 'Attention (machine learning)');
+  asked.window.close();
 });

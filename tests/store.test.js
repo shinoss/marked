@@ -272,3 +272,64 @@ test('a restored backup keeps each bookmark’s page text under its new bookmark
   assert.deepEqual(texts[essay.id], { capturedAt: 7, via: 'backup', text: 'Kept words.', words: 2 });
   assert.equal(essay.text, undefined, 'the text isn’t part of the bookmark');
 });
+
+test('moves go before a chosen sibling, keep their order, and can be put back', async () => {
+  const mock = fixture({ id: 'root', children: [{ id: 'home', parentId: 'root', title: 'Home', children: [
+    { id: 'a', parentId: 'home', title: 'A', url: 'https://a.test/' },
+    { id: 'b', parentId: 'home', title: 'B', url: 'https://b.test/' },
+    { id: 'c', parentId: 'home', title: 'C', url: 'https://c.test/' },
+    { id: 'f', parentId: 'home', title: 'F', children: [] }
+  ] }] });
+  const store = createLibraryStore(mock.api, mock.locks);
+  const order = async () => { const [root] = await store.getTree(); const home = root.children[0]; return [home.children.map(n => n.id).join(''), home.children.find(n => n.id === 'f').children.map(n => n.id).join('')]; };
+  await store.moveMany(['c'], 'home', 'a');
+  assert.deepEqual(await order(), ['cabf', '']);
+  await store.moveMany(['a', 'b'], 'home', 'c');
+  assert.deepEqual(await order(), ['abcf', ''], 'several items keep their order');
+  await store.moveMany(['a', 'b'], 'home', 'b');
+  assert.deepEqual(await order(), ['abcf', ''], 'next to itself is no move');
+  const places = await store.moveMany(['b', 'c'], 'f');
+  assert.deepEqual(await order(), ['af', 'bc']);
+  assert.deepEqual(places, [{ id: 'b', parentId: 'home', index: 1 }, { id: 'c', parentId: 'home', index: 2 }]);
+  await store.placeMany(places);
+  assert.deepEqual(await order(), ['abcf', ''], 'and back where they were');
+});
+
+test('a highlight’s color and note can change later, and pages learn its color from the index', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const saved = await store.addHighlight('a', { text: 'A passage', color: 'blue' });
+  const changed = await store.updateHighlight('a', saved.id, { color: 'pink', note: ' Why ' });
+  assert.deepEqual([changed.id, changed.text, changed.color, changed.note, changed.createdAt], [saved.id, 'A passage', 'pink', 'Why', saved.createdAt]);
+  assert.deepEqual((await store.getIndex()).pages[0].highlights, [{ id: saved.id, text: 'A passage', note: 'Why', color: 'pink' }]);
+  await store.updateHighlight('a', saved.id, { color: 'yellow' });
+  assert.equal('color' in (await store.getIndex()).pages[0].highlights[0], false);
+  await assert.rejects(store.updateHighlight('a', 'missing', { color: 'green' }), /no longer exists/);
+});
+
+test('a post’s card is kept, checked, and merged with its bookmark, and goes with its address', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const card = { site: 'hn', kind: 'story', title: 'Show HN', stats: { score: 3 }, bogus: 'dropped' };
+  const node = await store.create({ parentId: 'home', title: 'Story', url: 'https://news.ycombinator.com/item?id=1', card });
+  assert.deepEqual({ ...node.card, fetchedAt: 0 }, { site: 'hn', kind: 'story', title: 'Show HN', stats: { score: 3 }, fetchedAt: 0 });
+  assert.equal((await store.getIndex()).pages.find(page => page.id === node.id).card, true, 'the index says it has one');
+  assert.equal(await store.setCards({ a: { site: 'github', kind: 'repo', title: 'o/r' }, missing: card, home: card }), 1, 'only bookmarks take cards');
+  const copy = await store.create({ parentId: 'home', title: 'Copy', url: 'https://news.ycombinator.com/item?id=1&x', dateAdded: 1 });
+  await store.mergeDuplicates([[copy.id, node.id]]);
+  const find = async id => (await store.getTree())[0].children[0].children.find(child => child.id === id);
+  assert.equal((await find(copy.id)).card.title, 'Show HN', 'the kept bookmark takes the card');
+  await store.update(copy.id, { title: 'Moved', url: 'https://elsewhere.test/' });
+  assert.equal((await find(copy.id)).card, undefined);
+});
+
+test('posts from X go into one folder, newest first, skipping ones already anywhere in Marked', async () => {
+  const mock = fixture({ id: 'root', children: [{ id: 'old', parentId: 'root', title: 'Saved before', url: 'https://x.com/jack/status/20', type: 'bookmark' }] });
+  const store = createLibraryStore(mock.api, mock.locks);
+  const post = (id, dateAdded) => ({ url: `https://x.com/ada/status/${id}`, title: `Post ${id}`, abstract: `Text ${id}`, dateAdded });
+  const first = await store.importTweets([post(3, 300), post(2, 299), { url: 'https://twitter.com/jack/status/20', title: 'Known' }, { url: 'https://example.com/', title: 'Not a post' }]);
+  assert.deepEqual({ added: first.added, known: first.known }, { added: 2, known: 2 });
+  const second = await store.importTweets([post(2, 1), post(1, 298)]);
+  assert.deepEqual({ added: second.added, known: second.known, same: second.folderId === first.folderId }, { added: 1, known: 1, same: true }, 'the same folder, and nothing twice');
+  const [root] = await store.getTree();
+  const folder = root.children.find(node => node.title === 'X bookmarks');
+  assert.deepEqual(folder.children.map(node => [node.title, node.dateAdded, node.abstract]), [['Post 3', 300, 'Text 3'], ['Post 2', 299, 'Text 2'], ['Post 1', 298, 'Text 1']]);
+});

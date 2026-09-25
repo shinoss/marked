@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marked · Reader</title>
+  <link rel="icon" href="icons/marked.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap">
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="reader.css">
+  <script type="module" src="reader.js"></script>
+</head>
+<body class="reader-page">
+  <div id="reader-progress" class="reader-progress" aria-hidden="true"></div>
+  <header class="reader-bar">
+    <a class="brand" href="manager.html"><img src="icons/marked.svg" alt="" width="20" height="20">Marked</a>
+    <span id="reader-site" class="reader-site"></span>
+    <div class="reader-tools">
+      <button id="reader-options" class="icon-button" popovertarget="reader-menu" aria-haspopup="true" aria-label="Reading options"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 18 8 6l4.5 12M5.2 13.5h5.6M14 18l3-8 3 8M15.1 15.5h3.8"/></svg></button>
+      <a id="reader-original" class="icon-button" target="_blank" rel="noopener noreferrer" aria-label="Open the page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 4.5H19.5V10.5M19.5 4.5l-9 9M17.5 14v4.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1H10"/></svg></a>
+    </div>
+  </header>
+  <div id="reader-menu" class="menu reader-menu" popover aria-label="Reading options">
+    <div class="reader-option"><span>Font</span><div class="segmented" role="radiogroup" aria-label="Font"><button type="button" role="radio" data-option="font" data-value="serif">Serif</button><button type="button" role="radio" data-option="font" data-value="sans">Sans</button></div></div>
+    <div class="reader-option"><span>Size</span><div class="segmented"><button type="button" id="reader-smaller" aria-label="Smaller text">A−</button><button type="button" id="reader-larger" aria-label="Larger text">A+</button></div></div>
+    <div class="reader-option"><span>Width</span><div class="segmented" role="radiogroup" aria-label="Width"><button type="button" role="radio" data-option="width" data-value="narrow">Narrow</button><button type="button" role="radio" data-option="width" data-value="medium">Medium</button><button type="button" role="radio" data-option="width" data-value="wide">Wide</button></div></div>
+    <div class="reader-option"><span>Theme</span><div class="segmented" role="radiogroup" aria-label="Theme"><button type="button" role="radio" data-option="theme" data-value="auto">Auto</button><button type="button" role="radio" data-option="theme" data-value="light">Light</button><button type="button" role="radio" data-option="theme" data-value="sepia">Sepia</button><button type="button" role="radio" data-option="theme" data-value="dark">Dark</button></div></div>
+  </div>
+  <main class="reader-main">
+    <article id="reader-article" class="reader-article">
+      <h1 id="reader-title"></h1>
+      <p id="reader-meta" class="reader-meta"></p>
+      <div id="reader-card" class="reader-card" hidden></div>
+      <p id="reader-truncated" class="reader-meta" hidden>This page was long, so Marked kept its first 30,000 words or so.</p>
+      <div id="reader-body" class="reader-body"></div>
+      <div id="reader-empty" class="reader-empty" hidden>
+        <p id="reader-empty-text"></p>
+        <div class="welcome-actions"><button id="reader-download" class="button-strong" hidden>Download it now</button><a id="reader-visit" class="button-outline" target="_blank" rel="noopener noreferrer">Open the page</a></div>
+        <p id="reader-error" class="error" role="alert"></p>
+      </div>
+      <p id="reader-end" class="reader-end" hidden>The end · <a id="reader-top" href="#">Back to the top</a></p>
+      <section id="reader-related" class="reader-related" hidden><h2>Related in Marked</h2><ol id="reader-related-list"></ol></section>
+    </article>
+  </main>
+  <div id="reader-tools" class="reader-selection" role="toolbar" aria-label="Highlight" hidden></div>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

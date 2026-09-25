@@ -1,5 +1,6 @@
 import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights, validIcon } from './bookmarks.js';
 import { cleanPageText } from './page-text.js';
+import { cleanCard } from './sites.js';
 
 // texts: saved page texts by bookmark id. Each rides along on its bookmark;
 // notes of pages that couldn't be read are left out.
@@ -30,6 +31,8 @@ export function parseBackup(data) {
       if (highlights.length) result.highlights = highlights;
       const text = cleanPageText(node.text);
       if (text?.text) result.text = { ...text, via: text.via || 'backup' };
+      const card = cleanCard(node.card);
+      if (card) result.card = card;
     } else if (Array.isArray(node.children)) {
       result.children = node.children.map(child => convert(child, depth + 1)).filter(Boolean);
     } else throw new Error('A backup item is missing its URL or folder contents.');
