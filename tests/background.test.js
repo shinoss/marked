@@ -75,10 +75,10 @@ test('saves the page abstract with the capture only while the tab still shows th
   browser.storage.session.set = async value => Object.assign(saved, value);
   browser.storage.session.remove = async () => {};
   const injected = [];
-  browser.scripting = { executeScript: async details => { injected.push(details); return [{ result: details.func.name === 'readPageAbstract' ? { url: 'https://example.com/post', text: '  A post about   world models. ' } : null }]; } };
+  browser.scripting = { executeScript: async details => { injected.push(details); return [{ result: details.func?.name === 'readPageAbstract' ? { url: 'https://example.com/post', text: '  A post about   world models. ' } : null }]; } };
   const tab = { id: 4, url: 'https://example.com/post', title: 'Post' };
   await onClick({ menuItemId: 'add-to-marked' }, tab);
-  assert.deepEqual(injected.map(details => [details.target.tabId, details.func.name]), [[4, 'readPageAbstract'], [4, 'readPageIcon']], 'the page reads its abstract and its icon');
+  assert.deepEqual(injected.map(details => [details.target.tabId, details.func?.name ?? details.files.join()]), [[4, 'readPageAbstract'], [4, 'readPageIcon'], [4, 'vendor/readability.js,vendor/readability-readerable.js'], [4, 'readPageText']], 'the page reads its abstract, its icon, and its text');
   const key = new URL(opened[0].url).searchParams.get('capture');
   assert.match(key, /^capture-/);
   assert.deepEqual({ ...saved[key], createdAt: 0 }, { url: 'https://example.com/post', abstract: 'A post about world models.', createdAt: 0 });
@@ -230,12 +230,14 @@ test('a highlight on a new page opens the editor with the passage, as Add to Mar
   opened.length = 0;
   browser.storage.session.set = async value => Object.assign(saved, value);
   await useLibrary([]);
-  browser.scripting = { executeScript: async () => [{ result: { url: 'https://example.org/new', text: 'Page description.' } }] };
+  browser.scripting = { executeScript: async details => [{ result: { url: 'https://example.org/new', text: details.func?.name === 'readPageText' ? 'The whole page.' : 'Page description.' } }] };
   assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Quoted words' }, { id: 4, url: 'https://example.org/new', title: 'New page' }), { opened: true });
   const request = new URL(opened[0].url);
   assert.equal(request.searchParams.get('add'), 'https://example.org/new');
   assert.equal(request.searchParams.get('title'), 'New page');
-  assert.deepEqual({ ...saved[request.searchParams.get('capture')], createdAt: 0 }, { url: 'https://example.org/new', highlight: 'Quoted words', abstract: 'Page description.', createdAt: 0 });
+  const { text, ...capture } = saved[request.searchParams.get('capture')];
+  assert.deepEqual({ ...capture, createdAt: 0 }, { url: 'https://example.org/new', highlight: 'Quoted words', abstract: 'Page description.', createdAt: 0 });
+  assert.deepEqual([text.text, text.words], ['The whole page.', 3], 'with the page’s text');
   assert.equal(await ask({ type: 'marked:highlight', text: '   ' }, { id: 4, url: 'https://example.org/new' }), null);
   assert.equal(onMessage({ type: 'other' }, { tab: { id: 4 } }, () => {}), undefined);
   assert.equal(opened.length, 1, 'empty selections and other messages open nothing');
@@ -301,4 +303,37 @@ test('the keyboard shortcut adds the page, or edits its bookmark when it is alre
   assert.equal(opened.length, 2);
   assert.equal(new URL(opened[0].url).searchParams.get('edit'), saved.id, 'a saved page opens its bookmark, not a second copy');
   assert.equal(new URL(opened[1].url).searchParams.get('add'), 'https://example.com/new');
+});
+
+test('a saved page gets its text when it next loads, once; never X posts or when turned off', async () => {
+  const mock = await useLibrary([{ title: 'Essay', url: 'https://example.com/essay' }, { title: 'Post', url: 'https://x.com/jack/status/20' }]);
+  const [essay] = (await mock.api.storage.local.get()).markedLibraryV1.root.children;
+  const injected = [];
+  browser.scripting = { executeScript: async details => { injected.push(details.files?.[0] ?? [details.func.name, details.args[1]]); return [{ result: details.func ? { url: 'https://example.com/essay#notes', text: 'Every word of the essay.' } : undefined }]; } };
+  const loaded = async tab => { onTabUpdated(tab.id, { status: 'complete' }, tab); await new Promise(resolve => setTimeout(resolve, 30)); };
+  const text = async () => (await mock.api.storage.local.get())[`markedText:${essay.id}`];
+  await mock.api.storage.local.set({ markedPageText: { keep: false } });
+  await loaded({ id: 1, url: 'https://example.com/essay#notes' });
+  assert.equal(await text(), undefined, 'Settings can turn it off');
+  await mock.api.storage.local.set({ markedPageText: { keep: true } });
+  await loaded({ id: 1, url: 'https://example.com/essay#notes' });
+  assert.deepEqual([(await text()).text, (await text()).via], ['Every word of the essay.', 'visit']);
+  assert.deepEqual(injected.at(-1), ['readPageText', { articlesOnly: true }], 'only an article is kept by itself');
+  injected.length = 0;
+  await loaded({ id: 1, url: 'https://example.com/essay' });
+  await loaded({ id: 2, url: 'https://x.com/jack/status/20' });
+  await loaded({ id: 3, url: 'https://unsaved.test/' });
+  assert.deepEqual(injected, [], 'once a page has its text, and never for X posts or unsaved pages');
+});
+
+test('Add to Marked on a saved page without its text keeps the text, then opens the bookmark', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const mock = await useLibrary([{ title: 'Saved', url: 'https://example.com/saved' }]);
+  const [saved] = (await mock.api.storage.local.get()).markedLibraryV1.root.children;
+  browser.scripting = { executeScript: async details => [{ result: details.func?.name === 'readPageText' ? { url: 'https://example.com/saved', text: 'The saved page.' } : undefined }] };
+  opened.length = 0;
+  await onClick({ menuItemId: 'add-to-marked' }, { id: 5, url: 'https://example.com/saved', title: 'Saved' });
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(new URL(opened[0].url).searchParams.get('edit'), saved.id);
+  assert.equal((await mock.api.storage.local.get())[`markedText:${saved.id}`].text, 'The saved page.');
 });

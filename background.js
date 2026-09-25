@@ -1,8 +1,9 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
 import './browser-api.js';
-import { cleanAbstract, cleanHighlightText, safeURL, searchPages, validIcon } from './bookmarks.js';
+import { cleanAbstract, cleanHighlightText, safeURL, searchPages, tweetId, validIcon } from './bookmarks.js';
 import { INDEX_KEY, createLibraryStore } from './store.js';
 import { readPageAbstract, readPageIcon } from './page-abstract.js';
+import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
@@ -79,6 +80,27 @@ async function captureAbstract(tab, url) {
   } finally { clearTimeout(timer); }
 }
 
+// The page's readable text, kept with its bookmark for search (Settings can
+// turn this off). X posts keep their text as the abstract instead.
+async function keepText() {
+  try { return (await browser.storage.local.get(PAGE_TEXT_SETTINGS_KEY))[PAGE_TEXT_SETTINGS_KEY]?.keep !== false; } catch { return true; }
+}
+async function captureText(tab, url, options) {
+  if (tab?.id == null || !/^https?:/.test(url) || tweetId(url) || !await keepText()) return null;
+  return captureTabText(browser, tab.id, url, options);
+}
+// A saved page without its text gets it when it's next open in a tab. Only
+// articles, when it happens by itself: never the text of an inbox or an
+// account page that happens to be bookmarked.
+async function fillText(tab, page, { articlesOnly = true } = {}) {
+  page ??= tab?.url && await findBookmark(tab.url);
+  if (!page) return;
+  const store = createLibraryStore(browser);
+  if ((await store.getTexts([page.id]))[page.id]?.text) return;
+  const text = await captureText(tab, tab.url, { articlesOnly });
+  if (text) await store.setText(page.id, { ...text, via: 'visit' }, { replace: false });
+}
+
 // Opens the manager with query params, handing it optional captured details.
 async function openManager(params, capture) {
   // Worker timers may be suspended in Chrome. Also prune abandoned captures
@@ -114,15 +136,20 @@ async function addPage(info, tab) {
   // Bookmark the top-level page, not a clicked link or embedded image/frame.
   const url = tab?.url || info.pageUrl;
   if (!url) return;
-  // A page already in Marked opens its bookmark instead of adding a second copy.
+  // A page already in Marked opens its bookmark instead of adding a second
+  // copy, and keeps the page's text if it has none yet.
   const saved = await findBookmark(url).catch(() => null);
-  if (saved) return openManager(new URLSearchParams({ edit: saved.id }));
-  const [preview, abstract, icon] = await Promise.all([
+  if (saved) {
+    fillText(tab, saved, { articlesOnly: false }).catch(error => console.warn('Page text unavailable', error));
+    return openManager(new URLSearchParams({ edit: saved.id }));
+  }
+  const [preview, abstract, icon, text] = await Promise.all([
     capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; }),
     captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; }),
-    captureIcon(tab).catch(() => null)
+    captureIcon(tab).catch(() => null),
+    captureText(tab, url).catch(error => { console.warn('Page text unavailable; saving without it', error); return null; })
   ]);
-  await openEditor(url, tab?.title || url, preview || abstract || icon ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }) } : null);
+  await openEditor(url, tab?.title || url, preview || abstract || icon || text ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(text && { text }) } : null);
 }
 
 async function saveTweet(tab) {
@@ -204,6 +231,7 @@ browser.action.setBadgeBackgroundColor({ color: '#2c5949' });
 browser.action.setBadgeTextColor?.({ color: '#ffffff' });
 browser.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.url || change.status === 'complete') updateBadges([tab]).catch(() => {});
+  if (change.status === 'complete') fillText(tab).catch(error => console.warn('Page text unavailable', error));
 });
 // Saving, editing, or deleting in Marked updates every open tab.
 browser.storage.onChanged.addListener((changes, area) => {
@@ -243,12 +271,13 @@ async function highlightPage(tab, message) {
   if (!text || !tab?.url) return null;
   const bookmark = await findBookmark(tab.url);
   if (bookmark) return { saved: bookmark.title || bookmark.url };
-  const [preview, abstract, icon] = await Promise.all([
+  const [preview, abstract, icon, page] = await Promise.all([
     capturePreview(tab).catch(() => null),
     captureAbstract(tab, tab.url).catch(() => ''),
-    captureIcon(tab).catch(() => null)
+    captureIcon(tab).catch(() => null),
+    captureText(tab, tab.url).catch(() => null)
   ]);
-  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }) });
+  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(page && { text: page }) });
   return { opened: true };
 }
 // The page's panel saves a highlight. The bookmark is looked up again from the

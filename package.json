@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "bundle:ai": "node scripts/bundle-ai.js",
+    "bundle": "node scripts/bundle.js",
     "lint:extension": "web-ext lint --source-dir . --ignore-files 'node_modules/**' 'tests/**' 'scripts/**' 'ai/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'",
-    "build": "npm run bundle:ai && web-ext build --source-dir . --overwrite-dest --ignore-files 'node_modules/**' 'tests/**' 'scripts/**' 'ai/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'"
+    "build": "npm run bundle && web-ext build --source-dir . --overwrite-dest --ignore-files 'node_modules/**' 'tests/**' 'scripts/**' 'ai/**' 'package*.json' 'README.md' 'web-ext-artifacts/**'"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
@@ -15,6 +15,7 @@
     "web-ext": "^10.7.0"
   },
   "dependencies": {
-    "@mlc-ai/web-llm": "0.2.85"
+    "@mlc-ai/web-llm": "0.2.85",
+    "@mozilla/readability": "0.6.0"
   }
 }

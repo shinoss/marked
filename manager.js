@@ -1,7 +1,8 @@
 import './browser-api.js';
 import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
-import { createLibraryStore, STORAGE_KEY } from './store.js';
+import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX } from './store.js';
+import { captureTabText, cleanPageText, fetchPageText, passageAround, readingMinutes, searchTerms, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
@@ -20,6 +21,11 @@ let pendingIcon = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
 let pendingHighlight = '';
+// The page's text, when it came with the page from Add to Marked.
+let pendingText = null;
+// Saved page texts by bookmark id, read after the library; search looks through them.
+const pageTexts = new Map();
+let textSettings = { keep: true };
 // Semantic search with the user's own Jev key. Jev is asked only when the user
 // chooses Semantic, never while typing.
 // preview is temporary: it works without a key and logs requests instead of sending them.
@@ -148,6 +154,13 @@ async function load() {
   // Cached rankings describe the old library; the next search asks Jev again.
   semantic.cache.clear();
   render();
+}
+async function loadTexts() {
+  const texts = await library.getTexts([...state.nodes.values()].filter(node => node.url).map(node => node.id));
+  pageTexts.clear();
+  for (const [id, text] of Object.entries(texts)) pageTexts.set(id, text);
+  render();
+  if ($('settings-dialog').open) renderTextSettings();
 }
 function navigate(id) {
   state.folder = id;
@@ -285,14 +298,18 @@ function render() {
   $('duplicates-count').textContent = copies ? copies.toLocaleString() : '';
   // The first bookmark of each group of copies, for a Merge button on its row.
   const groupStarts = new Map(special === 'duplicates' ? duplicates.map(group => [group[0].id, group]) : []);
-  const highlightText = node => (node.highlights || []).map(h => `${h.text} ${h.note || ''}`).join(' ');
-  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase().includes(query))
+  const terms = searchTerms(query);
+  // Bookmarks found only in their page text, with the passage to show.
+  const passages = new Map();
+  let nodes = query ? searchLibrary(terms, passages)
     : special === 'rediscover' ? state.rediscover.map(id => state.nodes.get(id)).filter(Boolean)
     : special === 'duplicates' ? duplicates.flat()
     : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
   if (sort !== 'default' && !special) nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
+  // Matches in a bookmark's own details come before those only in its page's text.
+  if (query) nodes.sort((a, b) => Number(passages.has(a.id)) - Number(passages.has(b.id)));
   // Jev's matches lead, most relevant first; the remaining keyword matches follow.
   if (query && semantic.result && semantic.query.toLowerCase() === query) {
     const lead = semanticMatches(semantic.result.ranked).map(match => state.nodes.get(match.id)).filter(Boolean);
@@ -349,6 +366,8 @@ function render() {
       added.title = new Date(node.dateAdded).toLocaleString();
       details.append(added);
     }
+    const page = node.url && pageTexts.get(node.id);
+    if (page?.text) details.append(button(`${readingMinutes(page.words)} min read`, () => showText(node), 'item-read', `Read the text saved from ${title(node)}`));
     // Tags and the note marker share one line. Gallery cards keep the line even
     // when empty so page cards are the same height; X posts show the note itself.
     const labels = element('span', 'item-tags');
@@ -360,6 +379,15 @@ function render() {
     if (!isFolder(node)) details.append(labels);
     metadata.append(domain, details);
     text.append(link, metadata);
+    const passage = passages.get(node.id);
+    if (passage) {
+      const quote = element('button', 'item-passage');
+      quote.type = 'button';
+      quote.title = 'Show this in the saved text';
+      markText(quote, `${passage.cutBefore ? '…' : ''}${passage.text}${passage.cutAfter ? '…' : ''}`, { terms });
+      quote.addEventListener('click', () => showText(node, terms));
+      text.append(quote);
+    }
     if (node.note) {
       const note = element('p', 'item-note', node.note);
       note.title = node.note;
@@ -399,10 +427,74 @@ function render() {
   $('empty').classList.toggle('welcoming', welcome);
   document.querySelector('.list-toolbar').hidden = welcome;
   $('empty').querySelector('h2').textContent = welcome ? 'Welcome to Marked' : query ? 'No bookmarks found' : special === 'rediscover' ? 'Nothing to rediscover yet' : special === 'duplicates' ? 'No duplicates' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
-  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try another name, URL, folder, note, or tag.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try other words. Search looks through names, addresses, folders, notes, tags, highlights, and the text of saved pages.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
   renderSemanticStatus();
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
+}
+// Bookmarks and folders with every search term in their details or, for a
+// bookmark, in its saved page text; passages gets the text around the first
+// term only the page has.
+function searchLibrary(terms, passages) {
+  const highlightText = node => (node.highlights || []).map(h => `${h.text} ${h.note || ''}`).join(' ');
+  return [...state.nodes.values()].filter(node => {
+    if (node.id === state.root.id || node.type === 'separator') return false;
+    const details = `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase();
+    const missing = terms.filter(term => !details.includes(term));
+    if (!missing.length) return true;
+    const page = node.url && pageTexts.get(node.id);
+    if (!page?.text) return false;
+    page.lower ??= page.text.toLowerCase();
+    if (!missing.every(term => page.lower.includes(term))) return false;
+    passages.set(node.id, passageAround(page.text, page.lower, missing[0]));
+    return true;
+  });
+}
+// Appends text to parent, marking the passages the user highlighted and the
+// words searched for.
+function markText(parent, text, { terms = [], highlights = [] } = {}) {
+  const ranges = [];
+  for (const passage of highlights) {
+    const at = text.indexOf(passage);
+    if (passage && at >= 0) ranges.push([at, at + passage.length, 'passage']);
+  }
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) {
+    for (const term of terms) for (let at = lower.indexOf(term); term && at >= 0; at = lower.indexOf(term, at + term.length)) ranges.push([at, at + term.length, 'term']);
+  }
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  let cursor = 0;
+  for (const [start, end, kind] of ranges) {
+    if (start < cursor) continue;
+    if (start > cursor) parent.append(text.slice(cursor, start));
+    parent.append(element('mark', kind, text.slice(start, end)));
+    cursor = end;
+  }
+  if (cursor < text.length) parent.append(text.slice(cursor));
+}
+// The text saved from a bookmark's page, with the user's highlights marked and,
+// when it's opened from a search, the words searched for, scrolled into view.
+let textNode = null;
+function showText(node, terms = []) {
+  const page = pageTexts.get(node.id);
+  if (!page?.text) return;
+  textNode = node;
+  $('text-title').textContent = title(node);
+  const saved = new Date(page.capturedAt).toLocaleDateString([], { dateStyle: 'medium' });
+  $('text-meta').textContent = [displayDomain(node.url), page.byline, `${readingMinutes(page.words)} min read`, `saved ${saved}`].filter(Boolean).join(' · ');
+  $('text-truncated').hidden = !page.truncated;
+  const highlights = (node.highlights || []).map(highlight => highlight.text);
+  $('text-body').replaceChildren(...page.text.split('\n\n').map(paragraph => {
+    const block = element('p');
+    markText(block, paragraph, { terms, highlights });
+    return block;
+  }));
+  const url = safeURL(node.url);
+  $('text-open').hidden = !url;
+  if (url) $('text-open').href = url;
+  $('text-dialog').showModal();
+  $('text-body').scrollTop = 0;
+  $('text-body').querySelector('mark.term')?.scrollIntoView?.({ block: 'center' });
 }
 // X's official post embed. Its frame reports its height with a postMessage.
 // Heights X last reported, so a reload starts each post at its real size
@@ -542,7 +634,25 @@ async function renderEstimate() {
     ? `Each search of your ${entries.length.toLocaleString()} ${entries.length === 1 ? 'bookmark' : 'bookmarks'} costs about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free).`
     : '';
 }
-function openSettings(message = '') {
+// Settings has a section for each topic, chosen from its sidebar. Changes apply
+// at once, except a new API key, which TypeSafe checks when it's saved.
+let settingsSection = 'appearance';
+// What to do once a key is saved, when Semantic asked for one.
+let afterKey = null;
+const settingsTabs = () => [...document.querySelectorAll('.settings-nav [role="tab"]')];
+function showSettingsSection(name, focus = false) {
+  settingsSection = name;
+  for (const tab of settingsTabs()) {
+    const selected = tab.dataset.section === name;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focus) tab.focus();
+  }
+  for (const panel of document.querySelectorAll('.settings-panels [role="tabpanel"]')) panel.hidden = panel.dataset.section !== name;
+  document.querySelector('.settings-panels').scrollTop = 0;
+}
+function openSettings(section = settingsSection, { message = '', after = null } = {}) {
+  afterKey = after;
   $('jev-key').value = jev.apiKey;
   $('jev-notes').checked = jev.notes;
   $('jev-highlights').checked = jev.highlights;
@@ -552,8 +662,100 @@ function openSettings(message = '') {
   $('settings-error').textContent = '';
   renderUsage();
   renderEstimate().catch(() => {});
+  renderTextSettings();
+  showSettingsSection(section);
   $('settings-dialog').showModal();
-  if (!jev.apiKey) $('jev-key').focus();
+  if (section === 'semantic' && !jev.apiKey) $('jev-key').focus();
+  else document.querySelector('.settings-nav [aria-selected="true"]').focus();
+}
+// Page text: whether to keep it, how much there is, and downloading it for
+// bookmarks that don't have it. A download runs in this tab, four pages at a
+// time, and stops if the tab closes; the next one picks up where it stopped.
+const textDownload = { controller: null, done: 0, total: 0 };
+const downloadable = node => /^https?:/.test(node.url) && !tweetId(node.url);
+const pageCount = count => `${count.toLocaleString()} ${count === 1 ? 'page' : 'pages'}`;
+function formatBytes(bytes) {
+  return bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} KB` : `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
+}
+function textsMissing() {
+  return [...state.nodes.values()].filter(node => node.url && downloadable(node) && !pageTexts.get(node.id)?.text);
+}
+function renderTextSettings() {
+  $('text-keep').checked = textSettings.keep;
+  const bookmarks = [...state.nodes.values()].filter(node => node.url);
+  const kept = bookmarks.map(node => pageTexts.get(node.id)?.text).filter(Boolean);
+  const size = kept.reduce((sum, text) => sum + text.length, 0);
+  $('text-stats').textContent = `${kept.length.toLocaleString()} of ${bookmarkCount(bookmarks.length)}${kept.length ? ` · about ${formatBytes(size)}` : ''}`;
+  $('text-clear').hidden = !kept.length;
+  const running = !!textDownload.controller;
+  $('text-stop').hidden = !running;
+  $('text-progress').hidden = !running;
+  if (running) {
+    $('text-progress').max = textDownload.total;
+    $('text-progress').value = textDownload.done;
+    $('text-status').textContent = `Downloading ${textDownload.done.toLocaleString()} of ${pageCount(textDownload.total)}…`;
+  }
+  const missing = textsMissing();
+  const failed = missing.filter(node => pageTexts.get(node.id)?.error).length;
+  $('text-missing').textContent = !missing.length ? 'Every bookmark has its text.'
+    : `${bookmarkCount(missing.length)} ${missing.length === 1 ? 'doesn’t have its' : 'don’t have their'} text yet${failed ? `, including ${failed.toLocaleString()} that couldn’t be read last time` : ''}. Marked can download each page from its site. No cookies go with the request, so pages that need you to sign in may come back empty.`;
+  $('text-download').hidden = running || !missing.length;
+  $('text-download').textContent = `Download text for ${bookmarkCount(missing.length)}`;
+}
+// Readability, for reading the pages Marked downloads. A plain script that
+// defines Readability as a global, just as pages get it when Marked reads them.
+let readabilityLoading = null;
+function loadReadability() {
+  if (typeof globalThis.Readability === 'function') return Promise.resolve();
+  return readabilityLoading ??= new Promise((resolve, reject) => {
+    const script = element('script');
+    script.src = 'vendor/readability.js';
+    script.onload = () => resolve();
+    script.onerror = () => { readabilityLoading = null; script.remove(); reject(new Error('Marked’s page reader is missing. Run npm run bundle, then reload Marked.')); };
+    document.head.append(script);
+  });
+}
+async function downloadTexts() {
+  // Reading other sites needs access to them. Ask while the click still counts
+  // as user input; without one, go ahead if access was already given.
+  const sites = { origins: ['<all_urls>'] };
+  const access = browser.permissions?.request?.(sites).catch(() => browser.permissions.contains(sites)).catch(() => false);
+  const targets = textsMissing();
+  if (!targets.length || textDownload.controller) return;
+  if (await access === false) { $('text-status').textContent = 'Allow Marked on all websites to download pages, then try again.'; return; }
+  const controller = textDownload.controller = new AbortController();
+  Object.assign(textDownload, { done: 0, total: targets.length });
+  let saved = 0, failed = 0;
+  renderTextSettings();
+  try {
+    await loadReadability();
+    const queue = [...targets];
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      while (queue.length && !controller.signal.aborted) {
+        const node = queue.shift();
+        let text;
+        try { text = { ...await fetchPageText(node.url, { signal: controller.signal }), via: 'download' }; }
+        catch (error) {
+          if (controller.signal.aborted) return;
+          text = { error: error.message, via: 'download' };
+        }
+        const stored = await library.setText(node.id, text, { replace: false }).catch(() => null);
+        if (stored) pageTexts.set(node.id, stored);
+        if (stored?.text) saved++; else failed++;
+        textDownload.done++;
+        if ($('settings-dialog').open) renderTextSettings();
+      }
+    }));
+    const summary = `${controller.signal.aborted ? 'Stopped. ' : ''}Saved the text of ${pageCount(saved)}${failed ? `; ${failed.toLocaleString()} couldn’t be read` : ''}.`;
+    $('text-status').textContent = summary;
+    if (!$('settings-dialog').open) toast(summary);
+  } catch (error) {
+    $('text-status').textContent = error.message;
+  } finally {
+    textDownload.controller = null;
+    renderTextSettings();
+    render();
+  }
 }
 // Settings changed: cached answers are stale, and keyword matches return.
 function refreshSemantic() {
@@ -700,7 +902,13 @@ $('editor-form').addEventListener('submit', async event => {
     const parentId = $('edit-parent').value;
     if (state.editing) {
       await library.update(state.editing.id, changes, parentId);
-    } else await library.create({ ...changes, parentId, type: folder ? 'folder' : 'bookmark' });
+    } else {
+      const created = await library.create({ ...changes, parentId, type: folder ? 'folder' : 'bookmark' });
+      if (pendingText && url === pendingPreviewURL && textSettings.keep) {
+        const saved = await library.setText(created.id, { ...pendingText, via: 'page' }).catch(() => null);
+        if (saved) pageTexts.set(created.id, saved);
+      }
+    }
     $('editor').close(); await load(); toast('Saved to Marked.');
   } catch (error) { $('editor-error').textContent = error.message; }
   finally { submit.disabled = false; }
@@ -723,8 +931,15 @@ function download(contents, type, name, extension) {
   const link = element('a'); link.href = url; link.download = `${name}-${new Date().toISOString().slice(0, 10)}.${extension}`;
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-// Export offers two files: every bookmark as a standard bookmarks file, and the
-// notes and highlights as Markdown for a notes app.
+// One Export menu offers three files. A backup keeps everything, dates and
+// previews too, for Import to restore in any browser's Marked; a standard
+// bookmarks file is for other browsers and apps; the notes and highlights go
+// to a notes app as Markdown.
+async function downloadBackup() {
+  const texts = await library.getTexts([...state.nodes.values()].filter(node => node.url).map(node => node.id));
+  download(exportBackup(state.root, texts), 'application/json', 'marked-backup', 'json');
+  toast('Backup downloaded. Import it into Marked, in this browser or another, to restore your library.');
+}
 function exportBookmarks() {
   download(exportHTML(state.root), 'text/html;charset=utf-8', 'marked-bookmarks', 'html');
   toast('Exported your complete bookmark collection.');
@@ -735,20 +950,16 @@ function exportNotes() {
   download(exportMarkdown(state.root), 'text/markdown;charset=utf-8', 'marked-notes', 'md');
   toast(`Exported the notes and highlights on ${annotated} ${annotated === 1 ? 'bookmark' : 'bookmarks'}.`);
 }
-$('export-html').addEventListener('click', () => { $('export-menu').hidePopover?.(); exportBookmarks(); });
-$('export-markdown').addEventListener('click', () => { $('export-menu').hidePopover?.(); exportNotes(); });
-// The menu opens under Export; popovers otherwise sit in the middle of the page.
+for (const [id, run] of [['export-backup', downloadBackup], ['export-html', exportBookmarks], ['export-markdown', exportNotes]]) {
+  $(id).addEventListener('click', () => { $('export-menu').hidePopover?.(); Promise.resolve(run()).catch(fail); });
+}
+// The menu opens under Export, lined up with its right edge; popovers
+// otherwise sit in the middle of the page.
 $('export-menu').addEventListener('toggle', event => {
   if (event.newState !== 'open') return;
   const anchor = $('export').getBoundingClientRect(), menu = $('export-menu');
   menu.style.top = `${anchor.bottom + 8}px`;
-  menu.style.left = `${Math.max(8, Math.min(anchor.left - 16, document.defaultView.innerWidth - menu.offsetWidth - 8))}px`;
-});
-// Each browser keeps its own Marked library. A backup keeps dates and previews,
-// which HTML exports drop, so a library can move between Firefox and Chrome.
-$('backup').addEventListener('click', () => {
-  download(exportBackup(state.root), 'application/json', 'marked-backup', 'json');
-  toast('Backup downloaded. Import it into Marked in another browser to move your library.');
+  menu.style.left = `${Math.max(8, Math.min(anchor.right - menu.offsetWidth, document.defaultView.innerWidth - menu.offsetWidth - 8))}px`;
 });
 $('import').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async () => {
@@ -908,6 +1119,7 @@ $('tabs-form').addEventListener('submit', async event => {
   try {
     const name = `Tabs · ${new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
     const folder = await library.importTree(openTabs.map(({ url, title }) => ({ url, title })), defaultFolder(), name);
+    if (textSettings.keep) await saveTabTexts(folder);
     if ($('tabs-close').checked) await browser.tabs.remove(openTabs.map(tab => tab.id)).catch(() => {});
     $('tabs-dialog').close();
     await load(); navigate(folder.id);
@@ -916,6 +1128,19 @@ $('tabs-form').addEventListener('submit', async event => {
     $('tabs-error').textContent = error.message;
   } finally { submit.disabled = false; }
 });
+// Four tabs at a time; a tab that can't be read (asleep, or a browser page) is skipped.
+async function saveTabTexts(folder) {
+  const ids = new Map(folder.children.map(node => [node.url, node.id]));
+  const queue = openTabs.filter(tab => ids.has(tab.url) && /^https?:/.test(tab.url) && !tweetId(tab.url));
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (queue.length) {
+      const tab = queue.shift();
+      const text = await captureTabText(browser, tab.id, tab.url).catch(() => null);
+      const saved = text && await library.setText(ids.get(tab.url), { ...text, via: 'tabs' }).catch(() => null);
+      if (saved) pageTexts.set(ids.get(tab.url), saved);
+    }
+  }));
+}
 $('new-folder').addEventListener('click', () => openEditor(null, true));
 $('sidebar-add').addEventListener('click', () => openEditor(null, true));
 let searchTimer;
@@ -926,19 +1151,56 @@ $('search').addEventListener('input', () => {
   clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.selected.clear(); render(); }, 120);
 });
 $('semantic-toggle').addEventListener('click', () => {
-  if (!semanticReady()) { openSettings('Add your TypeSafe API key to search by meaning.'); return; }
+  if (!semanticReady()) {
+    // Once the key is saved, the search it was for runs.
+    openSettings('semantic', { message: 'Add your TypeSafe API key to search by meaning.', after: () => { if ($('search').value.trim().length >= 3) searchByMeaning(); } });
+    return;
+  }
   if (semanticShown()) { clearSemantic(); render(); }
   else if ($('search').value.trim().length < 3) toast('Type what you’re looking for, then choose Semantic.');
   else searchByMeaning();
   $('search').focus();
 });
 $('settings').addEventListener('click', () => openSettings());
+for (const tab of settingsTabs()) tab.addEventListener('click', () => showSettingsSection(tab.dataset.section));
+// The sidebar is a vertical tab list: the arrow keys, Home, and End move through it.
+document.querySelector('.settings-nav').addEventListener('keydown', event => {
+  const tabs = settingsTabs(), index = tabs.indexOf(document.activeElement);
+  const next = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: tabs.length - 1 }[event.key];
+  if (index < 0 || next === undefined) return;
+  event.preventDefault();
+  showSettingsSection(tabs[(next + tabs.length) % tabs.length].dataset.section, true);
+});
+$('settings-dialog').addEventListener('close', () => { afterKey = null; });
 for (const choice of document.querySelectorAll('[data-theme-choice]')) choice.addEventListener('click', () => setTheme(choice.dataset.themeChoice));
 applyTheme(readTheme());
 darkScheme?.addEventListener('change', () => { if (!document.documentElement.dataset.theme) render(); });
 // Another Marked tab changed the theme.
 document.defaultView.addEventListener('storage', event => { if (event.key === THEME_KEY) { applyTheme(event.newValue || 'system'); render(); } });
-for (const id of ['jev-notes', 'jev-highlights']) $(id).addEventListener('change', () => renderEstimate().catch(() => {}));
+// What each search sends, and preview mode, apply as soon as they change;
+// answers Jev gave under the old options are dropped.
+for (const [id, option] of [['jev-notes', 'notes'], ['jev-highlights', 'highlights'], ['jev-preview', 'preview']]) {
+  $(id).addEventListener('change', () => {
+    jev = { ...jev, [option]: $(id).checked };
+    saveJev().catch(fail);
+    refreshSemantic();
+    renderEstimate().catch(() => {});
+  });
+}
+$('text-keep').addEventListener('change', () => {
+  textSettings = { ...textSettings, keep: $('text-keep').checked };
+  browser.storage.local.set({ [PAGE_TEXT_SETTINGS_KEY]: textSettings }).catch(fail);
+});
+$('text-download').addEventListener('click', () => downloadTexts().catch(fail));
+$('text-stop').addEventListener('click', () => textDownload.controller?.abort());
+$('text-clear').addEventListener('click', async () => {
+  if (!await confirmAction('Delete all saved text?', 'Search will look through names, addresses, notes, tags, and highlights only. Your bookmarks stay, and Marked keeps the text of pages you save from now on unless you turn that off.', 'Delete text')) return;
+  const count = await library.clearTexts();
+  pageTexts.clear();
+  $('text-status').textContent = `Deleted the text of ${pageCount(count)}.`;
+  renderTextSettings();
+  render();
+});
 $('jev-reset').addEventListener('click', async () => {
   jevUsage = { calls: 0, inputTokens: 0, outputTokens: 0, since: Date.now() };
   await browser.storage.local.set({ [JEV_USAGE_KEY]: jevUsage }).catch(fail);
@@ -947,20 +1209,23 @@ $('jev-reset').addEventListener('click', async () => {
 $('jev-remove').addEventListener('click', async () => {
   jev = { ...jev, apiKey: '' };
   await saveJev().catch(fail);
-  $('settings-dialog').close(); refreshSemantic();
+  $('jev-key').value = ''; $('jev-remove').hidden = true;
+  $('settings-error').textContent = '';
+  $('settings-status').textContent = 'Key removed.';
+  refreshSemantic();
 });
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const apiKey = $('jev-key').value.trim();
-  const preview = $('jev-preview').checked;
-  const newKey = !!apiKey && apiKey !== jev.apiKey;
-  // Ask for access to TypeSafe while the click still counts as user input.
-  const access = newKey ? browser.permissions.request({ origins: JEV_ORIGINS }).catch(() => false) : Promise.resolve(true);
-  const submit = event.submitter; submit.disabled = true;
   $('settings-error').textContent = '';
+  if (!apiKey) { $('settings-status').textContent = ''; $('settings-error').textContent = 'Paste your TypeSafe API key first.'; return; }
+  if (apiKey === jev.apiKey) { $('settings-status').textContent = 'This key is already saved.'; return; }
+  // Ask for access to TypeSafe while the click still counts as user input.
+  const access = browser.permissions.request({ origins: JEV_ORIGINS }).catch(() => false);
+  const submit = event.submitter || $('settings-form').querySelector('[type=submit]'); submit.disabled = true;
   try {
     if (!await access) throw new Error('Marked needs access to api.typesafe.ai to use Jev.');
-    if (newKey && !preview) {
+    if (!jev.preview) {
       // A tiny request confirms the key before anything depends on it.
       $('settings-status').textContent = 'Checking the key with TypeSafe…';
       await askJev({
@@ -969,10 +1234,13 @@ $('settings-form').addEventListener('submit', async event => {
         onUsage: usage => recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderUsage(); }, () => {})
       });
     }
-    jev = { apiKey, notes: $('jev-notes').checked, highlights: $('jev-highlights').checked, preview };
+    jev = { ...jev, apiKey };
     await saveJev();
-    $('settings-dialog').close();
+    $('jev-remove').hidden = false;
+    $('settings-status').textContent = 'Key saved. Choose Semantic beside the search box to search by meaning.';
     refreshSemantic();
+    const after = afterKey;
+    if (after) { $('settings-dialog').close(); after(); }
   } catch (error) {
     $('settings-status').textContent = '';
     $('settings-error').textContent = error.message;
@@ -985,7 +1253,7 @@ function setView(mode) {
 }
 for (const mode of ['list', 'gallery']) $(mode + '-view').addEventListener('click', () => setView(mode));
 $('editor').addEventListener('close', () => {
-  pendingPreview = null; pendingPreviewURL = null; pendingIcon = null; showEditorPreview();
+  pendingPreview = null; pendingPreviewURL = null; pendingIcon = null; pendingText = null; showEditorPreview();
 });
 $('select-all').addEventListener('change', () => { state.selected = new Set($('select-all').checked ? state.visible.filter(n => !protectedNode(n)).map(n => n.id) : []); render(); });
 $('clear-selection').addEventListener('click', () => { state.selected.clear(); render(); });
@@ -1040,9 +1308,11 @@ function commands() {
     ['Import from this browser', 'chrome firefox bookmarks', () => offerBrowserImport({ asked: true }).catch(fail)],
     ['Export bookmarks', 'html download file', exportBookmarks],
     ['Export notes and highlights', 'markdown obsidian notion download', exportNotes],
-    ['Download a backup', 'json move browser', () => $('backup').click()],
+    ['Download a backup', 'export json move browser restore', () => downloadBackup().catch(fail)],
     ['Open chat', 'ai ask question model', () => $('chat-toggle').click()],
-    ['Settings', 'preferences jev typesafe key theme appearance', () => openSettings()],
+    ['Settings', 'preferences options theme appearance', () => openSettings()],
+    ['Page text settings', 'full text download saved copy offline read', () => openSettings('text')],
+    ['Semantic search settings', 'jev typesafe api key meaning', () => openSettings('semantic')],
     ...[['dark', 'Use the dark theme'], ['light', 'Use the light theme'], ['system', 'Match the system’s theme']]
       .filter(([value]) => value !== theme).map(([value, label]) => [label, 'appearance night day color mode', () => setTheme(value)]),
     ['Keyboard shortcuts', 'help keys', showShortcuts]
@@ -1156,23 +1426,37 @@ document.addEventListener('keydown', event => {
   if (event.key === '/') { event.preventDefault(); $('search').focus(); }
   else if (event.key === '?') { event.preventDefault(); showShortcuts(); }
 });
+let textTimer;
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[STORAGE_KEY]) {
     clearTimeout(refreshTimer); refreshTimer = setTimeout(() => load().catch(fail), 200);
   }
+  // Page texts the background saved, or another Marked tab.
+  const texts = area === 'local' ? Object.keys(changes).filter(key => key.startsWith(TEXT_PREFIX)) : [];
+  for (const key of texts) {
+    const id = key.slice(TEXT_PREFIX.length);
+    if (changes[key].newValue) pageTexts.set(id, changes[key].newValue); else pageTexts.delete(id);
+  }
+  if (texts.length) {
+    clearTimeout(textTimer);
+    textTimer = setTimeout(() => { render(); if ($('settings-dialog').open) renderTextSettings(); }, 200);
+  }
+  if (area === 'local' && changes[PAGE_TEXT_SETTINGS_KEY]) textSettings = { keep: true, ...changes[PAGE_TEXT_SETTINGS_KEY].newValue };
   // Settings and usage changed in another Marked tab.
   if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
   // This tab's own saves arrive here too, unchanged, and are skipped.
   const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
   if (settings && ['apiKey', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
 });
-Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY]).then(saved => {
+Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY, PAGE_TEXT_SETTINGS_KEY]).then(saved => {
   view = saved.markedView === 'gallery' ? 'gallery' : 'list';
   jev = { ...jev, ...(saved[JEV_SETTINGS_KEY] || {}) };
   jevUsage = saved[JEV_USAGE_KEY] || null;
+  textSettings = { keep: true, ...(saved[PAGE_TEXT_SETTINGS_KEY] || {}) };
 })]).then(async () => {
   render();
   askFirstImport();
+  loadTexts().catch(fail);
   const params = new URLSearchParams(document.location.search);
   if (!['add', 'edit', 'q'].some(key => params.has(key))) return;
   // Consume the request so refreshing the tab does not repeat it.
@@ -1195,6 +1479,8 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   if ($('editor').open && capture?.url === url) {
     if (validPreview(capture.preview)) { pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview(); }
     if (validIcon(capture.icon)) { pendingIcon = capture.icon; pendingPreviewURL = url; }
+    const text = cleanPageText(capture.text);
+    if (text?.text) { pendingText = text; pendingPreviewURL = url; }
     // Don't overwrite anything typed while the capture was loading.
     const abstract = cleanAbstract(capture.abstract);
     if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;

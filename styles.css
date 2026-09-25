@@ -136,7 +136,19 @@ main { min-width: 0; }
 .palette-open:hover { text-decoration: none; }
 .palette-open:hover kbd { color: var(--fg); border-color: var(--muted); }
 .transfer, .actions { display: flex; align-items: center; gap: 24px; flex-shrink: 0; }
-.transfer { margin-left: auto; }
+/* The last icon's glyph lines up with the content's right edge. */
+.transfer { margin: 0 -7px 0 auto; gap: 4px; }
+/* Icon buttons show their name in a small label below, on hover or keyboard focus. */
+.icon-button { position: relative; display: inline-grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; padding: 0; color: var(--muted); transition: background-color 150ms ease, color 150ms ease; }
+.icon-button:hover, .icon-button[aria-expanded="true"], .topbar:has(#export-menu:popover-open) #export { text-decoration: none; background: var(--hover); color: var(--fg); }
+.icon-button:focus-visible { outline-offset: 2px; }
+.icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.icon-button::after { content: attr(aria-label); position: absolute; top: calc(100% + 6px); left: 50%; z-index: 20; padding: 3px 8px; background: var(--invert-bg); color: var(--invert-fg); font-size: 12px; font-weight: 400; line-height: 18px; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, -3px); transition: opacity 120ms ease, transform 120ms ease; }
+.icon-button:hover::after, .icon-button:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 350ms; }
+/* The last one's label ends under it, so it never spills past the window. */
+.transfer .icon-button:last-child::after { left: auto; right: 0; transform: translateY(-3px); }
+.transfer .icon-button:last-child:hover::after, .transfer .icon-button:last-child:focus-visible::after { transform: none; }
+.topbar:has(#export-menu:popover-open) #export::after, .settings-close::after { display: none; }
 .workspace { padding: 28px 0 40px; }
 #breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--muted); min-height: 24px; }
 #breadcrumbs button { padding: 0; }
@@ -285,6 +297,29 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: default; }
 .note-head { margin: -32px -32px 24px; padding: 20px 32px; background: var(--head-bg); color: var(--head-fg); }
 .note-head h2 { margin: 0; font-weight: 600; }
 .note-head p { margin-top: 2px; color: var(--head-muted); }
+/* A page's saved text, set for reading under the same band. */
+dialog.reader { width: 720px; }
+.reader-body { max-height: min(62vh, 680px); margin: 0 -32px; padding: 0 32px; overflow-y: auto; overscroll-behavior: contain; font-size: 15px; line-height: 1.7; }
+.reader-body p { max-width: 68ch; margin: 0 0 1em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-note { margin: -8px 0 16px; }
+.reader-open { margin-right: auto; align-self: center; }
+mark { color: inherit; background: none; }
+/* The user's own highlights, yellow as on the page; the words searched for, underlined. */
+mark.passage { background: var(--chip-bg); box-shadow: 0 0 0 1px var(--chip-bg); }
+mark.term { font-weight: 600; text-decoration: underline 2px var(--marker); text-underline-offset: 3px; }
+/* Reading time beside the date opens the saved text; a match found only in a
+   page's text shows the passage under the title. */
+.item-read { padding: 0; color: var(--soft); white-space: nowrap; }
+.item-read:hover { color: var(--fg); }
+.gallery .item-read::before { content: '·'; margin-right: 12px; }
+/* A card keeps its site, date, and reading time on one line: a long site name
+   gives way instead of pushing the rest onto a line of its own. */
+.gallery .item-url { flex: 1 1 0; max-width: max-content; }
+.gallery .item-age, .gallery .item-read { flex-shrink: 0; }
+.item-passage { display: block; width: 100%; margin-top: 6px; padding: 0; color: var(--note-fg); overflow-wrap: anywhere; }
+.item-passage:hover { text-decoration: none; color: var(--fg); }
+.table-wrap:not(.gallery) .item-passage { grid-column: 1 / -1; }
+.gallery .item-passage { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
 .row-actions { white-space: nowrap; text-align: right; padding-right: 0; }
 .item-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 6px; transition: background-color 150ms ease; }
 .row-actions button + button { margin-left: 4px; }
@@ -334,20 +369,51 @@ dialog input, dialog select { display: block; width: 100%; margin-top: 8px; }
 dialog textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 0; resize: vertical; }
 dialog p { overflow-wrap: anywhere; }
 .tags-field { margin: 24px 0; }
-.settings-heading { font: inherit; font-weight: 600; margin: 0 0 8px; }
-.settings-heading ~ .settings-heading { margin-top: 32px; }
+/* Settings: its sections in a sidebar, the chosen one beside it. The dialog
+   keeps one size, so switching sections never makes it jump. */
+dialog.settings { width: 760px; height: min(580px, calc(100vh - 48px)); padding: 0; overflow: hidden; }
+dialog.settings[open] { display: grid; grid-template-columns: 208px minmax(0, 1fr); }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; min-height: 0; padding: 24px 12px; border-right: 1px solid var(--line); background: var(--row-hover); overflow-y: auto; }
+dialog .settings-nav h2 { margin: 0 10px 18px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.settings-nav [role="tab"] { display: flex; align-items: center; gap: 10px; padding: 7px 10px; color: var(--muted); white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
+.settings-nav [role="tab"]:hover { text-decoration: none; background: var(--hover); color: var(--fg); }
+.settings-nav [role="tab"][aria-selected="true"] { background: var(--hover-strong); color: var(--fg); font-weight: 600; }
+.settings-nav [role="tab"]:focus-visible { outline-offset: -1px; }
+.settings-nav svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.settings-panels { min-height: 0; padding: 26px 32px 32px; overflow-y: auto; overscroll-behavior: contain; }
+.settings-panels h3 { margin: 0 40px 6px 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.5; }
+.settings-subheading { margin: 28px 0 10px; font-size: inherit; font-weight: 600; }
+dialog .settings-subheading label { display: inline; margin: 0; }
+.settings-close { position: absolute; top: 16px; right: 16px; }
+.key-row { display: flex; align-items: center; gap: 12px; }
+dialog .key-row input { flex: 1; min-width: 0; margin: 0; }
+.key-row button { flex-shrink: 0; padding: 4px 14px; }
+.text-button { margin-top: 10px; padding: 0; color: var(--muted); }
+.text-button:hover { color: var(--fg); }
+.settings .segmented { margin-top: 16px; }
+#text-download { margin-top: 6px; }
+#text-progress { display: block; width: 100%; height: 4px; margin-top: 14px; accent-color: var(--fg); }
+#text-progress[hidden] { display: none; }
+.usage .danger-text { padding: 0; }
+@media (max-width: 650px) {
+  dialog.settings { height: calc(100vh - 32px); }
+  dialog.settings[open] { grid-template-columns: none; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-nav { flex-direction: row; align-items: center; gap: 4px; padding: 10px 56px 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  dialog .settings-nav h2 { display: none; }
+  .settings-panels { padding: 20px; }
+  .settings-close { top: 10px; right: 10px; }
+}
 .segmented { display: inline-flex; margin-top: 4px; border: 1px solid var(--line); }
 .segmented button { padding: 4px 14px; color: var(--muted); transition: background-color 150ms ease, color 150ms ease; }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button:hover { text-decoration: none; background: var(--hover); color: var(--fg); }
 .segmented button[aria-checked="true"] { background: var(--invert-bg); color: var(--invert-fg); }
-#browser-import-open { margin-top: 8px; }
+#browser-import-open { margin-top: 16px; }
 dialog label.check-field { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
 dialog label.check-field input { width: 12px; margin: 0; }
 .usage { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; padding: 10px 12px; border: 1px solid var(--line); }
 .usage-label { display: block; color: var(--muted); }
 .usage button { padding: 0; }
-.dialog-secondary { margin-right: auto; }
 .field-heading { display: flex; justify-content: space-between; align-items: baseline; }
 .field-heading button { padding: 0; color: var(--muted); }
 .tag-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

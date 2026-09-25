@@ -57,3 +57,13 @@ test('mk searches Marked from the address bar, and Alt+Shift+M adds the page, wi
   assert.equal(manifest.commands['add-to-marked'].suggested_key.default, 'Alt+Shift+M');
   assert.deepEqual(manifest.permissions, ['bookmarks', 'storage', 'unlimitedStorage', 'contextMenus', 'activeTab', 'scripting']);
 });
+
+// Marked's pages download bookmarked pages to read their text, so they may
+// connect to any site; scripts and images still come only from Marked itself.
+test('Marked’s pages may download web pages, but load scripts and images only from the extension', async () => {
+  const policy = Object.fromEntries(manifest.content_security_policy.extension_pages.split(';').map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+  assert.deepEqual(policy['connect-src'], ["'self'", 'https:', 'http:']);
+  assert.deepEqual(policy['script-src'], ["'self'", "'wasm-unsafe-eval'"]);
+  assert.deepEqual(policy['img-src'], ["'self'", 'data:']);
+  assert.deepEqual(policy['object-src'], ["'none'"]);
+});

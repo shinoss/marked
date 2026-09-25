@@ -1,7 +1,11 @@
 import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights, validIcon } from './bookmarks.js';
+import { cleanPageText } from './page-text.js';
 
-export function exportBackup(root) {
-  return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] });
+// texts: saved page texts by bookmark id. Each rides along on its bookmark;
+// notes of pages that couldn't be read are left out.
+export function exportBackup(root, texts = {}) {
+  return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] },
+    (key, value) => value?.url && texts[value.id]?.text ? { ...value, text: texts[value.id] } : value);
 }
 export function parseBackup(data) {
   if (data?.format !== 'marked' || data.version !== 1 || !Array.isArray(data.children)) throw new Error('Unsupported Marked backup.');
@@ -24,6 +28,8 @@ export function parseBackup(data) {
       if (tags.length) result.tags = tags;
       const highlights = cleanHighlights(node.highlights);
       if (highlights.length) result.highlights = highlights;
+      const text = cleanPageText(node.text);
+      if (text?.text) result.text = { ...text, via: text.via || 'backup' };
     } else if (Array.isArray(node.children)) {
       result.children = node.children.map(child => convert(child, depth + 1)).filter(Boolean);
     } else throw new Error('A backup item is missing its URL or folder contents.');

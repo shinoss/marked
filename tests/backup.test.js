@@ -26,6 +26,20 @@ test('backup round-trips hierarchy, dates, previews, and abstracts but drops uns
   ] }]);
 });
 
+test('a backup carries each page’s saved text, checked again when it’s read back', () => {
+  const data = JSON.parse(exportBackup(library(), { a: { text: 'The article, word for word.', words: 5, capturedAt: 9, via: 'page' }, x: { error: 'The site answered 404.' } }));
+  const [article, , unsafe] = data.children[0].children;
+  assert.deepEqual(article.text, { text: 'The article, word for word.', words: 5, capturedAt: 9, via: 'page' });
+  assert.equal(unsafe.text, undefined, 'a failure to read a page isn’t backed up');
+  article.text.text = '  The article,\n\n\n\nword for word. ';
+  const { nodes } = parseBackup(data);
+  assert.deepEqual(nodes[0].children[0].text, { capturedAt: 9, via: 'page', text: 'The article,\n\nword for word.', words: 5 });
+  delete article.text.via;
+  assert.equal(parseBackup(data).nodes[0].children[0].text.via, 'backup');
+  article.text = 'not a record';
+  assert.equal(parseBackup(data).nodes[0].children[0].text, undefined);
+});
+
 test('rejects other formats and drops previews that are not JPEG data', () => {
   assert.throws(() => parseBackup({ format: 'other', version: 1, children: [] }), /Unsupported/);
   assert.throws(() => parseBackup({ format: 'marked', version: 2, children: [] }), /Unsupported/);
@@ -50,7 +64,7 @@ test('restored items keep their original dates; other new items are dated now', 
   assert.equal(folder.children[0].abstract, 'What the article is about.');
 });
 
-test('Backup button downloads a Marked file that Import restores with dates and previews', async t => {
+test('Export’s Backup downloads a Marked file that Import restores with dates and previews', async t => {
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
@@ -70,7 +84,8 @@ test('Backup button downloads a Marked file that Import restores with dates and 
   t.mock.method(URL, 'createObjectURL', value => { blob = value; return 'blob:backup'; });
   t.mock.method(URL, 'revokeObjectURL', () => {});
   dom.window.HTMLAnchorElement.prototype.click = function () { filename = this.download; };
-  $('backup').click();
+  $('export-backup').click();
+  await flush();
   assert.match(filename, /^marked-backup-\d{4}-\d{2}-\d{2}\.json$/);
 
   const file = new File([await blob.text()], filename, { type: 'application/json' });

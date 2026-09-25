@@ -42,6 +42,14 @@ Folders, tags, notes, and page abstracts captured when you save. Search everythi
   <img src="docs/images/gallery.png" width="880" alt="Gallery view with page previews and an embedded post from X">
 </p>
 
+### Search inside every page
+
+Marked keeps the readable text of each page you save, so search finds any word in it and shows you the passage. Choose the reading time on a bookmark to read the saved copy, even after the page is gone. For bookmarks saved earlier, **Settings → Page text** downloads it.
+
+<p align="center">
+  <img src="docs/images/search-text.png" width="880" alt="Searching for “imagination” finds it deep inside three saved pages, with the passage from each">
+</p>
+
 ### Jump anywhere
 
 Press <kbd>⌘</kbd>+<kbd>K</kbd> (<kbd>Ctrl</kbd>+<kbd>K</kbd> on Windows and Linux) to jump to any bookmark, folder, or tag, or to run a command. Press <kbd>?</kbd> for every shortcut.
@@ -122,7 +130,7 @@ Add a [TypeSafe Jev](https://typesafe.ai) API key in **Settings**, then click **
 
 ### Yours to keep
 
-On first run, Marked offers to import your browser's bookmarks, folders and all, and never changes them. **Backup** moves everything to Marked in another browser; **Export** writes a standard bookmarks file, or your notes and highlights as Markdown.
+On first run, Marked offers to import your browser's bookmarks, folders and all, and never changes them. **Export** makes a backup of everything, saved page text included, to restore with **Import** in any browser's Marked. It can also write a standard bookmarks file, or your notes and highlights as Markdown.
 
 <p align="center">
   <img src="docs/images/browser-import.png" width="880" alt="On first run, Marked offers to import the bookmarks it found in Chrome">
@@ -135,7 +143,7 @@ Load it from source. You need desktop Chrome 123+ or Firefox 142+, and Node.js 2
 ```sh
 git clone https://github.com/shinoss/marked.git
 cd marked
-npm ci && npm run bundle:ai
+npm ci && npm run bundle
 ```
 
 - **Chrome:** open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select the folder.
@@ -154,14 +162,15 @@ Your library stays in your browser. Marked only contacts:
 - **Hugging Face**, when you download the chat model.
 - **X**, to show embedded posts in the gallery.
 - **TypeSafe**, when you click **Semantic**: your query and each bookmark's title and abstract (plus notes and highlights, if you allow them). Never addresses, folders, or tags.
+- **The sites you bookmarked**, when you choose **Download text** in Settings, to read pages saved before Marked kept their text. No cookies go with these requests.
 
-Access to all websites lets Marked show the **Highlight** button, mark saved highlights, show ✓ on saved pages, and read your open tabs for **Save open tabs**. None of that leaves your device.
+Access to all websites lets Marked show the **Highlight** button, mark saved highlights, show ✓ on saved pages, keep the text of pages you save or open again, and read your open tabs for **Save open tabs**. None of that leaves your device.
 
 ## Develop
 
 ```sh
 npm ci
-npm run bundle:ai        # once
+npm run bundle           # once
 npm test                 # unit and DOM tests
 npm run lint:extension   # Firefox compatibility
 npm run build            # extension ZIP in web-ext-artifacts/

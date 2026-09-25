@@ -45,4 +45,9 @@ await build({
 });
 await copyFile('node_modules/@mlc-ai/web-llm/LICENSE', 'vendor/WebLLM-LICENSE');
 await copyFile('node_modules/loglevel/LICENSE-MIT', 'vendor/loglevel-LICENSE');
-console.log('Bundled local WebLLM runtime and verified model WASM. No model weights downloaded.');
+// Mozilla's Readability, unchanged: Marked injects it into pages to read their
+// text, and loads it in its own pages to read the ones it downloads.
+await copyFile('node_modules/@mozilla/readability/Readability.js', 'vendor/readability.js');
+await copyFile('node_modules/@mozilla/readability/Readability-readerable.js', 'vendor/readability-readerable.js');
+await copyFile('node_modules/@mozilla/readability/LICENSE.md', 'vendor/Readability-LICENSE.md');
+console.log('Bundled local WebLLM runtime, verified model WASM, and copied Readability. No model weights downloaded.');

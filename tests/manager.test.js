@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 import { fixture } from './storage-fixture.js';
 import { STORAGE_KEY } from '../store.js';
 import { estimateJevTokens, jevCost, formatCost } from '../jev.js';
+import { Readability } from '@mozilla/readability';
 
 test('manager renders, searches, creates, and moves bookmarks through the API', async () => {
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
@@ -61,7 +62,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [] }] });
-  const session = { 'capture-1': { url: pageURL, abstract: 'Agents that learn by imagining outcomes.', highlight: '  A key   passage. ', createdAt: Date.now() } };
+  const session = { 'capture-1': { url: pageURL, abstract: 'Agents that learn by imagining outcomes.', highlight: '  A key   passage. ', text: { text: 'The whole post, word for word.', words: 6 }, createdAt: Date.now() } };
   mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
@@ -93,6 +94,8 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.equal(saved.note, 'Read before the meetup');
   assert.deepEqual(saved.tags, ['AI', 'Technology', 'Robotics']);
   assert.deepEqual(saved.highlights.map(({ text, note }) => ({ text, note })), [{ text: 'A key passage.', note: 'Why it matters' }]);
+  const { capturedAt, ...text } = (await browser.storage.local.get())[`markedText:${saved.id}`];
+  assert.deepEqual(text, { via: 'page', text: 'The whole post, word for word.', words: 6 }, 'the page’s text is kept with it');
   const row = $('items').querySelector('tr');
   assert.deepEqual([...row.querySelectorAll('.tag')].map(tag => tag.textContent), ['AI', 'Technology', 'Robotics']);
   assert.equal(row.querySelector('.item-note').textContent, 'Read before the meetup');
@@ -208,6 +211,7 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'false');
   $('semantic-toggle').click();
   assert.ok($('settings-dialog').open, 'Semantic without a key asks for one');
+  assert.ok(!$('settings-semantic').hidden && $('settings-tab-semantic').getAttribute('aria-selected') === 'true', 'in the Semantic search section');
   assert.match($('settings-status').textContent, /Add your TypeSafe API key/);
   $('jev-key').value = '  sk-test  ';
   $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
@@ -252,14 +256,13 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   $('jev-remove').click(); await settle();
   assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'false');
   assert.equal((await browser.storage.local.get()).markedJev.apiKey, '');
+  assert.ok($('settings-dialog').open && $('settings-status').textContent === 'Key removed.', 'Settings stay open');
 
   // Preview needs no key: each search logs the request Jev would get and sends nothing.
-  $('settings').click(); await settle();
   assert.match($('jev-estimate').textContent, /^Each search of your 2 bookmarks costs about \$0\.0000\d+ \(≈\d{3} input tokens; output is free\)\.$/);
-  $('jev-preview').checked = true;
-  $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
-  await settle(50);
-  assert.ok(!$('settings-dialog').open);
+  $('jev-preview').click(); await settle(50);
+  assert.equal((await browser.storage.local.get()).markedJev.preview, true, 'options apply as soon as they change');
+  $('settings-dialog').close();
   const sent = requests.length;
   log.mock.resetCalls();
   await search('attention');
@@ -369,6 +372,8 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   assert.equal($('open-all').hidden, true, 'never offered for the whole library');
   const created = [], removed = [], requested = [];
   mock.api.permissions = { request: async request => { requested.push(request); return true; } };
+  const shown = { 2: 'https://a.test/', 5: 'https://b.test/path' };
+  mock.api.scripting = { executeScript: async ({ target, func }) => [{ result: func ? { url: shown[target.tabId], text: `The text of tab ${target.tabId}.` } : undefined }] };
   mock.api.tabs = {
     getCurrent: async () => ({ id: 1 }),
     query: async () => [
@@ -387,11 +392,13 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   assert.equal($('tabs-text').textContent, 'Save the 2 pages open in this window to a new folder in Library?', 'web pages only, once each, never Marked itself');
   $('tabs-close').checked = true;
   $('tabs-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('tabs-save') }));
-  await settle();
+  await settle(150);
   const folder = (await mock.api.storage.local.get()).markedLibraryV1.root.children.at(-1);
   assert.match(folder.title, /^Tabs · /);
   assert.deepEqual(folder.children.map(node => [node.title, node.url]), [['Page A', 'https://a.test/'], ['https://b.test/path', 'https://b.test/path']]);
   assert.deepEqual(removed, [2, 5], 'closed after saving, as asked');
+  const stored = await mock.api.storage.local.get();
+  assert.deepEqual(folder.children.map(node => [stored[`markedText:${node.id}`].text, stored[`markedText:${node.id}`].via]), [['The text of tab 2.', 'tabs'], ['The text of tab 5.', 'tabs']], 'each page’s text, read from its tab before it closed');
   assert.equal($('page-title').textContent, folder.title, 'the new folder opens');
   assert.equal($('open-all').hidden, false);
   $('open-all').click(); await settle();
@@ -399,14 +406,14 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   dom.window.close();
 });
 
-async function openManager(library, name) {
+async function openManager(library, name, stored = {}) {
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const mock = fixture(library);
-  mock.api.storage.local.set({ markedBrowserImportAsked: 1 });
+  mock.api.storage.local.set({ markedBrowserImportAsked: 1, ...stored });
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
   await import(`../manager.js?${name}`);
@@ -466,6 +473,13 @@ test('an empty library welcomes you; the palette jumps anywhere; themes and shor
   assert.ok(!$('palette').open, '⌘K again closes it');
 
   $('settings').click();
+  const panels = () => [...document.querySelectorAll('.settings-panels [role="tabpanel"]')].filter(panel => !panel.hidden).map(panel => panel.id);
+  assert.deepEqual(panels(), ['settings-appearance'], 'Settings opens on its first section');
+  page.key({ key: 'ArrowDown' }, $('settings-tab-appearance'));
+  assert.deepEqual(panels(), ['settings-browser'], 'the arrow keys move through the sections');
+  assert.equal(document.activeElement, $('settings-tab-browser'));
+  page.key({ key: 'ArrowUp' }, $('settings-tab-browser'));
+  assert.deepEqual(panels(), ['settings-appearance']);
   document.querySelector('[data-theme-choice="system"]').click();
   assert.equal(document.documentElement.dataset.theme, undefined, 'System follows the computer');
   assert.equal(document.querySelector('[data-theme-choice="system"]').getAttribute('aria-checked'), 'true');
@@ -516,5 +530,92 @@ test('duplicates merge into one bookmark; Rediscover picks old ones; notes expor
   assert.match(markdown, /^# Notes and highlights from Marked/);
   assert.match(markdown, /## \[On attention\]\(https:\/\/example\.com\/post\)\n\n\*Reading · #Essays\*\n\nWhy I saved it\.\n\n> A passage\./);
   assert.ok(!markdown.includes('pasta'), 'only bookmarks with notes or highlights');
+  dom.window.close();
+});
+
+const essay = 'Attention is the currency of a working life.\n\nMost of it is spent before we notice, on things that ask loudly.\n\nA saved link is a promise to your future self.';
+test('search finds words in the text saved from pages, shows where, and opens the text there', async () => {
+  const page = await openManager({ id: 'root', children: [{ id: 'reading', parentId: 'root', title: 'Reading', type: 'folder', children: [
+    { id: 'essay', parentId: 'reading', title: 'On attention', url: 'https://example.com/essay', type: 'bookmark', dateAdded: 3, highlights: [{ id: 'h', text: 'A saved link is a promise to your future self.', createdAt: 1 }] },
+    { id: 'loud', parentId: 'reading', title: 'Things that ask loudly', url: 'https://loud.test/', type: 'bookmark', dateAdded: 1 },
+    { id: 'pasta', parentId: 'reading', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark', dateAdded: 2 }
+  ] }] }, 'page-text', { 'markedText:essay': { text: essay, words: 800, capturedAt: Date.UTC(2026, 8, 1, 12), via: 'page', byline: 'Ada Writer' } });
+  const { dom, $ } = page;
+  const titles = () => [...$('items').querySelectorAll('.item-title')].map(link => link.textContent);
+  const search = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await page.settle(150); };
+  const read = $('items').querySelector('.item-read');
+  assert.equal(read.textContent, '3 min read', 'a bookmark with its page’s text shows how long it is');
+  assert.equal($('items').querySelectorAll('.item-read').length, 1);
+
+  await search('loudly');
+  assert.deepEqual(titles(), ['Things that ask loudly', 'On attention'], 'matches in a bookmark’s own details come first');
+  const passage = $('items').querySelector('.item-passage');
+  assert.equal(passage.textContent, 'Most of it is spent before we notice, on things that ask loudly.', 'with the passage from the page');
+  assert.deepEqual([...passage.querySelectorAll('mark.term')].map(mark => mark.textContent), ['loudly']);
+  await search('"working life" attention');
+  assert.deepEqual(titles(), ['On attention'], 'every word or quoted phrase, from the details and the page together');
+  await search('currency pasta');
+  assert.deepEqual(titles(), [], 'but all of them in one bookmark');
+
+  await search('currency');
+  $('items').querySelector('.item-passage').click();
+  assert.ok($('text-dialog').open);
+  assert.equal($('text-title').textContent, 'On attention');
+  assert.equal($('text-meta').textContent, `example.com · Ada Writer · 3 min read · saved ${new Date(Date.UTC(2026, 8, 1, 12)).toLocaleDateString([], { dateStyle: 'medium' })}`);
+  assert.equal($('text-body').querySelectorAll('p').length, 3);
+  assert.deepEqual([...$('text-body').querySelectorAll('mark.term')].map(mark => mark.textContent), ['currency'], 'the words searched for are marked');
+  assert.deepEqual([...$('text-body').querySelectorAll('mark.passage')].map(mark => mark.textContent), ['A saved link is a promise to your future self.'], 'and so is the highlight');
+  assert.equal($('text-open').href, 'https://example.com/essay');
+  $('text-dialog').close();
+  await search('');
+  $('items').querySelector('.item-read').click();
+  assert.ok($('text-dialog').open, 'the reading time opens the text too');
+  assert.equal($('text-body').querySelectorAll('mark.term').length, 0);
+  dom.window.close();
+});
+
+test('Settings shows how much page text is kept, downloads it for older bookmarks, and deletes it', async () => {
+  globalThis.Readability = Readability;
+  const page = await openManager({ id: 'root', children: [
+    { id: 'a', parentId: 'root', title: 'Has text', url: 'https://a.test/', type: 'bookmark' },
+    { id: 'b', parentId: 'root', title: 'Article', url: 'https://b.test/article', type: 'bookmark' },
+    { id: 'c', parentId: 'root', title: 'Gone', url: 'https://c.test/gone', type: 'bookmark' },
+    { id: 'x', parentId: 'root', title: 'Post', url: 'https://x.com/jack/status/20', type: 'bookmark' },
+    { id: 'f', parentId: 'root', title: 'Notes', url: 'file:///notes.txt', type: 'bookmark' }
+  ] }, 'text-settings', { 'markedText:a': { text: 'Already here.', words: 2, capturedAt: 1 } });
+  const { dom, $ } = page;
+  const requested = [], fetched = [];
+  page.mock.api.permissions = { request: async request => { requested.push(request); return true; } };
+  globalThis.fetch = async (url, init) => {
+    fetched.push([url, init.credentials]);
+    return url.includes('gone') ? new Response('', { status: 404 }) : new Response(`<body><article><h1>Article</h1><p>${essay.replace(/\n\n/g, '</p><p>')}</p></article></body>`, { headers: { 'content-type': 'text/html' } });
+  };
+  $('settings').click(); $('settings-tab-text').click();
+  assert.equal($('settings-text').hidden, false);
+  assert.equal($('text-keep').checked, true, 'on unless turned off');
+  assert.equal($('text-stats').textContent, '1 of 5 bookmarks · about 1 KB');
+  assert.match($('text-missing').textContent, /^2 bookmarks don’t have their text yet\. Marked can download each page from its site\./, 'X posts and files aren’t downloaded');
+  assert.equal($('text-download').textContent, 'Download text for 2 bookmarks');
+
+  $('text-download').click(); await page.settle(150);
+  assert.deepEqual(requested, [{ origins: ['<all_urls>'] }]);
+  assert.deepEqual(fetched.sort(), [['https://b.test/article', 'omit'], ['https://c.test/gone', 'omit']], 'without cookies');
+  assert.equal($('text-status').textContent, 'Saved the text of 1 page; 1 couldn’t be read.');
+  const stored = await browser.storage.local.get();
+  assert.equal(stored['markedText:b'].via, 'download');
+  assert.ok(stored['markedText:b'].text.includes('Attention is the currency of a working life.'));
+  assert.equal(stored['markedText:c'].error, 'The site answered 404.');
+  assert.equal($('text-stats').textContent, '2 of 5 bookmarks · about 1 KB');
+  assert.match($('text-missing').textContent, /^1 bookmark doesn’t have its text yet, including 1 that couldn’t be read last time\./);
+  assert.equal($('text-progress').hidden, true);
+
+  $('text-keep').click(); await page.settle();
+  assert.deepEqual((await browser.storage.local.get()).markedPageText, { keep: false });
+  $('text-clear').click(); await page.settle();
+  $('confirm-dialog').returnValue = 'accept'; $('confirm-dialog').close(); await page.settle();
+  assert.deepEqual(Object.keys(await browser.storage.local.get()).filter(key => key.startsWith('markedText:')), []);
+  assert.equal($('text-stats').textContent, '0 of 5 bookmarks');
+  assert.equal($('text-status').textContent, 'Deleted the text of 3 pages.');
+  delete globalThis.fetch;
   dom.window.close();
 });

@@ -230,3 +230,45 @@ test('merges copies of a page into the oldest, keeping every tag, note, and high
   assert.equal('icon' in (await store.getTree())[0].children[0].children.find(node => node.id === first.id), false, 'a new address drops the old site’s icon');
   assert.equal(await store.mergeDuplicates([[first.id]]), 0);
 });
+
+test('page texts live apart from the library, follow their bookmarks through Undo and merges, and go when the address changes', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const saved = async () => Object.fromEntries(Object.entries(await mock.api.storage.local.get()).filter(([key]) => key.startsWith('markedText:')));
+  const text = { text: 'The whole essay.', words: 3, via: 'page' };
+  assert.equal((await store.setText('a', text)).text, 'The whole essay.');
+  assert.equal(await store.setText('gone', text), null, 'only for bookmarks in the library');
+  assert.equal(await store.setText('folder', text), null, 'and never for folders');
+  assert.ok(!JSON.stringify((await mock.api.storage.local.get()).markedLibraryV1).includes('whole essay'), 'the library itself doesn’t hold the text');
+  assert.deepEqual(Object.keys(await store.getTexts(['a', 'folder'])), ['a']);
+  assert.equal(await store.setText('a', { text: 'A later copy.' }, { replace: false }), null, 'a saved text stays unless replaced');
+  assert.equal(await store.setText('a', { error: 'The site answered 404.' }), null, 'a failure never replaces a text');
+
+  const deleted = await store.removeMany(['home']);
+  assert.deepEqual(await saved(), {}, 'deleting a folder deletes the texts of the bookmarks in it');
+  await store.restoreMany(deleted);
+  assert.equal((await store.getTexts(['a'])).a.text, 'The whole essay.', 'Undo brings them back');
+
+  await store.update('a', { title: 'Renamed', url: 'https://example.com' });
+  assert.ok((await store.getTexts(['a'])).a, 'a new title keeps the text');
+  await store.update('a', { title: 'Moved', url: 'https://elsewhere.test/' });
+  assert.deepEqual(await store.getTexts(['a']), {}, 'a new address is a different page');
+
+  const first = await store.create({ parentId: 'home', title: 'First', url: 'https://page.test/', dateAdded: 1 });
+  const second = await store.create({ parentId: 'home', title: 'Second', url: 'https://page.test/#top', dateAdded: 2 });
+  await store.setText(second.id, text);
+  await store.mergeDuplicates([[first.id, second.id]]);
+  assert.deepEqual(Object.keys(await saved()), [`markedText:${first.id}`], 'the kept bookmark takes its copy’s text');
+
+  assert.equal(await store.clearTexts(), 1);
+  assert.deepEqual(await saved(), {});
+});
+
+test('a restored backup keeps each bookmark’s page text under its new bookmark', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const container = await store.importTree([{ title: 'Essay', url: 'https://essay.test/', text: { text: 'Kept words.', via: 'backup', capturedAt: 7 } }, { title: 'No text', url: 'https://plain.test/', text: { text: '   ' } }], 'home', 'Restored');
+  const [essay, plain] = container.children;
+  const texts = await store.getTexts([essay.id, plain.id]);
+  assert.deepEqual(Object.keys(texts), [essay.id]);
+  assert.deepEqual(texts[essay.id], { capturedAt: 7, via: 'backup', text: 'Kept words.', words: 2 });
+  assert.equal(essay.text, undefined, 'the text isn’t part of the bookmark');
+});
