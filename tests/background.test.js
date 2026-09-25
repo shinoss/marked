@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-let onClick, onAction;
+let onClick, onAction, onMessage;
 const menus = [], opened = [], focused = [];
 let tabs = [];
 globalThis.browser = {
@@ -12,7 +12,7 @@ globalThis.browser = {
     create: details => { menus.push(details); },
     onClicked: { addListener: listener => { onClick = listener; } }
   },
-  runtime: { getURL: path => `moz-extension://marked/${path}` },
+  runtime: { getURL: path => `moz-extension://marked/${path}`, onMessage: { addListener: listener => { onMessage = listener; } } },
   storage: { session: { get: async () => ({}) } },
   tabs: {
     create: async details => { opened.push(details); },
@@ -163,4 +163,43 @@ test('in Firefox, Save tweet to Marked asks for access to X while the click coun
     assert.deepEqual(requested, [{ origins: ['https://x.com/*', 'https://twitter.com/*'] }]);
     await pending;
   } finally { delete browser.runtime.getBrowserInfo; }
+});
+
+const ask = (message, tab) => new Promise(resolve => { assert.equal(onMessage(message, { tab }, resolve), true); });
+
+test('a highlight on a saved page is answered with its title, and the page saves it to that bookmark', async t => {
+  const { fixture } = await import('./storage-fixture.js');
+  const mock = fixture({ id: 'root', children: [] });
+  await mock.api.storage.local.set({ markedLibraryV1: { version: 1, root: { id: 'root', children: [
+    { id: 'old', parentId: 'root', title: 'Old copy', url: 'https://example.com/article', dateAdded: 1 },
+    { id: 'folder', parentId: 'root', title: 'Folder', children: [{ id: 'new', parentId: 'folder', title: 'The essay', url: 'https://example.com/article#intro', dateAdded: 2 }] }
+  ] } } });
+  browser.storage.local = mock.api.storage.local;
+  Object.defineProperty(navigator, 'locks', { value: mock.locks, configurable: true });
+  opened.length = 0;
+  const tab = { id: 3, url: 'https://example.com/article#part-2', title: 'Article' };
+  assert.deepEqual(await ask({ type: 'marked:highlight', text: '  A  passage ' }, tab), { saved: 'The essay' }, 'the newest bookmark of the page, ignoring #fragments');
+  assert.equal(opened.length, 0, 'the page shows its own panel');
+  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: ' A  passage ', note: ' Why ' }, tab), { ok: true });
+  const root = (await mock.api.storage.local.get()).markedLibraryV1.root;
+  const [highlight] = root.children[1].children[0].highlights;
+  assert.deepEqual({ text: highlight.text, note: highlight.note }, { text: 'A passage', note: 'Why' });
+  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: 'X' }, { id: 4, url: 'https://other.test/' }), { error: 'This page is no longer in Marked.' });
+});
+
+test('a highlight on a new page opens the editor with the passage, as Add to Marked does', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const saved = {};
+  opened.length = 0;
+  browser.storage.session.set = async value => Object.assign(saved, value);
+  browser.storage.local = { get: async () => ({}) };
+  browser.scripting = { executeScript: async () => [{ result: { url: 'https://example.org/new', text: 'Page description.' } }] };
+  assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Quoted words' }, { id: 4, url: 'https://example.org/new', title: 'New page' }), { opened: true });
+  const request = new URL(opened[0].url);
+  assert.equal(request.searchParams.get('add'), 'https://example.org/new');
+  assert.equal(request.searchParams.get('title'), 'New page');
+  assert.deepEqual({ ...saved[request.searchParams.get('capture')], createdAt: 0 }, { url: 'https://example.org/new', highlight: 'Quoted words', abstract: 'Page description.', createdAt: 0 });
+  assert.equal(await ask({ type: 'marked:highlight', text: '   ' }, { id: 4, url: 'https://example.org/new' }), null);
+  assert.equal(onMessage({ type: 'other' }, { tab: { id: 4 } }, () => {}), undefined);
+  assert.equal(opened.length, 1, 'empty selections and other messages open nothing');
 });

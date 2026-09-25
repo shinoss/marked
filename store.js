@@ -1,4 +1,4 @@
-import { cleanAbstract, cleanNote, cleanTag, cleanTags } from './bookmarks.js';
+import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
 
 // The bookmarks permission is used only to seed the library on first upgrade.
 // All subsequent reads and writes use extension-local storage, never the
@@ -73,10 +73,11 @@ export function createLibraryStore(api, locks = navigator.locks) {
     const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
     if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
     if (type === 'bookmark') {
-      const abstract = cleanAbstract(details.abstract), note = cleanNote(details.note), tags = cleanTags(details.tags);
+      const abstract = cleanAbstract(details.abstract), note = cleanNote(details.note), tags = cleanTags(details.tags), highlights = cleanHighlights(details.highlights);
       if (abstract) node.abstract = abstract;
       if (note) node.note = note;
       if (tags.length) node.tags = tags;
+      if (highlights.length) node.highlights = highlights;
     }
     parent.children.push(node);
     return node;
@@ -162,6 +163,24 @@ export function createLibraryStore(api, locks = navigator.locks) {
           node.parentId = parent.id;
           parent.children.splice(Math.min(record.index, parent.children.length), 0, node);
         }
+      });
+    },
+    addHighlight(id, highlight) {
+      return mutate(root => {
+        const node = editable(root, id);
+        if (!node.url) throw new Error('Only bookmarks can have highlights.');
+        const cleaned = cleanHighlight(highlight);
+        if (!cleaned) throw new Error('Select some text to highlight.');
+        if ((node.highlights?.length || 0) >= HIGHLIGHTS_PER_BOOKMARK) throw new Error(`A bookmark keeps up to ${HIGHLIGHTS_PER_BOOKMARK} highlights. Delete one first.`);
+        node.highlights = [...(node.highlights || []), cleaned];
+        return cleaned;
+      });
+    },
+    removeHighlight(id, highlightId) {
+      return mutate(root => {
+        const node = editable(root, id);
+        const kept = (node.highlights || []).filter(highlight => highlight.id !== highlightId);
+        if (kept.length) node.highlights = kept; else delete node.highlights;
       });
     },
     addTag(name) {

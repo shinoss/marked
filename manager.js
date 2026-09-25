@@ -1,5 +1,5 @@
 import './browser-api.js';
-import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, exportHTML, parseHTML, parseJSON, tweetId } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, parseHTML, parseJSON, tweetId } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
@@ -14,6 +14,7 @@ let pendingPreview = null;
 let pendingPreviewURL = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
+let pendingHighlight = '';
 const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const isFolder = node => node && !node.url && node.type !== 'separator';
 const protectedNode = node => node.id === state.root.id;
@@ -174,7 +175,8 @@ function render() {
   const showLocation = !current;
   document.querySelector('.location-column').hidden = !showLocation;
   const tag = query ? null : state.tag;
-  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')}`.toLowerCase().includes(query))
+  const highlightText = node => (node.highlights || []).map(h => `${h.text} ${h.note || ''}`).join(' ');
+  let nodes = query ? [...state.nodes.values()].filter(node => node.id !== state.root.id && node.type !== 'separator' && `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase().includes(query))
     : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
@@ -222,6 +224,8 @@ function render() {
     const labels = element('span', 'item-tags');
     for (const tag of node.tags || []) labels.append(button(tag, () => showTag(tag), 'tag', `Show bookmarks tagged ${tag}`));
     if (node.note) labels.append(button('Note', () => showNote(node), 'note-chip', `Show the note on ${title(node)}`));
+    const highlights = node.highlights?.length;
+    if (highlights) labels.append(button(`${highlights} ${highlights === 1 ? 'highlight' : 'highlights'}`, () => showHighlights(node.id), 'highlight-chip', `Show highlights on ${title(node)}`));
     if (!isFolder(node)) details.append(labels);
     metadata.append(domain, details);
     text.append(link, metadata);
@@ -290,6 +294,32 @@ document.defaultView.addEventListener('message', event => {
   tweetHeights[frame.dataset.tweet] = Math.ceil(height);
   try { document.defaultView.localStorage.setItem(TWEET_HEIGHTS, JSON.stringify(tweetHeights)); } catch {}
 });
+function showHighlights(id) {
+  const node = state.nodes.get(id);
+  if (!node?.highlights?.length) { if ($('highlights-dialog').open) $('highlights-dialog').close(); return; }
+  $('highlights-title').textContent = `Highlights on “${title(node)}”`;
+  $('highlights-list').replaceChildren(...node.highlights.map(highlight => {
+    const item = element('li');
+    const quote = element('blockquote', 'quote', highlight.text);
+    const remove = iconButton('trash', async () => {
+      try { await library.removeHighlight(id, highlight.id); await load(); showHighlights(id); } catch (error) { fail(error); }
+    }, 'item-action', 'Delete highlight');
+    item.append(quote, remove);
+    if (highlight.note) item.append(element('p', 'highlight-note', highlight.note));
+    item.append(element('p', 'highlight-date', relativeAge(highlight.createdAt)));
+    return item;
+  }));
+  if (!$('highlights-dialog').open) $('highlights-dialog').showModal();
+}
+// Reads a capture the background stored for this request, if it is still fresh.
+async function readCapture(key) {
+  if (!key?.startsWith('capture-')) return null;
+  try {
+    const capture = (await browser.storage.session.get(key))[key];
+    await browser.storage.session.remove(key);
+    return capture && Date.now() - capture.createdAt < 60000 ? capture : null;
+  } catch { return null; }
+}
 let noteNode = null;
 function showNote(node) {
   noteNode = node;
@@ -342,6 +372,7 @@ function openEditor(node = null, folder = false) {
   $('new-tag').value = ''; $('tags-hint').textContent = '';
   renderTagOptions();
   $('editor-error').textContent = '';
+  pendingHighlight = ''; $('highlight-field').hidden = true; $('edit-highlight-note').value = '';
   fillFolders($('edit-parent'), new Set(node ? [node.id] : []), node?.parentId || defaultFolder());
   $('editor').showModal(); $('edit-name').focus();
 }
@@ -422,6 +453,7 @@ $('editor-form').addEventListener('submit', async event => {
     if (pendingPreview) {
       changes.preview = !folder && $('save-preview').checked && url === pendingPreviewURL ? pendingPreview : null;
     }
+    if (pendingHighlight && !state.editing) changes.highlights = [{ text: pendingHighlight, note: $('edit-highlight-note').value }];
     const parentId = $('edit-parent').value;
     if (state.editing) {
       await library.update(state.editing.id, changes, parentId);
@@ -503,6 +535,12 @@ $('tag-form').addEventListener('submit', async event => {
     $('tag-dialog').close(); await load(); toast(`Added the tag “${tag}”.`);
   } catch (error) { $('tag-error').textContent = error.message; }
 });
+// Firefox may leave content-script sites ungranted; the Highlight button needs all of them.
+const ALL_SITES = ['http://*/*', 'https://*/*'];
+$('allow-sites').addEventListener('click', async () => {
+  try { if (await browser.permissions.request({ origins: ALL_SITES })) $('site-access').hidden = true; } catch (error) { fail(error); }
+});
+browser.permissions?.contains({ origins: ALL_SITES }).then(granted => { $('site-access').hidden = granted; }, () => {});
 $('note-edit').addEventListener('click', () => { $('note-dialog').close(); if (noteNode) openEditor(noteNode); });
 // Enter adds the typed tag instead of submitting the editor.
 $('new-tag').addEventListener('keydown', event => {
@@ -541,25 +579,25 @@ Promise.all([load(), browser.storage.local.get('markedView').then(saved => {
   render();
   const params = new URLSearchParams(document.location.search);
   if (!params.has('add')) return;
-  const url = safeURL(params.get('add'));
   // Consume the request so refreshing the tab does not reopen the dialog.
   document.defaultView.history.replaceState(null, '', document.location.pathname);
+  const url = safeURL(params.get('add'));
   if (!url) { toast('This page URL cannot be bookmarked.'); return; }
   openEditor();
   $('edit-name').value = params.get('title') || url;
   $('edit-url').value = url;
-  const key = params.get('capture');
-  if (key?.startsWith('capture-')) {
-    try {
-      const capture = (await browser.storage.session.get(key))[key];
-      await browser.storage.session.remove(key);
-      if ($('editor').open && capture?.url === url && Date.now() - capture.createdAt < 60000) {
-        if (validPreview(capture.preview)) { pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview(); }
-        // Don't overwrite anything typed while the capture was loading.
-        const abstract = cleanAbstract(capture.abstract);
-        if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;
-      }
-    } catch { /* Captures are optional; the bookmark can still be saved. */ }
+  // Captures are optional; the bookmark can still be saved without one.
+  const capture = await readCapture(params.get('capture'));
+  if ($('editor').open && capture?.url === url) {
+    if (validPreview(capture.preview)) { pendingPreview = capture.preview; pendingPreviewURL = url; showEditorPreview(); }
+    // Don't overwrite anything typed while the capture was loading.
+    const abstract = cleanAbstract(capture.abstract);
+    if (abstract && !$('edit-abstract').value) $('edit-abstract').value = abstract;
+    pendingHighlight = cleanHighlightText(capture.highlight);
+    if (pendingHighlight) {
+      $('edit-highlight').textContent = pendingHighlight;
+      $('highlight-field').hidden = false;
+    }
   }
   await suggestEditorTags(true);
 }).catch(fail);

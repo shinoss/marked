@@ -1,6 +1,7 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
 import './browser-api.js';
-import { cleanAbstract } from './bookmarks.js';
+import { cleanAbstract, cleanHighlightText } from './bookmarks.js';
+import { STORAGE_KEY, createLibraryStore } from './store.js';
 import { readPageAbstract } from './page-abstract.js';
 
 const ADD_MENU = 'add-to-marked';
@@ -64,19 +65,18 @@ async function captureAbstract(tab, url) {
   } finally { clearTimeout(timer); }
 }
 
-// Opens the manager's editor for url, handing it optional captured details.
-async function openEditor(url, title, capture) {
+// Opens the manager with query params, handing it optional captured details.
+async function openManager(params, capture) {
   // Worker timers may be suspended in Chrome. Also prune abandoned captures
   // on each action; expired captures are rejected by the editor in either case.
   const session = await browser.storage.session.get(null);
   const expired = Object.keys(session).filter(key => key.startsWith('capture-') && Date.now() - session[key].createdAt >= 60000);
   if (expired.length) await browser.storage.session.remove(expired);
-  const params = new URLSearchParams({ add: url, title });
   let key;
   if (capture) {
     try {
       key = `capture-${crypto.randomUUID()}`;
-      await browser.storage.session.set({ [key]: { url, ...capture, createdAt: Date.now() } });
+      await browser.storage.session.set({ [key]: { ...capture, createdAt: Date.now() } });
       params.set('capture', key);
       // Expire captures if the editor is never opened. Session storage also
       // disappears on browser restart and is not exposed to content scripts.
@@ -89,6 +89,11 @@ async function openEditor(url, title, capture) {
     if (key) await browser.storage.session.remove(key);
     throw error;
   }
+}
+
+// Opens the manager's editor for url, handing it optional captured details.
+function openEditor(url, title, capture) {
+  return openManager(new URLSearchParams({ add: url, title }), capture && { url, ...capture });
 }
 
 async function addPage(info, tab) {
@@ -147,6 +152,58 @@ function showNotice(text) {
   document.documentElement.append(host);
   setTimeout(() => host.remove(), 3000);
 }
+
+// The same page with or without a #fragment.
+function pageKey(url) {
+  try { const page = new URL(url); page.hash = ''; return page.href; } catch { return url; }
+}
+// The newest bookmark of url in the library, or null.
+async function findBookmark(url) {
+  const library = (await browser.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
+  const key = pageKey(url);
+  let found = null;
+  (function walk(node) {
+    if (node.url && pageKey(node.url) === key && (!found || (node.dateAdded || 0) > (found.dateAdded || 0))) found = node;
+    node.children?.forEach(walk);
+  })(library?.root ?? {});
+  return found;
+}
+
+// highlighter.js asks about a passage the user chose to highlight. A saved page
+// answers with its title, and the page shows its own panel for the note; a new
+// page opens the editor, prefilled as Add to Marked, with the passage.
+async function highlightPage(tab, message) {
+  const text = cleanHighlightText(message.text);
+  if (!text || !tab?.url) return null;
+  const bookmark = await findBookmark(tab.url);
+  if (bookmark) return { saved: bookmark.title || bookmark.url };
+  const [preview, abstract] = await Promise.all([
+    capturePreview(tab).catch(() => null),
+    captureAbstract(tab, tab.url).catch(() => '')
+  ]);
+  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }) });
+  return { opened: true };
+}
+// The page's panel saves a highlight. The bookmark is looked up again from the
+// tab's own URL rather than taken from the page.
+async function saveHighlight(tab, message) {
+  const bookmark = tab?.url && await findBookmark(tab.url);
+  if (!bookmark) throw new Error('This page is no longer in Marked.');
+  await createLibraryStore(browser).addHighlight(bookmark.id, { text: message.text, note: message.note });
+  return { ok: true };
+}
+// Chrome 123 does not accept promises from listeners, so reply through sendResponse.
+browser.runtime.onMessage.addListener((message, sender, reply) => {
+  if (!sender.tab) return;
+  if (message?.type === 'marked:highlight') {
+    highlightPage(sender.tab, message).then(reply, error => { console.error('Could not open the highlight', error); reply(null); });
+    return true;
+  }
+  if (message?.type === 'marked:save-highlight') {
+    saveHighlight(sender.tab, message).then(reply, error => reply({ error: error.message }));
+    return true;
+  }
+});
 
 browser.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === ADD_MENU) return addPage(info, tab).catch(error => console.error('Could not open Add to Marked', error));

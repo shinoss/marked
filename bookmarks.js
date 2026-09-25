@@ -18,6 +18,27 @@ export function cleanNote(value) {
   return typeof value === 'string' ? value.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, NOTE_LIMIT) : '';
 }
 
+// Passages the user highlighted on a page, each with an optional note.
+export const HIGHLIGHT_LIMIT = 2000;
+export const HIGHLIGHTS_PER_BOOKMARK = 100;
+export function cleanHighlightText(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, HIGHLIGHT_LIMIT) : '';
+}
+export function cleanHighlight(value) {
+  const text = cleanHighlightText(value?.text);
+  if (!text) return null;
+  const note = cleanNote(value.note);
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id.slice(0, 100) : crypto.randomUUID(),
+    text,
+    ...(note && { note }),
+    createdAt: Number.isFinite(value.createdAt) && value.createdAt > 0 ? value.createdAt : Date.now()
+  };
+}
+export function cleanHighlights(values) {
+  return (Array.isArray(values) ? values : []).map(cleanHighlight).filter(Boolean).slice(0, HIGHLIGHTS_PER_BOOKMARK);
+}
+
 // Topic tags. Bookmark files separate tags with commas, so names can't contain them.
 export const TAG_LENGTH = 40;
 export const TAGS_PER_BOOKMARK = 12;

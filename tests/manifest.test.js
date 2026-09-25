@@ -28,18 +28,26 @@ test('extension and toolbar icons are PNG files, which Chrome requires', async (
   }
 });
 
-test('page capture needs only activeTab and scripting, not access to every site', () => {
+// The highlighter saves pages from a click in the page, not in Marked's own UI, so
+// activeTab does not apply; capturing a preview then needs <all_urls>.
+test('page capture uses scripting with activeTab or, for the highlighter, <all_urls>', () => {
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('scripting'));
-  assert.equal(manifest.host_permissions, undefined);
+  assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
 });
 
 test('the tweet content script runs only in the top frame of x.com and twitter.com', async () => {
-  assert.equal(manifest.content_scripts.length, 1);
-  const [script] = manifest.content_scripts;
+  const script = manifest.content_scripts.find(entry => entry.js.includes('tweet-capture.js'));
   assert.deepEqual(script.matches, ['https://x.com/*', 'https://twitter.com/*']);
   assert.deepEqual(script.js, ['tweet-capture.js']);
   assert.equal(script.run_at, 'document_idle');
   assert.equal(script.all_frames, false);
   await exists(script.js[0]);
+});
+
+test('the highlighter runs in the top frame of every web page', async () => {
+  const script = manifest.content_scripts.find(entry => entry.js.includes('highlighter.js'));
+  assert.deepEqual(script.matches, ['http://*/*', 'https://*/*']);
+  assert.equal(script.all_frames, false);
+  await exists('highlighter.js');
 });

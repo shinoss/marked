@@ -73,3 +73,17 @@ test('gives chat the tags and note of each bookmark, and an overview of tags', (
   assert.equal(rows[0].note, 'Gift idea for Sam');
   assert.ok(system.includes('Tag overview: Fiction: 2; History: 1.'));
 });
+
+test('gives chat up to three clipped highlights per bookmark and ranks by them', () => {
+  const library = { children: [
+    { id: 'plain', title: 'Plain', url: 'https://plain.test/', dateAdded: 300 },
+    { id: 'quoted', title: 'Essay', url: 'https://essay.test/', dateAdded: 100, highlights: ['Attention is a scarce resource. ' + 'x'.repeat(300), 'Two', 'Three', 'Four'].map(text => ({ id: text, text, createdAt: 1 })) }
+  ] };
+  const context = buildChatContext(library, 'What did I highlight about attention?');
+  assert.equal(context.sources[0].id, 'quoted');
+  const system = context.messages[0].content;
+  const rows = JSON.parse(system.slice(system.lastIndexOf('\n') + 1));
+  assert.equal(rows[0].highlights.length, 3);
+  assert.ok(rows[0].highlights[0].startsWith('Attention is a scarce resource.'));
+  assert.ok(new TextEncoder().encode(rows[0].highlights[0]).length <= 160);
+});

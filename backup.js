@@ -1,4 +1,4 @@
-import { safeURL, cleanAbstract, cleanNote, cleanTags } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights } from './bookmarks.js';
 
 export function exportBackup(root) {
   return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] });
@@ -21,6 +21,8 @@ export function parseBackup(data) {
       if (note) result.note = note;
       const tags = cleanTags(node.tags);
       if (tags.length) result.tags = tags;
+      const highlights = cleanHighlights(node.highlights);
+      if (highlights.length) result.highlights = highlights;
     } else if (Array.isArray(node.children)) {
       result.children = node.children.map(child => convert(child, depth + 1)).filter(Boolean);
     } else throw new Error('A backup item is missing its URL or folder contents.');

@@ -9,7 +9,7 @@ import { fixture } from './storage-fixture.js';
 const preview = 'data:image/jpeg;base64,/9j/AAAA';
 const library = () => ({ id: 'root', children: [
   { id: 'f', parentId: 'root', title: 'Reading', dateAdded: 1000, children: [
-    { id: 'a', parentId: 'f', title: 'Article', url: 'https://example.com/a', dateAdded: 2000, preview, abstract: 'What the article is about.', note: 'Cite this.', tags: ['History'] },
+    { id: 'a', parentId: 'f', title: 'Article', url: 'https://example.com/a', dateAdded: 2000, preview, abstract: 'What the article is about.', note: 'Cite this.', tags: ['History'], highlights: [{ id: 'h1', text: 'Key line', note: 'Why', createdAt: 5 }] },
     { id: 's', parentId: 'f', type: 'separator', dateAdded: 3000 },
     { id: 'x', parentId: 'f', title: 'Unsafe', url: 'javascript:alert(1)', dateAdded: 4000 }
   ] }
@@ -21,7 +21,7 @@ test('backup round-trips hierarchy, dates, previews, and abstracts but drops uns
   const { nodes, skipped } = parseBackup(data);
   assert.equal(skipped, 1);
   assert.deepEqual(nodes, [{ title: 'Reading', dateAdded: 1000, children: [
-    { title: 'Article', dateAdded: 2000, url: 'https://example.com/a', preview, abstract: 'What the article is about.', note: 'Cite this.', tags: ['History'] },
+    { title: 'Article', dateAdded: 2000, url: 'https://example.com/a', preview, abstract: 'What the article is about.', note: 'Cite this.', tags: ['History'], highlights: [{ id: 'h1', text: 'Key line', note: 'Why', createdAt: 5 }] },
     { title: 'Untitled', dateAdded: 3000, type: 'separator' }
   ] }]);
 });

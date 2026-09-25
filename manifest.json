@@ -4,6 +4,7 @@
   "version": "1.2.0",
   "description": "An independent, local bookmark library. Start with a one-time browser bookmark snapshot, then organize separately.",
   "permissions": ["bookmarks", "storage", "unlimitedStorage", "contextMenus", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["https://huggingface.co/*", "https://*.huggingface.co/*", "https://*.hf.co/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co; img-src 'self' data:; worker-src 'self'"
@@ -11,7 +12,10 @@
   "action": { "default_title": "Open Marked", "default_icon": { "16": "icons/marked-16.png", "32": "icons/marked-32.png" } },
   "icons": { "16": "icons/marked-16.png", "32": "icons/marked-32.png", "48": "icons/marked-48.png", "128": "icons/marked-128.png" },
   "background": { "service_worker": "background.js", "scripts": ["background.js"], "type": "module" },
-  "content_scripts": [{ "matches": ["https://x.com/*", "https://twitter.com/*"], "js": ["tweet-capture.js"], "run_at": "document_idle", "all_frames": false }],
+  "content_scripts": [
+    { "matches": ["https://x.com/*", "https://twitter.com/*"], "js": ["tweet-capture.js"], "run_at": "document_idle", "all_frames": false },
+    { "matches": ["http://*/*", "https://*/*"], "js": ["highlighter.js"], "run_at": "document_idle", "all_frames": false }
+  ],
   "minimum_chrome_version": "123",
   "browser_specific_settings": {
     "gecko": {

@@ -1,0 +1,80 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
+
+const source = await readFile(new URL('../highlighter.js', import.meta.url), 'utf8');
+const tick = window => new Promise(resolve => window.setTimeout(resolve, 5));
+
+// Runs the content script as browsers do: a classic script in the page's window.
+// replies maps each message type to the background's answer.
+function load(body, replies = {}) {
+  const { window } = new JSDOM(`<!DOCTYPE html><body>${body}</body>`, { url: 'https://example.com/article', runScripts: 'outside-only' });
+  const page = { window, sent: [] };
+  window.chrome = { runtime: { sendMessage: async message => { page.sent.push({ ...message }); return replies[message.type]; } } };
+  const attachShadow = window.Element.prototype.attachShadow;
+  window.Element.prototype.attachShadow = function (init) { return page.shadow = attachShadow.call(this, init); };
+  window.eval(source);
+  page.select = (selector, collapse = false) => {
+    const range = window.document.createRange();
+    range.selectNodeContents(window.document.querySelector(selector));
+    if (collapse) range.collapse();
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+  };
+  page.mouseup = async target => {
+    (target ? window.document.querySelector(target) : window.document.body).dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, composed: true }));
+    await tick(window);
+  };
+  page.box = () => window.document.querySelector('marked-highlighter') ? page.shadow.firstElementChild : null;
+  page.buttons = () => [...page.box().querySelectorAll('button')].map(button => button.textContent);
+  page.click = async label => { [...page.box().querySelectorAll('button')].find(button => button.textContent === label).click(); await tick(window); };
+  return page;
+}
+
+test('on a saved page, Highlight opens a panel on the page that saves the passage and a note', async () => {
+  const page = load('<p id="text">A passage worth keeping.</p>', { 'marked:highlight': { saved: 'The essay' }, 'marked:save-highlight': { ok: true } });
+  assert.equal(page.box(), null, 'nothing shows before a selection');
+  page.select('#text'); await page.mouseup('#text');
+  assert.deepEqual(page.buttons(), ['Highlight'], 'one option, not separate highlight and note');
+  await page.click('Highlight');
+  assert.deepEqual(page.sent, [{ type: 'marked:highlight', text: 'A passage worth keeping.' }]);
+  assert.match(page.box().textContent, /On “The essay”/);
+  assert.match(page.box().textContent, /A passage worth keeping\./);
+  assert.deepEqual(page.buttons(), ['Cancel', 'Save highlight']);
+  const note = page.box().querySelector('textarea');
+  assert.equal(page.shadow.activeElement, note, 'the note is ready to type');
+  // The panel stays open while its own clicks and keys happen.
+  await page.mouseup('#text');
+  assert.ok(page.box().querySelector('textarea'));
+  note.value = 'Quote this.';
+  await page.click('Save highlight');
+  assert.deepEqual(page.sent.at(-1), { type: 'marked:save-highlight', text: 'A passage worth keeping.', note: 'Quote this.' });
+  assert.equal(page.box().textContent, 'Highlight saved to Marked.');
+});
+
+test('on a new page, Highlight hands off to Marked and closes; failures are shown in the panel', async () => {
+  const page = load('<p id="text">Words</p>', { 'marked:highlight': { opened: true } });
+  page.select('#text'); await page.mouseup('#text');
+  await page.click('Highlight');
+  assert.equal(page.box(), null, "Marked's editor opened instead");
+  const failing = load('<p id="text">Words</p>', { 'marked:highlight': { saved: 'Page' }, 'marked:save-highlight': { error: 'This page is no longer in Marked.' } });
+  failing.select('#text'); await failing.mouseup('#text');
+  await failing.click('Highlight');
+  await failing.click('Save highlight');
+  assert.match(failing.box().textContent, /This page is no longer in Marked\./);
+  await failing.click('Cancel');
+  assert.equal(failing.box(), null);
+});
+
+test('ignores empty selections and text in form fields or editable areas, and hides on a click elsewhere', async () => {
+  const page = load('<p id="text">Words</p><div contenteditable id="editor">Draft text</div><p id="blank">   </p>');
+  for (const selector of ['#editor', '#blank']) {
+    page.select(selector); await page.mouseup(selector);
+    assert.equal(page.box(), null, selector);
+  }
+  page.select('#text'); await page.mouseup('#text');
+  assert.ok(page.box());
+  page.select('#text', true); await page.mouseup('#text');
+  assert.equal(page.box(), null, 'a collapsed selection hides the button');
+  assert.deepEqual(page.sent, []);
+});

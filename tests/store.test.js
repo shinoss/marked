@@ -140,6 +140,24 @@ test('keeps a tag list, saves tags and notes on bookmarks, and removes tags ever
   assert.ok((await store.getTags()).includes('Poetry'));
 });
 
+test('adds and removes highlights on bookmarks only, keeping them cleaned', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const created = await store.create({ parentId: 'home', title: 'Essay', url: 'https://essay.test/', highlights: [{ text: '  First   passage ', note: ' Why ' }, { text: '   ' }] });
+  assert.equal(created.highlights.length, 1);
+  assert.equal(created.highlights[0].text, 'First passage');
+  assert.equal(created.highlights[0].note, 'Why');
+  const added = await store.addHighlight(created.id, { text: 'Second passage' });
+  assert.equal(added.note, undefined);
+  assert.ok(added.id && added.createdAt);
+  await assert.rejects(store.addHighlight(created.id, { text: '  ' }), /Select some text/);
+  await assert.rejects(store.addHighlight('folder', { text: 'On a folder' }), /Only bookmarks/);
+  await store.removeHighlight(created.id, created.highlights[0].id);
+  const saved = (await store.getTree())[0].children[0].children.find(node => node.id === created.id);
+  assert.deepEqual(saved.highlights.map(h => h.text), ['Second passage']);
+  await store.removeHighlight(created.id, added.id);
+  assert.equal('highlights' in (await store.getTree())[0].children[0].children.find(node => node.id === created.id), false);
+});
+
 test('imports an entire hierarchy atomically into local storage', async () => {
   const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
   const nodes = [{ title: 'Nested', children: [{ title: 'Site', url: 'https://example.org/' }] }];

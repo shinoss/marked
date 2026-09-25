@@ -59,7 +59,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [] }] });
-  const session = { 'capture-1': { url: pageURL, abstract: 'Agents that learn by imagining outcomes.', createdAt: Date.now() } };
+  const session = { 'capture-1': { url: pageURL, abstract: 'Agents that learn by imagining outcomes.', highlight: '  A key   passage. ', createdAt: Date.now() } };
   mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
@@ -80,6 +80,9 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   $('new-tag').dispatchEvent(enter);
   assert.equal(enter.defaultPrevented, true, 'Enter adds the tag instead of submitting');
   assert.deepEqual(pressed(), ['Technology', 'AI', 'Robotics']);
+  assert.equal($('highlight-field').hidden, false, 'a highlight from the page is shown in the editor');
+  assert.equal($('edit-highlight').textContent, 'A key passage.');
+  $('edit-highlight-note').value = 'Why it matters';
   $('edit-note').value = '  Read before the meetup ';
   $('edit-abstract').value += ' Edited.';
   submit(); await settle();
@@ -87,6 +90,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.equal(saved.abstract, 'Agents that learn by imagining outcomes. Edited.');
   assert.equal(saved.note, 'Read before the meetup');
   assert.deepEqual(saved.tags, ['AI', 'Technology', 'Robotics']);
+  assert.deepEqual(saved.highlights.map(({ text, note }) => ({ text, note })), [{ text: 'A key passage.', note: 'Why it matters' }]);
   const row = $('items').querySelector('tr');
   assert.deepEqual([...row.querySelectorAll('.tag')].map(tag => tag.textContent), ['AI', 'Technology', 'Robotics']);
   assert.equal(row.querySelector('.item-note').textContent, 'Read before the meetup');
@@ -125,5 +129,39 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   assert.equal(frames[0].src, 'https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true');
   $('list-view').click();
   await new Promise(resolve => setTimeout(resolve, 6100));
+  dom.window.close();
+});
+
+test('a highlights label opens the list of highlights, where each can be deleted', async () => {
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const highlights = [{ id: 'h1', text: 'First passage', note: 'Why', createdAt: Date.now() }, { id: 'h2', text: 'Second passage', createdAt: Date.now() }];
+  const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [
+    { id: 'a', parentId: 'unfiled_____', title: 'Essay', url: 'https://example.com/', type: 'bookmark', highlights }
+  ] }] });
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js?highlights');
+  const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  await settle();
+  const chip = () => document.querySelector('#items .highlight-chip');
+  assert.equal(chip().textContent, '2 highlights');
+  chip().click();
+  assert.ok($('highlights-dialog').open);
+  assert.deepEqual([...$('highlights-list').querySelectorAll('.quote')].map(quote => quote.textContent), ['First passage', 'Second passage']);
+  assert.equal($('highlights-list').querySelector('.highlight-note').textContent, 'Why');
+  $('highlights-list').querySelector('.item-action').click(); await settle();
+  assert.equal(chip().textContent, '1 highlight');
+  assert.deepEqual([...$('highlights-list').querySelectorAll('.quote')].map(quote => quote.textContent), ['Second passage']);
+  $('highlights-list').querySelector('.item-action').click(); await settle();
+  assert.equal(chip(), null);
+  assert.ok(!$('highlights-dialog').open, 'the list closes when its last highlight is deleted');
+  $('search').value = 'second'; $('search').dispatchEvent(new dom.window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal($('items').children.length, 0, 'deleted highlights are no longer searchable');
   dom.window.close();
 });
