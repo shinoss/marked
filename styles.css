@@ -28,7 +28,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 select { cursor: pointer; max-width: 100%; }
 
 /* Rows keep 10px of inner padding for hover backgrounds; the negative margin
-   lines their text up with the logo above. */
+   lines their text up with the logo above. The whole sidebar scrolls, with room
+   for its scrollbar kept, so opening a folder never shifts the rows. */
 .sidebar {
   position: sticky;
   top: 0;
@@ -38,6 +39,9 @@ select { cursor: pointer; max-width: 100%; }
   flex-direction: column;
   margin-left: -10px;
   padding: 24px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .brand { flex: 0 0 var(--side); display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; text-decoration: none; }
 .brand:hover { text-decoration: none; }
@@ -49,7 +53,6 @@ select { cursor: pointer; max-width: 100%; }
 .section-label { display: flex; justify-content: space-between; align-items: center; margin: 30px 10px 12px; color: var(--muted); }
 .section-label button { padding: 4px 6px; transition: background-color 150ms ease; }
 .section-label button:hover { background-color: #f0f0f0; }
-#folder-tree { overflow: auto; flex: 1; min-height: 0; }
 .folder-row { display: flex; align-items: center; margin: 2px 0; transition: background-color 150ms ease; }
 .folder-row:hover, .folder-row:focus-within { background-color: #f0f0f0; }
 .folder-edit, .folder-delete { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 6px; opacity: 0; transition: opacity 150ms ease, background-color 150ms ease; }
@@ -68,7 +71,6 @@ select { cursor: pointer; max-width: 100%; }
 .folder-row:not(:has(.folder-edit)) .folder-link { margin-right: 56px; }
 /* Tag rows have no disclosure or edit button; keep their counts in the same column. */
 .folder-row.tag-row .folder-link { padding-left: 10px; margin-right: 28px; }
-#tag-list { overflow: auto; min-height: 0; }
 
 main { min-width: 0; }
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--gutter); padding: 18px 0; border-bottom: 1px solid var(--line); }
@@ -242,6 +244,8 @@ dialog textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; fo
 dialog p { overflow-wrap: anywhere; }
 .tags-field { margin: 24px 0; }
 .settings-heading { font: inherit; font-weight: 600; margin: 0 0 8px; }
+.settings-heading ~ .settings-heading { margin-top: 32px; }
+#browser-import-open { margin-top: 8px; }
 dialog label.check-field { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
 dialog label.check-field input { width: 12px; margin: 0; }
 .usage { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; padding: 10px 12px; border: 1px solid var(--line); }

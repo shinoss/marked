@@ -90,13 +90,13 @@ Open **Chat** and ask questions like *"What unexpected connections do you see?"*
 
 ### Search by meaning with Jev
 
-Turn on **Semantic** in the search box and describe what you're looking for, such as *"that essay about protecting focus"*. Marked asks TypeSafe's [Jev](https://typesafe.ai) model which bookmarks match, even when they share no words with your query, and puts them first, followed by ordinary keyword matches. It follows TypeSafe's [line-by-line search recipe](https://docs.typesafe.ai/cookbooks/semantic_find.md): each bookmark is one short line, a single request ranks up to 250 of them, and larger libraries are ranked in parallel windows and then merged. Bring your own API key: add it in **Settings**, and Marked checks it with a tiny request before saving it.
+Describe what you're looking for in the search box, such as *"that essay about protecting focus"*, and choose **Semantic**. Typing alone only matches keywords; each click asks TypeSafe's [Jev](https://typesafe.ai) model which bookmarks match, even when they share no words with your query, and puts them first, followed by ordinary keyword matches. It follows TypeSafe's [line-by-line search recipe](https://docs.typesafe.ai/cookbooks/semantic_find.md): each bookmark is one short line, a single request ranks up to 250 of them, and larger libraries are ranked in parallel windows and then merged. Bring your own API key: add it in **Settings**, and Marked checks it with a tiny request before saving it.
 
 Every request's cost is added to a running total, shown after each search (*"This search $0.000076 · $0.0042 in total"*) and in **Settings**, where you can reset it. The estimate uses the token counts TypeSafe reports, at $0.042 per million input tokens; output is free. A typical search of a few hundred bookmarks costs well under a tenth of a cent, and repeating a search costs nothing until your library changes.
 
 ### Yours to keep
 
-- **Independent from your browser's bookmarks.** Marked copies them once, on first run, and never changes them.
+- **Independent from your browser's bookmarks.** The first time you open Marked, it offers to import them, folders and all, and it never changes them.
 - **Backup and move between browsers.** A backup keeps everything: folders, dates, previews, abstracts, notes, tags, and highlights. Import it into Marked in another browser, for example from Firefox to Chrome.
 - **Standard HTML export** for any other bookmark manager, with abstracts as descriptions and tags in Firefox's `TAGS` attribute.
 
@@ -115,7 +115,7 @@ Then load the extension:
 - **Chrome:** open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select the repository folder.
 - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…**, and select `manifest.json`.
 
-Open **Marked** from the browser's extensions menu. On first run it copies your existing bookmarks into its own library.
+Open **Marked** from the browser's extensions menu. The first time, it offers to import your browser's bookmarks, keeping their folders; **Settings** can import them later too.
 
 > [!NOTE]
 > Chrome lists `'background.scripts' requires manifest version of 2 or lower` under **Errors**. This is expected: the manifest declares a service worker for Chrome and background scripts for Firefox, and each browser ignores the other's entry. Firefox removes temporary add-ons when it restarts; permanent installation requires Mozilla signing. Chrome keeps unpacked extensions across restarts.
@@ -130,7 +130,7 @@ Open **Marked** from the browser's extensions menu. On first run it copies your 
 | Read a note or highlights | Click the yellow **Note** or **N highlights** label on a bookmark. |
 | Tag bookmarks | Use the tag chips in the editor, or **Suggest**. Add new tags with **+** next to **Tags** in the sidebar. |
 | Find anything | Type in the search box, or press <kbd>/</kbd>. |
-| Search by meaning | Add your TypeSafe API key in **Settings**, turn on **Semantic** in the search box, and describe what you want. |
+| Search by meaning | Add your TypeSafe API key in **Settings**, describe what you want in the search box, and choose **Semantic**. |
 | Ask a question | Open **Chat**. The first time, choose **Download / load model**. Press <kbd>Enter</kbd> to send, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. |
 | Move to another browser | **Backup** in one browser, **Import** the `marked-backup-….json` file in the other. |
 
@@ -161,11 +161,11 @@ Your bookmarks, notes, tags, abstracts, highlights, and chats stay in your brows
 | Google Fonts | Each time a Marked page opens (for the Inter font) | That Marked is in use. Without a connection, Marked uses Helvetica Neue. |
 | Hugging Face | Only when you download the chat model | Your connection details |
 | X (`platform.twitter.com`) | Only while the gallery shows a post from X | Which post is displayed. The list view never contacts X. |
-| TypeSafe (`api.typesafe.ai`) | Only for searches with **Semantic** on, using your API key | Your query and one line per bookmark: title, domain, folder, tags, abstract, and, if you allow them in **Settings**, notes and highlights. Full addresses are never sent. TypeSafe says it doesn't train on customer data. |
+| TypeSafe (`api.typesafe.ai`) | Only when you choose **Semantic**, using your API key | Your query and one line per bookmark: its title and abstract, plus notes and highlights if you allow them in **Settings**. Addresses, folders, and tags are never sent. TypeSafe says it doesn't train on customer data. |
 
 | Permission | Why Marked needs it |
 | --- | --- |
-| `bookmarks` | Copy your browser's bookmarks once, on first run |
+| `bookmarks` | Import your browser's bookmarks when you choose to |
 | `storage`, `unlimitedStorage` | Keep the library, previews, and the chat model on your device |
 | `contextMenus` | **Add to Marked** and **Save tweet to Marked** |
 | `activeTab`, `scripting` | Read the abstract of the page you're saving, when you save it |

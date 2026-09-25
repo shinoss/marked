@@ -1,8 +1,8 @@
-import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
+import { cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlight, cleanHighlights, planBrowserImport, HIGHLIGHTS_PER_BOOKMARK } from './bookmarks.js';
 
-// The bookmarks permission is used only to seed the library on first upgrade.
-// All subsequent reads and writes use extension-local storage, never the
-// browser's own bookmarks.
+// The bookmarks permission is used only to read the browser's bookmarks when the
+// user imports them. The library lives in extension-local storage and never
+// changes the browser's own bookmarks.
 export const STORAGE_KEY = 'markedLibraryV1';
 const LOCK = 'marked-library-write';
 // The tag list lives beside the tree; libraries saved before tags start with these.
@@ -26,10 +26,10 @@ export function createLibraryStore(api, locks = navigator.locks) {
     return locks.request(LOCK, async () => {
       const saved = await read();
       if (saved) return saved;
-      // Persist successfully before showing the snapshot. A failed snapshot/save
-      // never falls back to editing browser bookmarks or replaces an existing library.
-      const [root] = await api.bookmarks.getTree();
-      const library = { version: 1, capturedAt: Date.now(), root };
+      // A new library starts empty. Marked asks before importing the browser's
+      // bookmarks (importBrowser) instead of copying them unasked.
+      const now = Date.now();
+      const library = { version: 1, createdAt: now, root: { id: 'root', title: '', type: 'folder', dateAdded: now, children: [] } };
       await api.storage.local.set({ [STORAGE_KEY]: library });
       return library;
     });
@@ -65,8 +65,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
       return result;
     });
   }
-  function add(root, details) {
-    const parent = destination(root, details.parentId);
+  function add(root, details, parent = destination(root, details.parentId)) {
     const type = details.type || (details.url ? 'bookmark' : 'folder');
     // Restored backups keep their original dates; everything else is new.
     const dateAdded = Number.isFinite(details.dateAdded) && details.dateAdded > 0 ? details.dateAdded : Date.now();
@@ -222,6 +221,25 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
         append(nodes, container.id);
         return container;
+      });
+    },
+    // Copies the browser's bookmarks that the library doesn't have yet, keeping
+    // their folders: each goes into the folder with the same id or name, or a
+    // new one. Returns how many bookmarks were added.
+    async importBrowser() {
+      const [browserRoot] = await api.bookmarks.getTree();
+      return mutate(root => {
+        const { nodes, count } = planBrowserImport(browserRoot, root);
+        (function merge(list, parent) {
+          for (const node of list) {
+            if (node.url) { add(root, node, parent); continue; }
+            const name = node.title.toLowerCase();
+            const folder = parent.children.find(child => Array.isArray(child.children) && !child.url && (child.id === node.id || (child.title || '').toLowerCase() === name))
+              || add(root, { title: node.title, type: 'folder', dateAdded: node.dateAdded }, parent);
+            merge(node.children, folder);
+          }
+        })(nodes, root);
+        return count;
       });
     }
   };

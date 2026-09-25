@@ -2,16 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bookmarkLine, semanticSearch, semanticMatches, WINDOW } from '../semantic-search.js';
 
-test('each bookmark becomes one line with its domain, never its full address', () => {
+test('each bookmark becomes one short line: no address, folder, tags, or labels', () => {
   const node = {
     title: 'On | attention', url: 'https://www.example.com/private/path?token=abc', tags: ['Essays'],
     note: 'Reread\nbefore the review', abstract: 'A short essay.', highlights: [{ text: 'Mark the exact sentence.' }]
   };
-  const line = bookmarkLine(node, 'Reading');
-  assert.equal(line, 'On attention — example.com — folder: Reading — tags: Essays — note: Reread before the review — highlights: “Mark the exact sentence.” — A short essay.');
-  assert.ok(!line.includes('token') && !line.includes('/private'));
-  assert.equal(bookmarkLine(node, '', { notes: false, highlights: false }), 'On attention — example.com — tags: Essays — A short essay.');
-  assert.ok(bookmarkLine({ title: 'x'.repeat(500), url: 'https://a.test/' }).length < 200);
+  const line = bookmarkLine(node);
+  assert.equal(line, 'On attention; Reread before the review; Mark the exact sentence.; A short essay.');
+  assert.ok(!/example|token|private|Essays/.test(line));
+  assert.equal(bookmarkLine(node, { notes: false, highlights: false }), 'On attention; A short essay.');
+  assert.equal(bookmarkLine({ title: 'https://a.test/page', url: 'https://a.test/page' }), '', 'a title that is only the address is left out');
+  assert.ok(bookmarkLine({ title: 'x'.repeat(500), url: 'https://a.test/' }).length <= 160);
 });
 
 // A stand-in for Jev that favours lines containing a word, and records requests.

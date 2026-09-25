@@ -116,6 +116,34 @@ export function parseJSON(input) {
   return { nodes, skipped };
 }
 
+// The browser's own bookmarks (bookmarks.getTree()) that the library doesn't
+// have yet, compared by address and kept in their folders. Separators, folders
+// left empty, and addresses Marked can't open (place:, javascript:) are left out.
+// already counts the bookmarks the library has.
+export function planBrowserImport(browserRoot, libraryRoot) {
+  const saved = new Set();
+  (function collect(node) {
+    if (node.url) saved.add(safeURL(node.url) || node.url);
+    node.children?.forEach(collect);
+  })(libraryRoot);
+  let count = 0, already = 0;
+  function keep(node, depth) {
+    if (depth > 100) return null;
+    if (node.url) {
+      const url = safeURL(node.url);
+      if (!url) return null;
+      if (saved.has(url)) { already++; return null; }
+      count++;
+      return { title: node.title || url, url, dateAdded: node.dateAdded };
+    }
+    if (!Array.isArray(node.children)) return null;
+    const children = node.children.map(child => keep(child, depth + 1)).filter(Boolean);
+    return children.length ? { id: node.id, title: node.title || 'Untitled folder', dateAdded: node.dateAdded, children } : null;
+  }
+  const nodes = (browserRoot?.children || []).map(child => keep(child, 1)).filter(Boolean);
+  return { nodes, count, already };
+}
+
 export function parseHTML(text, Parser = DOMParser) {
   const doc = new Parser().parseFromString(text, 'text/html');
   const root = doc.querySelector('dl');

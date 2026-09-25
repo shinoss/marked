@@ -44,7 +44,7 @@ test('manager renders, searches, creates, and moves bookmarks through the API', 
   assert.equal(saved.children[1].children.find(n => n.id === 'folder').children.length, 2);
   assert.equal(root.children[1].children.length, 2, 'Firefox collection is unchanged');
   assert.equal(root.children[1].children[1].children.length, 0);
-  assert.equal(mock.reads(), 1);
+  assert.equal(mock.reads(), 1, 'the browser’s bookmarks are read once, to look for ones to import');
   // The status toast expires after six seconds; leave the document alive
   // until the module's pending timer has completed.
   await new Promise(resolve => setTimeout(resolve, 6100));
@@ -168,7 +168,7 @@ test('a highlights label opens the list of highlights, where each can be deleted
   dom.window.close();
 });
 
-test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep a running cost, and preview without a key', async t => {
+test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse repeats, keep a running cost, and preview without a key', async t => {
   const log = t.mock.method(console, 'log', () => {}); // Jev requests are logged; keep the output quiet.
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
@@ -198,7 +198,9 @@ test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep 
   };
   await import('../manager.js?semantic');
   const settle = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
-  const search = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await settle(550); };
+  const type = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await settle(550); };
+  const search = async query => { await type(query); $('semantic-toggle').click(); await settle(50); };
+  const pressed = () => $('semantic-toggle').getAttribute('aria-pressed');
   const titles = () => [...$('items').querySelectorAll('.item-title')].map(link => link.textContent);
   await settle();
 
@@ -212,19 +214,30 @@ test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep 
   assert.ok(!$('settings-dialog').open);
   assert.deepEqual(permissions, [{ origins: ['https://api.typesafe.ai/*'] }]);
   assert.equal(requests[0].auth, 'Bearer sk-test', 'the key is checked before it is saved');
-  assert.deepEqual((await browser.storage.local.get()).markedJev, { apiKey: 'sk-test', notes: true, highlights: true, preview: false, enabled: true });
-  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'true');
+  assert.deepEqual((await browser.storage.local.get()).markedJev, { apiKey: 'sk-test', notes: true, highlights: true, preview: false });
+  assert.equal(pressed(), 'false');
 
-  await search('protecting my focus');
-  assert.equal(requests.length, 2);
-  assert.ok(!requests[1].body.state.includes('secret'), 'full addresses are never sent');
+  await type('protecting my focus');
+  assert.equal(requests.length, 1, 'typing alone never asks Jev');
+  $('semantic-toggle').click(); await settle(50);
+  assert.equal(requests.length, 2, 'choosing Semantic asks once');
+  assert.equal(pressed(), 'true');
+  assert.equal(requests[1].body.state, 'B000| Weeknight pasta\nB001| On attention; Deciding what deserves your attention.', 'no address, folder, or tags');
   assert.deepEqual(titles(), ['On attention'], 'found by meaning with no keyword in common');
   assert.equal($('semantic-status').textContent, 'Ranked by meaning with Jev. This search $0.000084 · $0.000086 in total.', 'the key check counts toward the total');
 
-  $('search').value = ''; $('search').dispatchEvent(new dom.window.Event('input')); await settle(150);
+  await type('protecting my focus at work');
+  assert.equal(requests.length, 2, 'editing the query asks nothing');
+  assert.ok(pressed() === 'false' && $('semantic-status').hidden, 'and keyword matches return');
   await search('protecting my focus');
   assert.equal(requests.length, 2, 'a repeated search is answered from the cache');
   assert.match($('semantic-status').textContent, /Repeated search, no charge/);
+  $('semantic-toggle').click(); await settle(50);
+  assert.ok(pressed() === 'false' && $('semantic-status').hidden, 'choosing Semantic again goes back to keyword matches');
+  assert.deepEqual(titles(), []);
+  await search('ab');
+  assert.equal(requests.length, 2, 'too short to ask');
+  assert.equal($('toast').textContent, 'Type what you’re looking for, then choose Semantic.');
 
   status = 401;
   await search('pasta');
@@ -246,7 +259,6 @@ test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep 
   $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
   await settle(50);
   assert.ok(!$('settings-dialog').open);
-  assert.equal($('semantic-toggle').getAttribute('aria-pressed'), 'true');
   const sent = requests.length;
   log.mock.resetCalls();
   await search('attention');
@@ -254,10 +266,67 @@ test('semantic search: add a key, rank by meaning with Jev, reuse repeats, keep 
   const [label, { headers, body }] = log.mock.calls.at(-1).arguments;
   assert.equal(label, 'Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone');
   assert.equal(headers.Authorization, 'Bearer <your API key>');
-  assert.equal(body.state, 'B000| Weeknight pasta — food.test — folder: Other Bookmarks\nB001| On attention — example.com — folder: Other Bookmarks — Deciding what deserves your attention.');
+  assert.equal(body.state, 'B000| Weeknight pasta\nB001| On attention; Deciding what deserves your attention.');
   const tokens = estimateJevTokens(body);
   assert.equal($('semantic-status').textContent, `Preview only: nothing was sent to TypeSafe. This search would cost about ${formatCost(jevCost(tokens))} (≈${tokens} input tokens; output is free). The request is in the browser console. Showing keyword matches.`);
   assert.deepEqual(titles(), ['On attention'], 'keyword matches show');
   delete globalThis.fetch;
+  dom.window.close();
+});
+
+test('first run: asks once to import the browser’s bookmarks, keeping their folders; Settings imports later ones', async () => {
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  const firefox = { id: 'root________', children: [
+    { id: 'toolbar_____', parentId: 'root________', title: 'Bookmarks Toolbar', type: 'folder', children: [{ id: 't1', title: 'MDN', url: 'https://developer.mozilla.org/', type: 'bookmark', dateAdded: 1600000000000 }] },
+    { id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', type: 'folder', children: [
+      { id: 'f1', title: 'Recipes', type: 'folder', children: [{ id: 'r1', title: 'Pasta', url: 'https://food.test/pasta', type: 'bookmark' }] },
+      { id: 'q1', title: 'Most Visited', url: 'place:sort=8&maxResults=10', type: 'bookmark' }
+    ] }
+  ] };
+  const mock = fixture(null, firefox);
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js?first-run');
+  const settle = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+  await settle();
+  const saved = async () => (await browser.storage.local.get())[STORAGE_KEY].root;
+
+  assert.equal($('items').children.length, 0, 'the library starts empty');
+  assert.ok($('browser-import-dialog').open, 'the first visit asks');
+  assert.equal($('browser-import-title').textContent, 'Import bookmarks from your browser?');
+  assert.equal($('browser-import-text').textContent, 'Marked found 2 bookmarks in your browser. Import them, keeping their folders? Nothing changes in your browser.');
+  assert.equal($('browser-import-accept').textContent, 'Import 2 bookmarks');
+  $('browser-import-accept').click(); await settle();
+  assert.ok(!$('browser-import-dialog').open);
+  const root = await saved();
+  assert.deepEqual(root.children.map(folder => folder.title), ['Bookmarks Toolbar', 'Other Bookmarks']);
+  assert.deepEqual(root.children[0].children.map(node => [node.title, node.url, node.dateAdded]), [['MDN', 'https://developer.mozilla.org/', 1600000000000]]);
+  assert.deepEqual(root.children[1].children.map(node => node.title), ['Recipes'], 'unsupported addresses are left out');
+  assert.equal(root.children[1].children[0].children[0].title, 'Pasta');
+  assert.equal($('toast').textContent, 'Imported 2 bookmarks from your browser.');
+  assert.equal($('items').children.length, 2, 'the imported folders show');
+  const sidebar = () => [...$('folder-tree').querySelectorAll('.folder-row')].map(row => [row.querySelector('.folder-name').textContent, row.querySelector('.count').textContent]);
+  assert.deepEqual(sidebar(), [['Bookmarks Toolbar', '1'], ['Other Bookmarks', '1']], 'a folder counts the bookmarks in its subfolders');
+  assert.ok((await browser.storage.local.get()).markedBrowserImportAsked, 'answered, so Marked won’t ask on its own again');
+
+  // Later, Settings imports only what's new, and says when nothing is.
+  firefox.children[1].children[0].children.push({ id: 'r2', title: 'Soup', url: 'https://food.test/soup', type: 'bookmark' });
+  $('settings').click(); $('browser-import-open').click(); await settle();
+  assert.ok(!$('settings-dialog').open && $('browser-import-dialog').open);
+  assert.equal($('browser-import-text').textContent, 'Marked found 1 bookmark in your browser that isn’t in Marked yet. Import it, keeping its folder? Nothing changes in your browser.');
+  $('browser-import-dialog').close(); await settle();
+  assert.equal($('toast').textContent, 'You can import them later from Settings.');
+  $('settings').click(); $('browser-import-open').click(); await settle();
+  $('browser-import-accept').click(); await settle();
+  assert.deepEqual((await saved()).children[1].children[0].children.map(node => node.title), ['Pasta', 'Soup'], 'into the folder it already has');
+  assert.deepEqual(sidebar(), [['Bookmarks Toolbar', '1'], ['Other Bookmarks', '2']]);
+  $('settings').click(); $('browser-import-open').click(); await settle();
+  assert.ok(!$('browser-import-dialog').open);
+  assert.equal($('toast').textContent, 'Every bookmark in your browser is already in Marked.');
   dom.window.close();
 });

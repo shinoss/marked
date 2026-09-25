@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Marked — Bookmark Manager",
   "version": "1.2.0",
-  "description": "An independent, local bookmark library. Start with a one-time browser bookmark snapshot, then organize separately.",
+  "description": "An independent, local bookmark library. Import your browser's bookmarks, then organize them separately.",
   "permissions": ["bookmarks", "storage", "unlimitedStorage", "contextMenus", "activeTab", "scripting"],
   "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["https://huggingface.co/*", "https://*.huggingface.co/*", "https://*.hf.co/*"],

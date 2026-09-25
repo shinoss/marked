@@ -4,28 +4,58 @@ import { createLibraryStore, DEFAULT_TAGS } from '../store.js';
 import { fixture } from './storage-fixture.js';
 const tree = () => ({ id: 'root', children: [{ id: 'home', parentId: 'root', title: 'Home', children: [{ id: 'a', parentId: 'home', title: 'Original', url: 'https://example.com' }, { id: 'folder', parentId: 'home', title: 'Folder', children: [] }] }] });
 
-test('snapshots once, persists edits across instances, and never changes Firefox', async () => {
+test('starts empty, imports the browser’s bookmarks only when asked, and never changes Firefox', async () => {
   const firefox = tree(); const original = structuredClone(firefox);
-  const mock = fixture(firefox); const store = createLibraryStore(mock.api, mock.locks);
-  assert.deepEqual((await store.getTree())[0], original);
-  await store.update('a', { title: 'Independent' });
-  await store.moveMany(['a'], 'folder');
+  const mock = fixture(null, firefox); const store = createLibraryStore(mock.api, mock.locks);
+  assert.deepEqual((await store.getTree())[0].children, []);
+  assert.equal(mock.reads(), 0, 'nothing is read from the browser unasked');
+  assert.equal(await store.importBrowser(), 1);
+  const [imported] = await store.getTree();
+  assert.equal(imported.children[0].title, 'Home');
+  assert.deepEqual(imported.children[0].children.map(node => [node.title, node.url]), [['Original', 'https://example.com/']], 'empty folders are left out');
+  const id = imported.children[0].children[0].id;
+  await store.update(id, { title: 'Independent' });
   firefox.children[0].title = 'Changed in Firefox';
   const reopened = createLibraryStore(mock.api, mock.locks);
   const [saved] = await reopened.getTree();
   assert.equal(saved.children[0].title, 'Home');
-  assert.equal(saved.children[0].children[0].children[0].title, 'Independent');
-  await reopened.removeMany(['folder']);
-  assert.deepEqual(firefox.children[0].children, original.children[0].children);
-  assert.equal(mock.reads(), 1);
+  assert.equal(saved.children[0].children[0].title, 'Independent');
+  assert.equal(await reopened.importBrowser(), 0, 'a second import adds nothing');
+  firefox.children[0].title = 'Home';
+  assert.deepEqual(firefox, original);
+});
+test('merges the browser’s bookmarks into matching folders, skipping ones already saved', async () => {
+  const library = { id: 'root________', children: [
+    { id: 'toolbar_____', parentId: 'root________', title: 'Bookmarks Toolbar', children: [{ id: 'kept', parentId: 'toolbar_____', title: 'Already here', url: 'https://kept.test/' }] },
+    { id: 'mine', parentId: 'root________', title: 'Reading', children: [] },
+    { id: 'other', parentId: 'root________', title: 'Other bookmarks', children: [] }
+  ] };
+  const firefox = { id: 'root________', children: [
+    { id: 'toolbar_____', title: 'Bookmarks Toolbar', type: 'folder', children: [
+      { id: 'b1', title: 'Already here', url: 'https://kept.test/', type: 'bookmark' },
+      { id: 'b2', title: 'New on the toolbar', url: 'https://new.test/', type: 'bookmark', dateAdded: 1700000000000 },
+      { id: 's1', type: 'separator' },
+      { id: 'f1', title: 'Work', type: 'folder', children: [{ id: 'b3', title: 'Docs', url: 'https://docs.test/', type: 'bookmark' }, { id: 'q', title: 'Most Visited', url: 'place:sort=8', type: 'bookmark' }] },
+      { id: 'f2', title: 'Empty', type: 'folder', children: [] }
+    ] },
+    { id: 'unfiled_____', title: 'Other Bookmarks', type: 'folder', children: [{ id: 'b4', title: '', url: 'https://untitled.test/', type: 'bookmark' }] }
+  ] };
+  const mock = fixture(library, firefox); const store = createLibraryStore(mock.api, mock.locks);
+  assert.equal(await store.importBrowser(), 3);
+  const [root] = await store.getTree();
+  assert.deepEqual(root.children.map(node => node.title), ['Bookmarks Toolbar', 'Reading', 'Other bookmarks'], 'folders match by id or by name');
+  const [kept, added, work] = root.children[0].children;
+  assert.deepEqual([kept.id, added.title, added.dateAdded, work.title], ['kept', 'New on the toolbar', 1700000000000, 'Work']);
+  assert.deepEqual(work.children.map(node => [node.title, node.url, node.parentId]), [['Docs', 'https://docs.test/', work.id]]);
+  assert.equal(root.children[2].children[0].title, 'https://untitled.test/');
+  assert.equal(await store.importBrowser(), 0);
 });
 test('serializes concurrent initialization and writes from separate tabs', async () => {
-  const mock = fixture(tree());
+  const mock = fixture(null);
   const a = createLibraryStore(mock.api, mock.locks), b = createLibraryStore(mock.api, mock.locks);
-  await Promise.all([a.getTree(), b.getTree()]);
-  await Promise.all([a.create({ parentId: 'home', title: 'One', url: 'https://one.test' }), b.create({ parentId: 'home', title: 'Two', url: 'https://two.test' })]);
-  assert.equal((await a.getTree())[0].children[0].children.length, 4);
-  assert.equal(mock.reads(), 1);
+  const [[root]] = await Promise.all([a.getTree(), b.getTree()]);
+  await Promise.all([a.create({ parentId: root.id, title: 'One', url: 'https://one.test' }), b.create({ parentId: root.id, title: 'Two', url: 'https://two.test' })]);
+  assert.equal((await b.getTree())[0].children.length, 2);
 });
 test('rejects cycles and failed writes without modifying persisted data', async () => {
   const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
@@ -167,5 +197,5 @@ test('imports an entire hierarchy atomically into local storage', async () => {
   assert.equal((await store.getTree())[0].children[0].children.length, 2);
   const imported = await store.importTree(nodes, 'home', 'Import');
   assert.equal(imported.children[0].children[0].title, 'Site');
-  assert.equal(mock.reads(), 1);
+  assert.equal(mock.reads(), 0, 'file imports never read the browser’s bookmarks');
 });

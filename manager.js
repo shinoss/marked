@@ -1,5 +1,5 @@
 import './browser-api.js';
-import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, parseHTML, parseJSON, tweetId } from './bookmarks.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, parseHTML, parseJSON, planBrowserImport, tweetId } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
 import { createLibraryStore, STORAGE_KEY } from './store.js';
 import { relativeAge } from './time.js';
@@ -17,12 +17,15 @@ let pendingPreviewURL = null;
 // Tags chosen in the open editor; suggestions never override the user's own picks.
 let editorTags = [], tagsTouched = false, editorSession = 0;
 let pendingHighlight = '';
-// Semantic search with the user's own Jev key; off until a key is saved.
+// Semantic search with the user's own Jev key. Jev is asked only when the user
+// chooses Semantic, never while typing.
 // preview is temporary: it works without a key and logs requests instead of sending them.
-let jev = { apiKey: '', enabled: false, notes: true, highlights: true, preview: false };
+let jev = { apiKey: '', notes: true, highlights: true, preview: false };
 let jevUsage = null;
-const semantic = { query: '', result: null, status: '', error: '', cost: 0, cached: false, timer: null, controller: null, cache: new Map() };
-const semanticOn = () => jev.enabled && (!!jev.apiKey || jev.preview);
+const semantic = { query: '', result: null, status: '', error: '', cost: 0, cached: false, controller: null, cache: new Map() };
+const semanticReady = () => !!jev.apiKey || jev.preview;
+// Whether the results are Jev's answer for what's in the search box.
+const semanticShown = () => !!semantic.status && semantic.query.toLowerCase() === $('search').value.trim().toLowerCase();
 const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const isFolder = node => node && !node.url && node.type !== 'separator';
 const protectedNode = node => node.id === state.root.id;
@@ -147,6 +150,14 @@ function renderTree() {
   $('all-bookmarks').classList.toggle('active', !state.folder && !state.tag);
   renderTags();
   $('total').textContent = [...state.nodes.values()].filter(n => n.url).length.toLocaleString();
+  // A folder counts every bookmark inside it, subfolders included.
+  const counts = new Map();
+  (function count(node) {
+    let total = 0;
+    for (const child of node.children || []) total += child.url ? 1 : count(child);
+    counts.set(node.id, total);
+    return total;
+  })(state.root);
   function append(node, depth) {
     const row = element('div', 'folder-row');
     row.style.paddingLeft = `${depth * 14}px`;
@@ -161,7 +172,7 @@ function renderTree() {
     const link = button('', () => navigate(node.id), `folder-link${state.folder === node.id ? ' active' : ''}`);
     link.title = title(node);
     if (state.folder === node.id) link.setAttribute('aria-current', 'page');
-    link.append(element('span', 'folder-name', title(node)), element('span', 'count', (node.children || []).filter(n => n.url).length));
+    link.append(element('span', 'folder-name', title(node)), element('span', 'count', counts.get(node.id).toLocaleString()));
     row.append(toggle, link);
     if (!protectedNode(node)) {
       row.append(
@@ -225,7 +236,7 @@ function render() {
     }
     link.title ||= title(node);
     const metadata = element('div', 'item-metadata');
-    const domain = element('span', 'item-url', isFolder(node) ? `${node.children?.length || 0} items` : displayDomain(node.url));
+    const domain = element('span', 'item-url', isFolder(node) ? `${node.children?.length || 0} ${node.children?.length === 1 ? 'item' : 'items'}` : displayDomain(node.url));
     if (node.url) domain.title = node.url;
     const details = element('span', 'item-details');
     const age = relativeAge(node.dateAdded);
@@ -337,14 +348,11 @@ async function readCapture(key) {
     return capture && Date.now() - capture.createdAt < 60000 ? capture : null;
   } catch { return null; }
 }
-function renderSemanticToggle() {
-  $('semantic-toggle').setAttribute('aria-pressed', String(semanticOn()));
-  $('search').placeholder = semanticOn() ? 'Describe what you’re looking for…' : 'Search all bookmarks…';
-}
 function renderSemanticStatus() {
   const status = $('semantic-status');
-  const query = $('search').value.trim();
-  status.hidden = !semanticOn() || !semantic.status || semantic.query !== query;
+  // Semantic stays pressed while Jev's results show; typing something new releases it.
+  $('semantic-toggle').setAttribute('aria-pressed', String(semanticShown()));
+  status.hidden = !semanticShown();
   if (status.hidden) return;
   const total = jevUsage?.calls ? ` · ${formatCost(jevCost(jevUsage.inputTokens, jevUsage.outputTokens))} in total` : '';
   if (semantic.status === 'searching') status.textContent = 'Searching by meaning with Jev…';
@@ -355,26 +363,26 @@ function renderSemanticStatus() {
     status.textContent = `${none ? 'No bookmark clearly matches; the closest come first.' : 'Ranked by meaning with Jev.'} ${semantic.cached ? 'Repeated search, no charge' : `This search ${formatCost(semantic.cost)}`}${total}.`;
   }
 }
-// Runs a Jev search once typing pauses. A newer search cancels an older one, so
-// only the latest query is paid for; repeated queries come from the cache.
-function scheduleSemantic() {
-  clearTimeout(semantic.timer);
+// Asks Jev about what's in the search box, once each time the user chooses
+// Semantic. A newer search cancels an older one; a repeated query comes from
+// the cache, free.
+function searchByMeaning() {
   semantic.controller?.abort();
   const query = $('search').value.trim();
-  if (!semanticOn() || query.length < 3) {
-    Object.assign(semantic, { query: '', result: null, status: '' });
-    return;
+  if (semantic.cache.has(query)) Object.assign(semantic, { query, result: semantic.cache.get(query), status: 'done', cached: true });
+  else {
+    Object.assign(semantic, { query, result: null, status: 'searching' });
+    runSemantic(query);
   }
-  if (semantic.cache.has(query)) {
-    Object.assign(semantic, { query, result: semantic.cache.get(query), status: 'done', cached: true });
-    return;
-  }
-  Object.assign(semantic, { query, result: null, status: 'searching' });
-  semantic.timer = setTimeout(() => runSemantic(query), 400);
+  render();
 }
-// One line per bookmark, as Jev reads them.
+function clearSemantic() {
+  semantic.controller?.abort();
+  Object.assign(semantic, { query: '', result: null, status: '' });
+}
+// One line per bookmark, as Jev reads them; bookmarks with nothing to read are left out.
 const searchEntries = (options = jev) => [...state.nodes.values()].filter(node => node.url)
-  .map(node => ({ id: node.id, line: bookmarkLine(node, node.parentId === state.root.id ? '' : path(node.parentId), options) }));
+  .map(node => ({ id: node.id, line: bookmarkLine(node, options) })).filter(entry => entry.line);
 async function runSemantic(query) {
   const controller = semantic.controller = new AbortController();
   let inputTokens = 0, outputTokens = 0, estimated = 0;
@@ -389,16 +397,16 @@ async function runSemantic(query) {
       return askJev({ ...request, apiKey: jev.apiKey, preview: jev.preview, signal: controller.signal, onUsage });
     });
     if (controller.signal.aborted) return;
+    if (!jev.preview) semantic.cache.set(query, result);
+    // If the query was edited meanwhile, the paid answer waits in the cache.
+    if (semantic.query !== query) return;
     if (jev.preview) Object.assign(semantic, { result: null, status: 'preview', estimated });
-    else {
-      semantic.cache.set(query, result);
-      Object.assign(semantic, { result, status: 'done', cost: jevCost(inputTokens, outputTokens), cached: false });
-    }
+    else Object.assign(semantic, { result, status: 'done', cost: jevCost(inputTokens, outputTokens), cached: false });
   } catch (error) {
-    if (controller.signal.aborted || error?.name === 'AbortError') return;
+    if (controller.signal.aborted || error?.name === 'AbortError' || semantic.query !== query) return;
     Object.assign(semantic, { result: null, status: 'error', error: error.message });
   }
-  if ($('search').value.trim() === query) render();
+  render();
 }
 async function saveJev() {
   await browser.storage.local.set({ [JEV_SETTINGS_KEY]: jev });
@@ -432,10 +440,10 @@ function openSettings(message = '') {
   $('settings-dialog').showModal();
   if (!jev.apiKey) $('jev-key').focus();
 }
+// Settings changed: cached answers are stale, and keyword matches return.
 function refreshSemantic() {
   semantic.cache.clear();
-  renderSemanticToggle();
-  scheduleSemantic();
+  clearSemantic();
   render();
 }
 let noteNode = null;
@@ -635,6 +643,60 @@ $('import-file').addEventListener('change', async () => {
     fail(error);
   } finally { $('import').disabled = false; load().catch(fail); }
 });
+// The browser's own bookmarks. Marked asks once, the first time it finds some
+// the library doesn't have; Settings imports them any time after that.
+const BROWSER_IMPORT_KEY = 'markedBrowserImportAsked';
+// "Firefox" or "Chrome", for messages about the browser's bookmarks.
+const browserName = (async () => {
+  try { if (browser.runtime?.getBrowserInfo) return (await browser.runtime.getBrowserInfo()).name; } catch {}
+  const brand = navigator.userAgentData?.brands?.map(({ brand }) => brand).find(brand => /^(Google Chrome|Microsoft Edge|Brave|Opera)$/.test(brand));
+  return brand?.replace(/^(Google|Microsoft) /, '') || 'your browser';
+})();
+browserName.then(name => { $('browser-import-open').textContent = `Import from ${name}…`; });
+const bookmarkCount = count => `${count.toLocaleString()} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
+async function offerBrowserImport({ asked = false } = {}) {
+  const [[browserRoot], name] = await Promise.all([browser.bookmarks.getTree(), browserName]);
+  const { count, already } = planBrowserImport(browserRoot, state.root);
+  if (!count) {
+    if (asked) toast(`Every bookmark in ${name} is already in Marked.`);
+    return;
+  }
+  // Never on top of the editor or another dialog; Marked asks on a later visit.
+  if (!asked && document.querySelector('dialog[open]')) return;
+  const one = count === 1;
+  $('browser-import-title').textContent = `Import bookmarks from ${name}?`;
+  $('browser-import-text').textContent = `Marked found ${bookmarkCount(count)} in ${name}${already ? ` that ${one ? 'isn’t' : 'aren’t'} in Marked yet` : ''}. Import ${one ? 'it, keeping its folder' : 'them, keeping their folders'}? Nothing changes in ${name}.`;
+  $('browser-import-accept').textContent = `Import ${bookmarkCount(count)}`;
+  $('browser-import-error').textContent = '';
+  const dialog = $('browser-import-dialog'); dialog.returnValue = '';
+  dialog.showModal();
+}
+async function askFirstImport() {
+  try {
+    if (!(await browser.storage.local.get(BROWSER_IMPORT_KEY))[BROWSER_IMPORT_KEY]) await offerBrowserImport();
+  } catch {}
+}
+$('browser-import-accept').addEventListener('click', async () => {
+  const button = $('browser-import-accept'); button.disabled = true;
+  $('browser-import-error').textContent = '';
+  try {
+    const count = await library.importBrowser();
+    const dialog = $('browser-import-dialog'); dialog.returnValue = 'imported'; dialog.close();
+    await load();
+    toast(`Imported ${bookmarkCount(count)} from ${await browserName}.`);
+  } catch (error) {
+    $('browser-import-error').textContent = error.message;
+  } finally { button.disabled = false; }
+});
+// Answered either way, so Marked doesn't ask again on its own.
+$('browser-import-dialog').addEventListener('close', () => {
+  browser.storage.local.set({ [BROWSER_IMPORT_KEY]: Date.now() }).catch(() => {});
+  if ($('browser-import-dialog').returnValue !== 'imported') toast('You can import them later from Settings.');
+});
+$('browser-import-open').addEventListener('click', () => {
+  $('settings-dialog').close();
+  offerBrowserImport({ asked: true }).catch(fail);
+});
 $('chat-toggle').addEventListener('click', async () => {
   try {
     const { openChat } = await import('./chat.js');
@@ -672,14 +734,16 @@ $('new-folder').addEventListener('click', () => openEditor(null, true));
 $('sidebar-add').addEventListener('click', () => openEditor(null, true));
 let searchTimer;
 $('search').addEventListener('input', () => {
-  scheduleSemantic();
+  // Jev's results belong to the query they answered; any edit returns keyword
+  // matches. A request still on its way finishes into the cache.
+  if (semantic.status && !semanticShown()) Object.assign(semantic, { query: '', result: null, status: '' });
   clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.selected.clear(); render(); }, 120);
 });
-$('semantic-toggle').addEventListener('click', async () => {
-  if (!jev.apiKey && !jev.preview) { openSettings('Add your TypeSafe API key to search by meaning.'); return; }
-  jev.enabled = !jev.enabled;
-  await saveJev().catch(fail);
-  refreshSemantic();
+$('semantic-toggle').addEventListener('click', () => {
+  if (!semanticReady()) { openSettings('Add your TypeSafe API key to search by meaning.'); return; }
+  if (semanticShown()) { clearSemantic(); render(); }
+  else if ($('search').value.trim().length < 3) toast('Type what you’re looking for, then choose Semantic.');
+  else searchByMeaning();
   $('search').focus();
 });
 $('settings').addEventListener('click', () => openSettings());
@@ -690,7 +754,7 @@ $('jev-reset').addEventListener('click', async () => {
   renderUsage(); renderSemanticStatus();
 });
 $('jev-remove').addEventListener('click', async () => {
-  jev = { ...jev, apiKey: '', enabled: false };
+  jev = { ...jev, apiKey: '' };
   await saveJev().catch(fail);
   $('settings-dialog').close(); refreshSemantic();
 });
@@ -714,9 +778,7 @@ $('settings-form').addEventListener('submit', async event => {
         onUsage: usage => recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderUsage(); }, () => {})
       });
     }
-    // A new key, or turning preview on, switches semantic search on.
-    const turnedOn = newKey || (preview && !jev.preview);
-    jev = { apiKey, notes: $('jev-notes').checked, highlights: $('jev-highlights').checked, preview, enabled: (!!apiKey || preview) && (turnedOn || jev.enabled) };
+    jev = { apiKey, notes: $('jev-notes').checked, highlights: $('jev-highlights').checked, preview };
     await saveJev();
     $('settings-dialog').close();
     refreshSemantic();
@@ -747,16 +809,16 @@ browser.storage.onChanged.addListener((changes, area) => {
   // Settings and usage changed in another Marked tab.
   if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
   // This tab's own saves arrive here too, unchanged, and are skipped.
-  const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', enabled: false, notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
-  if (settings && ['apiKey', 'enabled', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
+  const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
+  if (settings && ['apiKey', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
 });
 Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY]).then(saved => {
   view = saved.markedView === 'gallery' ? 'gallery' : 'list';
   jev = { ...jev, ...(saved[JEV_SETTINGS_KEY] || {}) };
   jevUsage = saved[JEV_USAGE_KEY] || null;
-  renderSemanticToggle();
 })]).then(async () => {
   render();
+  askFirstImport();
   const params = new URLSearchParams(document.location.search);
   if (!params.has('add')) return;
   // Consume the request so refreshing the tab does not reopen the dialog.

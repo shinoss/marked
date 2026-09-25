@@ -9,20 +9,17 @@ export const WINDOW = 250;
 
 const clean = (text, max) => String(text ?? '').replace(/[\s|]+/g, ' ').trim().slice(0, max);
 
-// What Jev reads for one bookmark. Only the domain is sent, never the full URL,
-// which can carry tokens or private paths.
-export function bookmarkLine(node, folder = '', { notes = true, highlights = true } = {}) {
-  let domain = '';
-  try { domain = new URL(node.url).hostname.replace(/^www\./, ''); } catch {}
+// What Jev reads for one bookmark, kept short because every token is paid for:
+// the title, the note and highlights when allowed, and the abstract, separated
+// by semicolons without labels. The address, folder, and tags are never sent; a
+// title that is only the address is left out too.
+export function bookmarkLine(node, { notes = true, highlights = true } = {}) {
   return [
-    clean(node.title || domain, 160),
-    domain,
-    folder && `folder: ${clean(folder, 80)}`,
-    node.tags?.length && `tags: ${clean(node.tags.join(', '), 120)}`,
-    notes && node.note && `note: ${clean(node.note, 200)}`,
-    highlights && node.highlights?.length && `highlights: ${node.highlights.slice(0, 3).map(h => `“${clean(h.text, 120)}”`).join(' ')}`,
-    node.abstract && clean(node.abstract, 240)
-  ].filter(Boolean).join(' — ');
+    node.title !== node.url && clean(node.title, 160),
+    notes && clean(node.note, 200),
+    ...(highlights ? (node.highlights || []).slice(0, 3).map(highlight => clean(highlight.text, 120)) : []),
+    clean(node.abstract, 240)
+  ].filter(Boolean).join('; ');
 }
 
 // entries: [{ id, line }]; ask({ state, questions }) makes one Jev request.
