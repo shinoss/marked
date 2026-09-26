@@ -60,6 +60,7 @@
       <nav class="toc" aria-label="On this page">
         <ol>
           <li><a href="#local">What stays on your device</a></li>
+          <li><a href="#page-access">Access to the pages you visit</a></li>
           <li><a href="#services">What Marked contacts, and when</a></li>
           <li><a href="#permissions">Why Marked asks for its permissions</a></li>
           <li><a href="#not">What Marked doesn't do</a></li>
@@ -81,7 +82,19 @@
       </ul>
       <p>None of this is sent to the developer of Marked or to anyone else, except the specific pieces listed in the next section.</p>
 
-      <h2 id="services">2. What Marked contacts, and when</h2>
+      <h2 id="page-access">2. Access to the pages you visit</h2>
+      <p>Marked can read the web pages you visit, but only if you allow it. It asks the first time you open it, not when you install it, and you can turn it off at any time in <strong>Settings&nbsp;→ Browsing</strong> or in your browser's extension settings. Turned off, Marked leaves every page at once, including pages already open: their highlight marks, ✓, and <strong>Highlight</strong> button go away. Everything you saved stays in Marked.</p>
+      <ul>
+        <li><strong>Why it asks:</strong> for the <strong>Highlight</strong> button, marking your saved highlights on a page, ✓ on pages you've saved, counting related bookmarks, keeping the text of pages you save or revisit, and <strong>Save open tabs</strong>.</li>
+        <li><strong>What it reads on every page:</strong> the page's address, title, description, main headings, and opening paragraphs. Marked compares them with your library to count related bookmarks, holds the result in memory while the tab is open, and forgets it when you close the tab.</li>
+        <li><strong>What it reads on pages you've saved:</strong> the page's readable text, which it keeps for search and the reader (turn this off in <strong>Settings&nbsp;→ Page text</strong>), and the passages you highlighted there, to mark them again.</li>
+        <li><strong>What it reads only when you act:</strong> the text you select when you click <strong>Highlight</strong>; a picture of the visible page when you save it with <strong>Save preview</strong> ticked, which shows whatever is on screen; and the addresses and titles of your open tabs when you choose <strong>Save open tabs</strong>.</li>
+        <li><strong>What it never reads:</strong> what you type into forms and text boxes, including passwords.</li>
+        <li><strong>Where it goes:</strong> nowhere. What Marked reads from pages stays in your browser, on your device. It isn't sent to us or to anyone else.</li>
+        <li><strong>If you don't allow it:</strong> you can still save the page you're on with the Marked button, the right-click menu, or <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>, which lets Marked read just that tab at that moment. Your library, search, the reader, and chat work as usual.</li>
+      </ul>
+
+      <h2 id="services">3. What Marked contacts, and when</h2>
       <p>Like any web request, each of these lets the service see your IP address and basic browser information. Beyond that, here is exactly what goes to each one.</p>
 
       <section class="service" aria-labelledby="s-hf">
@@ -105,7 +118,7 @@
       <section class="service" aria-labelledby="s-sites">
         <h3 id="s-sites">Hacker News and GitHub</h3>
         <dl>
-          <dt>When</dt><dd>When you save a Hacker News story or comment, or a GitHub repository, issue, or pull request; when you open one of them again; or when you download text for one.</dd>
+          <dt>When</dt><dd>When you save a Hacker News story or comment, or a GitHub repository, issue, or pull request, or when you download text for one. Never just because you visit one.</dd>
           <dt>What's sent</dt><dd>A request to the site's public API (<code>hacker-news.firebaseio.com</code> or <code>api.github.com</code>) for that item, to show its card and keep the discussion or README as its text. No cookies or sign-in go with it.</dd>
           <dt>Their policy</dt><dd><a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a>; Hacker News's API is served by Google Firebase (<a href="https://policies.google.com/privacy">policies.google.com/privacy</a>)</dd>
         </dl>
@@ -128,16 +141,16 @@
         </dl>
       </section>
 
-      <h2 id="permissions">3. Why Marked asks for its permissions</h2>
+      <h2 id="permissions">4. Why Marked asks for its permissions</h2>
       <ul>
-        <li><strong>Access to all websites:</strong> to show the <strong>Highlight</strong> button, mark saved highlights, show ✓ on saved pages, count related bookmarks on other pages, keep the text of pages you save or open again, and read your open tabs for <strong>Save open tabs</strong>. None of that leaves your device. To count related bookmarks, Marked compares the page's title, description, headings, and opening paragraphs with your library, in your browser.</li>
+        <li><strong>Access to the pages you visit (optional):</strong> asked for the first time you open Marked, not at install. What it's for, what it reads, and what it doesn't are in <a href="#page-access">section 2</a>. Nothing it reads leaves your device.</li>
         <li><strong>Bookmarks:</strong> to import your browser's bookmarks on first run, if you agree. Marked never changes them.</li>
         <li><strong>Storage and unlimited storage:</strong> to keep your library, including page text, in your browser.</li>
-        <li><strong>Context menus, active tab, and scripting:</strong> for <strong>Save tweet to Marked</strong>, highlighting, and saving the page you're on.</li>
+        <li><strong>Context menus, active tab, and scripting:</strong> for <strong>Save tweet to Marked</strong>, highlighting, and saving the page you're on. Active tab lets Marked read only the tab you used the button, menu, or shortcut on, at that moment.</li>
         <li><strong>Hugging Face (optional):</strong> requested only when you download the chat model.</li>
       </ul>
 
-      <h2 id="not">4. What Marked doesn't do</h2>
+      <h2 id="not">5. What Marked doesn't do</h2>
       <ul>
         <li>No analytics, telemetry, crash reporting, or tracking of any kind.</li>
         <li>No ads, and no selling, renting, or sharing of your data.</li>
@@ -146,19 +159,19 @@
         <li>No record of your browsing. To show ✓, your highlights, and related bookmarks, Marked compares the page you're on with your library, on your device. What it works out for an open tab is held in memory until the tab closes, and nothing about pages you haven't saved is stored or sent.</li>
       </ul>
 
-      <h2 id="control">5. Your control over your data</h2>
+      <h2 id="control">6. Your control over your data</h2>
       <ul>
         <li><strong>Export</strong> makes a full backup, saved page text included. It can also write a standard bookmarks file, or your notes and highlights as Markdown.</li>
         <li>Delete any bookmark, highlight, or note in Marked, and it's gone from your browser.</li>
-        <li>In <strong>Settings</strong>, you can stop Marked keeping page text, delete all saved text, turn off the related-bookmarks count in <strong>Browsing</strong>, and remove your API key. In <strong>Chat</strong>, <strong>Remove download</strong> deletes the model.</li>
+        <li>In <strong>Settings&nbsp;→ Browsing</strong>, you can turn off Marked's access to the pages you visit, or just the related-bookmarks count. In <strong>Settings</strong>, you can also stop Marked keeping page text, delete all saved text, and remove your API key. In <strong>Chat</strong>, <strong>Remove download</strong> deletes the model.</li>
         <li>Removing the extension deletes everything it stored. Export first if you want to keep it.</li>
       </ul>
       <p>Because your data never reaches us, we can't see, recover, or delete it for you. It's entirely in your hands.</p>
 
-      <h2 id="website">6. This website</h2>
+      <h2 id="website">7. This website</h2>
       <p>This site is a set of static pages. It sets no cookies and runs no analytics. It loads the Inter font from Google Fonts. The company hosting the site may keep standard server logs, such as IP addresses and the pages requested, for security and operations.</p>
 
-      <h2 id="changes">7. Changes and contact</h2>
+      <h2 id="changes">8. Changes and contact</h2>
       <p>If Marked starts handling data differently, this page will be updated before the change ships, and the effective date above will change.</p>
       <p>Questions or concerns? Open an issue at <a href="https://github.com/shinoss/marked/issues">github.com/shinoss/marked/issues</a>.</p>
     </article>

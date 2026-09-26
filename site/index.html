@@ -361,11 +361,11 @@ npm ci &amp;&amp; npm run bundle</code></pre>
         <ul class="contacts">
           <li><strong>Hugging Face</strong><span>When you download the chat model.</span></li>
           <li><strong>X</strong><span>To show posts in the gallery, and to read your X bookmarks when you import them.</span></li>
-          <li><strong>Hacker News and GitHub</strong><span>Their public APIs, for a card and the discussion when you save, revisit, or download one of their pages. No cookies.</span></li>
+          <li><strong>Hacker News and GitHub</strong><span>Their public APIs, for a card and the discussion when you save one of their pages or download its text. No cookies.</span></li>
           <li><strong>TypeSafe</strong><span>When you click <strong>Semantic</strong>: your query and each bookmark's title and abstract, plus notes and highlights only if you turn them on. Never addresses, folders, or tags.</span></li>
           <li><strong>The sites you bookmarked</strong><span>When you download page text for older bookmarks. No cookies.</span></li>
         </ul>
-        <p class="privacy-foot">Access to all websites powers the <strong>Highlight</strong> button, saved highlights, the ✓ and related count, page text, and <strong>Save open tabs</strong>. None of it leaves your device. <a href="privacy.html">Read the privacy policy</a>.</p>
+        <p class="privacy-foot">Marked asks before it reads the pages you visit: the first time you open it, not at install. It uses that for the <strong>Highlight</strong> button, your highlights and ✓ on saved pages, related bookmarks, page text, and <strong>Save open tabs</strong>. It never reads what you type into forms, and nothing it reads leaves your device. <a href="privacy.html#page-access">Read exactly what it reads</a>.</p>
       </div>
     </section>
 
@@ -394,9 +394,10 @@ npm ci &amp;&amp; npm run bundle</code></pre>
             </div>
           </details>
           <details>
-            <summary>Why does it need access to all websites?</summary>
+            <summary>Why does Marked ask to read the pages I visit?</summary>
             <div class="answer">
-              <p>For the <strong>Highlight</strong> button, saved highlights, the ✓ and related count, keeping page text, and <strong>Save open tabs</strong>. It all happens in your browser: the related count compares a page's title, description, headings, and opening paragraphs with your library.</p>
+              <p>For the <strong>Highlight</strong> button, your highlights and ✓ on saved pages, related bookmarks, keeping the text of pages you save, and <strong>Save open tabs</strong>. It asks the first time you open it, not at install, and you can turn it off in <strong>Settings&nbsp;→ Browsing</strong>. Turned off, it leaves every page at once; what you saved stays in Marked.</p>
+              <p>On each page it reads the title, description, headings, and opening paragraphs to count related bookmarks, and forgets them when you close the tab. It never reads what you type into forms, including passwords, and nothing it reads leaves your device. Without it, you can still save pages with the Marked button, the right-click menu, or <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>.</p>
             </div>
           </details>
           <details>

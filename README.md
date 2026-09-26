@@ -189,17 +189,32 @@ npm ci && npm run bundle
 
 Local chat needs WebGPU and downloads the model (about 2.3 GB) from Hugging Face once. On a Mac, use Chrome and 16 GB of memory or more.
 
+The first time you open Marked, it asks to read the pages you visit. See [Access to the pages you visit](#access-to-the-pages-you-visit).
+
 ## Privacy
 
-Your library stays in your browser. Marked only contacts:
+Your library stays in your browser. There's no account and no server of ours.
+
+### Access to the pages you visit
+
+Marked can read the pages you visit only if you allow it. It asks the first time you open it, not when you install it, and you can turn it off at any time in **Settings → Browsing**. Turned off, Marked leaves every page at once, open ones included: no marks, no ✓, no **Highlight** button. Everything you saved stays in Marked.
+
+- **Why:** for the **Highlight** button, marking your saved highlights, ✓ on saved pages, counting related bookmarks, keeping the text of pages you save or revisit, and **Save open tabs**.
+- **On every page,** it reads the address, title, description, main headings, and opening paragraphs, and compares them with your library to count related bookmarks. It forgets them when you close the tab.
+- **On pages you've saved,** it reads their text, to keep it for search and the reader, and marks the passages you highlighted.
+- **Only when you act,** it reads the text you select to highlight, a picture of the visible page if you save it with **Save preview**, and your open tabs for **Save open tabs**.
+- **It never reads** what you type into forms, including passwords.
+- **None of it leaves your device.**
+
+Without it, you can still save the page you're on with the Marked button, the right-click menu, or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>; each lets Marked read just that tab, at that moment.
+
+### What Marked contacts
 
 - **Hugging Face**, when you download the chat model.
 - **X**, to show embedded posts in the gallery, and to read your bookmarks page on x.com when you import your X bookmarks.
-- **Hacker News and GitHub**, through their public APIs, for a card and the discussion or README when you save one of their pages, open it again, or download text. No cookies go with these requests.
+- **Hacker News and GitHub**, through their public APIs, for a card and the discussion or README when you save one of their pages or download its text. No cookies go with these requests.
 - **TypeSafe**, when you click **Semantic**: your query and each bookmark's title and abstract (plus notes and highlights, if you allow them). Never addresses, folders, or tags.
 - **The sites you bookmarked**, when you download text in Settings or the reader, to read pages saved before Marked kept their text. No cookies go with these requests.
-
-Access to all websites lets Marked show the **Highlight** button, mark saved highlights, show ✓ on saved pages, count related bookmarks on others (from the page's title, description, headings, and opening paragraphs), keep the text of pages you save or open again, and read your open tabs for **Save open tabs**. None of that leaves your device.
 
 ## Develop
 

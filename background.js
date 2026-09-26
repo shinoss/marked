@@ -6,12 +6,56 @@ import { readPageAbstract, readPageIcon } from './page-abstract.js';
 import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 import { fetchSite, siteOf } from './sites.js';
 import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
+import { hasSiteAccess } from './site-access.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
 const TWEET_URL = /^https:\/\/x\.com\/\w+\/status\/\d+$/;
 const TWEET_ORIGINS = ['https://x.com/*', 'https://twitter.com/*'];
 const RETRY_NOTICE = 'Marked is ready on this page now. Right-click the tweet again to save it.';
+
+// The scripts Marked runs in web pages: the Highlight button and saved
+// highlights on every page, and tweet capture on X. Their sites need access,
+// which Marked asks for in its own page instead of at install, so each script
+// is registered once its sites are allowed and removed if access is taken back.
+const PAGE_SCRIPTS = [
+  { id: 'marked-highlighter', matches: ['http://*/*', 'https://*/*'], js: ['highlighter.js'], runAt: 'document_idle', allFrames: false },
+  { id: 'marked-tweet-capture', matches: TWEET_ORIGINS, js: ['tweet-capture.js'], runAt: 'document_idle', allFrames: false }
+];
+let pageScripts = Promise.resolve();
+// One sync at a time: startup, install, and permission changes can overlap.
+function syncPageScripts({ openTabs = false } = {}) {
+  pageScripts = pageScripts.catch(() => {}).then(async () => {
+    const registered = new Set((await browser.scripting.getRegisteredContentScripts()).map(script => script.id));
+    for (const script of PAGE_SCRIPTS) {
+      const allowed = await browser.permissions.contains({ origins: script.matches });
+      if (allowed && !registered.has(script.id)) {
+        await browser.scripting.registerContentScripts([script]);
+        // Pages already open get it too, so the Highlight button works without a reload.
+        if (openTabs) {
+          for (const tab of await browser.tabs.query({ url: script.matches })) {
+            await browser.scripting.executeScript({ target: { tabId: tab.id }, files: script.js }).catch(() => {});
+          }
+        }
+      } else if (!allowed && registered.has(script.id)) {
+        await browser.scripting.unregisterContentScripts({ ids: [script.id] });
+      }
+    }
+  });
+  return pageScripts;
+}
+const syncFailed = error => console.warn('Could not update Marked’s page scripts', error);
+// Page scripts already running in open tabs follow the switch too, without a
+// reload: taken back, they remove their marks and stop offering Highlight.
+async function tellPages(allowed) {
+  for (const tab of await browser.tabs.query({})) browser.tabs.sendMessage(tab.id, { type: 'marked:page-access', allowed }).catch(() => {});
+}
+// Taken back: forget what was worked out for open tabs, and clear their marks.
+async function forgetPages() {
+  pageRelated.clear();
+  const related = Object.keys(await browser.storage.session.get(null)).filter(key => key.startsWith('related:'));
+  if (related.length) await browser.storage.session.remove(related);
+}
 
 // Register once per background startup; remove an old registration on restart.
 // `contextMenus` is Chrome's name for this API; Firefox supports it as an alias.
@@ -99,13 +143,15 @@ async function captureSite(url) {
 }
 // A saved page without its text gets it when it's next open in a tab. Only
 // articles, when it happens by itself: never the text of an inbox or an
-// account page that happens to be bookmarked. A saved post gets its card.
+// account page that happens to be bookmarked. A post gets its card from its
+// site's API when it's saved, never on a visit: nothing Marked reads while you
+// browse leaves the device.
 async function fillText(tab, page, { articlesOnly = true } = {}) {
   page ??= tab?.url && await findBookmark(tab.url);
   if (!page || (articlesOnly && !await keepText())) return;
   const store = createLibraryStore(browser);
   if (siteOf(page.url)) {
-    if (page.card) return;
+    if (page.card || articlesOnly) return;
     const site = await captureSite(page.url);
     if (!site?.card) return;
     await store.setCards({ [page.id]: site.card });
@@ -276,10 +322,13 @@ async function relateTab(tab, topics) {
 // The toolbar button shows a check on pages already in Marked, and on other
 // pages how many saved bookmarks relate to them.
 async function updateBadges(tabs) {
-  const byPage = await savedPages();
+  // Only with access to the pages you visit: not even on a tab whose address
+  // Marked can see because the user just used it there.
+  const allowed = await hasSiteAccess(browser);
+  const byPage = allowed ? await savedPages() : new Map();
   await Promise.all(tabs.map(async ({ id, url }) => {
-    const saved = !!url && byPage.has(pageKey(url));
-    const related = !saved && url && pageRelated.get(id)?.key === pageKey(url) ? pageRelated.get(id) : null;
+    const saved = allowed && !!url && byPage.has(pageKey(url));
+    const related = allowed && !saved && url && pageRelated.get(id)?.key === pageKey(url) ? pageRelated.get(id) : null;
     const text = saved ? '✓' : related ? String(related.count) : '';
     await browser.action.setBadgeText({ tabId: id, text });
     if (text) await browser.action.setBadgeBackgroundColor({ tabId: id, color: saved ? '#2c5949' : '#5b6474' });
@@ -302,8 +351,17 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[RELATED_KEY]) relatedCache = null;
 });
 browser.tabs.onRemoved?.addListener(tabId => { pageRelated.delete(tabId); browser.storage.session.remove?.(`related:${tabId}`)?.catch(() => {}); });
-browser.runtime.onStartup?.addListener(updateAllBadges);
-browser.runtime.onInstalled?.addListener(updateAllBadges);
+browser.runtime.onStartup?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
+browser.runtime.onInstalled?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
+// Allowed in Marked's page, or in the browser's own settings; or taken back there.
+browser.permissions?.onAdded?.addListener(() => {
+  syncPageScripts({ openTabs: true }).then(() => tellPages(true)).catch(syncFailed);
+  updateAllBadges();
+});
+browser.permissions?.onRemoved?.addListener(() => {
+  syncPageScripts().then(() => tellPages(false)).catch(syncFailed);
+  forgetPages().catch(() => {}).then(updateAllBadges);
+});
 
 // Type "mk", a space, and a few words in the address bar to search Marked.
 // Chrome styles suggestions with XML markup; Firefox shows plain text.

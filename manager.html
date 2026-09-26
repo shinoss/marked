@@ -37,7 +37,10 @@
   </aside>
   <main>
     <section class="workspace">
-      <p id="site-access" class="site-access" hidden>To show the Highlight button when you select text on a page, allow Marked on all websites. <button id="allow-sites" type="button">Allow</button></p>
+      <div id="site-access" class="site-access" role="region" aria-labelledby="site-access-title" hidden>
+        <p><strong id="site-access-title">Let Marked read the pages you visit?</strong> It uses this for the Highlight button, your highlights and ✓ on saved pages, related bookmarks, and keeping page text. What it reads never leaves your device.</p>
+        <div class="site-access-actions"><button id="allow-sites" type="button">Allow</button><button id="site-access-later" type="button">Not now</button></div>
+      </div>
       <nav id="breadcrumbs" aria-label="Breadcrumb"></nav>
       <div class="heading"><h1 id="page-title">All bookmarks</h1><div class="actions"><button id="shuffle" hidden>Shuffle</button><button id="merge-all" hidden>Merge all</button><button id="open-all" hidden>Open all</button><button id="save-tabs" title="Save the pages open in this window to a new folder">Save open tabs</button><button id="new-folder">New folder</button><button id="new-bookmark" class="primary">Add bookmark</button></div></div>
       <div class="list-toolbar"><div id="selection-tools"><span id="selection-count"></span><button id="move-selected">Move</button><button id="delete-selected" class="danger-text">Delete</button><button id="clear-selection">Clear</button></div><span id="list-label"></span><div class="view-options"><label class="select-all"><input id="select-all" type="checkbox" aria-label="Select all displayed bookmarks"> Select all</label><div class="view-switch" role="group" aria-label="Bookmark view"><button id="list-view" aria-pressed="true">List</button><button id="gallery-view" aria-pressed="false">Gallery</button></div><label class="sort">Sort <select id="sort"><option value="default">Saved order</option><option value="title">Name A–Z</option><option value="newest" selected>Newest first</option></select></label></div></div>
@@ -98,9 +101,12 @@
       </section>
       <section id="settings-browsing" role="tabpanel" data-section="browsing" aria-labelledby="settings-tab-browsing" hidden>
         <h3>Browsing</h3>
-        <p class="field-hint">What the Marked button shows while you browse. It’s all worked out on this device.</p>
+        <h4 class="settings-subheading">Access to the pages you visit</h4>
+        <p class="field-hint">For the Highlight button, your highlights and ✓ on saved pages, related bookmarks, keeping the text of pages you save, and Save open tabs. What Marked reads never leaves your device.</p>
+        <p class="site-access-setting"><span id="site-access-state">Not allowed</span><button type="button" id="site-access-toggle" class="text-button">Allow</button></p>
+        <h4 class="settings-subheading">The Marked button</h4>
         <label class="check-field"><input id="browsing-related" type="checkbox"> Count the bookmarks related to the page you’re on</label>
-        <p class="field-hint">The button shows a number when your saved pages share telling words with the page’s title and headings. Choose the button to see them.</p>
+        <p class="field-hint">The button shows a number when your saved pages share telling words with the page’s title and headings. Choose the button to see them. It’s all worked out on this device.</p>
       </section>
       <section id="settings-semantic" role="tabpanel" data-section="semantic" aria-labelledby="settings-tab-semantic" hidden>
         <h3>Semantic search</h3>

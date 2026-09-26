@@ -1,10 +1,13 @@
-// Content script for every http(s) page, declared in manifest.json. When the
-// user selects text it shows a Highlight button beside the selection; nothing
-// is read or sent until the user clicks it. On a page already in Marked, the
-// highlight and an optional note are added right here in a small panel; a new
-// page opens Marked's editor, as Add to Marked does. Passages saved earlier are
-// marked again when the page opens. Content scripts are classic scripts, not
-// modules; tests evaluate this file in a JSDOM window.
+// Content script for every http(s) page, registered by background.js once the
+// user allows Marked on the pages they visit. When the page opens it tells
+// background.js what the page is about (its title, description, headings, and
+// opening paragraphs, for the related count) and marks the passages saved on it
+// before. When the user selects text it shows a Highlight button beside the
+// selection; the selection is read only when they click it. On a page already
+// in Marked, the highlight and an optional note are added right here in a small
+// panel; a new page opens Marked's editor, as Add to Marked does. Nothing it
+// reads leaves the browser. Content scripts are classic scripts, not modules;
+// tests evaluate this file in a JSDOM window.
 
 // Selected text worth highlighting, or '' for none or text inside form fields.
 function selectedText(selection) {
@@ -92,7 +95,9 @@ if (!globalThis.markedHighlighter) {
   const TINT = { yellow: 'rgba(255,221,0,.45)', green: 'rgba(92,201,138,.4)', blue: 'rgba(91,157,240,.35)', pink: 'rgba(240,122,169,.35)', purple: 'rgba(163,132,240,.35)' };
   // Keys typed in the panel stay out of the page's keyboard shortcuts.
   for (const type of ['keydown', 'keyup', 'keypress']) host.addEventListener(type, event => event.stopPropagation());
-  let text = '', panel = false, anchor = null, closing;
+  // allowed: whether the user lets Marked read the pages they visit. Taken back,
+  // the page goes back to how it was until access is given again.
+  let text = '', panel = false, anchor = null, closing, allowed = true;
 
   const close = () => { host.remove(); panel = false; };
   // Beside the end of the selection: below it, or above it near the bottom of the window.
@@ -192,6 +197,14 @@ if (!globalThis.markedHighlighter) {
   // Alt+Shift+H, a Marked shortcut that background.js passes on, highlights the
   // selection as the Highlight button would.
   api.runtime.onMessage?.addListener((message, sender, reply) => {
+    // Access to the pages you visit given again, or taken back, in Marked.
+    if (message?.type === 'marked:page-access') {
+      reply(true);
+      allowed = !!message.allowed;
+      if (allowed) arrive(); else standDown();
+      return;
+    }
+    // The shortcut is the user's own request for this tab, so it works either way.
     if (message?.type !== 'marked:highlight-selection') return;
     reply(true);
     if (panel) return;
@@ -210,7 +223,7 @@ if (!globalThis.markedHighlighter) {
     highlight();
   });
   // An open panel stays until it is saved or cancelled.
-  const later = event => { if (!panel && !event.composedPath().includes(host)) setTimeout(show, 0); };
+  const later = event => { if (allowed && !panel && !event.composedPath().includes(host)) setTimeout(show, 0); };
   document.addEventListener('mouseup', later, true);
   document.addEventListener('keyup', event => { if (event.shiftKey || event.key === 'Shift') later(event); }, true);
   document.addEventListener('selectionchange', () => { if (!panel && getSelection()?.isCollapsed) close(); });
@@ -283,9 +296,22 @@ if (!globalThis.markedHighlighter) {
       lead: lead.trim().slice(0, 1000)
     };
   };
+  // Without access, the page goes back to how it was: no marks, no button, no note.
+  function standDown() {
+    close();
+    hideNote();
+    for (const marked of document.querySelectorAll('marked-highlight')) {
+      const parent = marked.parentNode;
+      marked.replaceWith(...marked.childNodes);
+      parent?.normalize();
+    }
+  }
+  // Tells Marked what the page is about and marks the passages saved on it.
   // Pages that build their text after loading get two more tries, each only if
   // the page changed since the last: another look at the same page finds nothing new.
-  (async () => {
+  let arrivals = 0;
+  async function arrive() {
+    const arrival = ++arrivals;
     let reply;
     try { reply = await api.runtime.sendMessage({ type: 'marked:page-highlights', topics: topics() }); } catch { return; }
     let missing = reply?.highlights || [], changed = true;
@@ -293,6 +319,8 @@ if (!globalThis.markedHighlighter) {
     for (const wait of [0, 1500, 5000]) {
       if (!missing.length || !document.body) break;
       if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+      // Access taken back, or a newer arrival, ends this one.
+      if (!allowed || arrival !== arrivals) break;
       if (!changed) continue;
       missing = markPassages(missing);
       // The marks just made aren't the page changing.
@@ -301,5 +329,6 @@ if (!globalThis.markedHighlighter) {
       if (!wait) watcher.observe(document, { childList: true, characterData: true, subtree: true });
     }
     watcher.disconnect();
-  })();
+  }
+  arrive();
 }

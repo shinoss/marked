@@ -413,7 +413,7 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
   dom.window.close();
 });
 
-async function openManager(library, name, stored = {}) {
+async function openManager(library, name, stored = {}, setup) {
   const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
@@ -421,6 +421,7 @@ async function openManager(library, name, stored = {}) {
   dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const mock = fixture(library);
   mock.api.storage.local.set({ markedBrowserImportAsked: 1, ...stored });
+  setup?.(mock.api);
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
   await import(`../manager.js?${name}`);
@@ -935,5 +936,54 @@ test('long lists build their rows as they near the window; Select all still take
   assert.equal($('list-label').textContent, '10 items');
   await search('"page 9"');
   assert.deepEqual(titles(), ['Page 9', ...Array.from({ length: 10 }, (_, i) => `Page ${90 + i}${i ? '' : ' python'}`)]);
+  dom.window.close();
+});
+
+// Access to the pages you visit isn't asked for at install. Marked asks in its
+// own page, says why and that what it reads stays on the device, and the
+// browser's prompt follows only from a click.
+test('Marked asks for access to the pages you visit in its own words, remembers Not now, and keeps a switch in Settings', async () => {
+  let granted = false;
+  const requested = [], removed = [], listeners = {};
+  const permissions = api => {
+    api.permissions = {
+      contains: async () => granted,
+      request: async request => { requested.push(request); granted = true; listeners.added?.(request); return true; },
+      remove: async request => { removed.push(request); granted = false; listeners.removed?.(request); return true; },
+      onAdded: { addListener: listener => { listeners.added = listener; } },
+      onRemoved: { addListener: listener => { listeners.removed = listener; } }
+    };
+  };
+  const empty = { id: 'root', children: [] };
+  let { dom, $, mock, settle } = await openManager(empty, 'site-access', {}, permissions);
+  assert.equal($('site-access').hidden, false, 'asked on first use, not at install');
+  assert.match($('site-access').textContent, /Let Marked read the pages you visit\?/);
+  assert.match($('site-access').textContent, /never leaves your device/);
+  assert.deepEqual(requested, [], 'no prompt until a click');
+  $('site-access-later').click(); await settle();
+  assert.ok($('site-access').hidden);
+  assert.ok((await mock.api.storage.local.get()).markedSiteAccessAsked, 'Not now is remembered');
+  assert.equal($('toast').textContent, 'You can allow it later in Settings → Browsing.');
+
+  assert.equal($('site-access-state').textContent, 'Not allowed');
+  $('site-access-toggle').click(); await settle();
+  assert.deepEqual(requested, [{ origins: ['<all_urls>'] }]);
+  assert.deepEqual([$('site-access-state').textContent, $('site-access-toggle').textContent], ['Allowed on all websites', 'Turn off']);
+  $('site-access-toggle').click(); await settle();
+  assert.deepEqual(removed, [{ origins: ['<all_urls>'] }], 'and it can be taken back');
+  assert.deepEqual([$('site-access-state').textContent, $('site-access-toggle').textContent], ['Not allowed', 'Allow']);
+  dom.window.close();
+
+  granted = true;
+  ({ dom, $ } = await openManager(empty, 'site-access-granted', {}, permissions));
+  assert.ok($('site-access').hidden, 'nothing to ask once it is allowed');
+  dom.window.close();
+
+  granted = false; requested.length = 0;
+  ({ dom, $, settle } = await openManager(empty, 'site-access-allow', {}, permissions));
+  $('allow-sites').click(); await settle();
+  assert.deepEqual(requested, [{ origins: ['<all_urls>'] }]);
+  assert.ok($('site-access').hidden);
+  assert.equal($('toast').textContent, 'Marked can now read the pages you visit. What it reads never leaves your device.');
   dom.window.close();
 });

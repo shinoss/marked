@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-let onClick, onAction, onMessage, onTabUpdated, onStorageChanged, onOmniboxInput, onOmniboxEnter, onCommand;
+let onClick, onAction, onMessage, onTabUpdated, onStorageChanged, onOmniboxInput, onOmniboxEnter, onCommand, onInstalled, onPermissionAdded, onPermissionRemoved;
 const menus = [], opened = [], focused = [], badges = [], defaults = [];
 let tabs = [];
 globalThis.browser = {
@@ -12,7 +12,9 @@ globalThis.browser = {
     create: details => { menus.push(details); },
     onClicked: { addListener: listener => { onClick = listener; } }
   },
-  runtime: { getURL: path => `moz-extension://marked/${path}`, onMessage: { addListener: listener => { onMessage = listener; } } },
+  runtime: { getURL: path => `moz-extension://marked/${path}`, onMessage: { addListener: listener => { onMessage = listener; } }, onInstalled: { addListener: listener => { onInstalled = listener; } } },
+  // Access to the pages you visit is granted unless a test takes it back.
+  permissions: { contains: async () => true, onAdded: { addListener: listener => { onPermissionAdded = listener; } }, onRemoved: { addListener: listener => { onPermissionRemoved = listener; } } },
   storage: { session: { get: async () => ({}) }, onChanged: { addListener: listener => { onStorageChanged = listener; } } },
   tabs: {
     create: async details => { opened.push(details); },
@@ -114,7 +116,8 @@ test('Save tweet to Marked is offered only where its content script runs', () =>
   const item = menus.find(menu => menu.id === 'save-tweet-to-marked');
   assert.equal(item.title, 'Save tweet to Marked');
   assert.deepEqual(item.contexts, ['page', 'link', 'image', 'video', 'selection']);
-  assert.deepEqual(item.documentUrlPatterns, manifest.content_scripts[0].matches);
+  // The same sites the tweet page script is registered for (see the page scripts test).
+  assert.deepEqual(item.documentUrlPatterns, ['https://x.com/*', 'https://twitter.com/*']);
 });
 
 test('Save tweet to Marked opens the editor with the tweet under the pointer', async t => {
@@ -188,7 +191,7 @@ test('without its content script, Save tweet to Marked adds it and asks for anot
 test('in Firefox, Save tweet to Marked asks for access to X while the click counts as user input', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const requested = [];
-  browser.permissions = { request: details => { requested.push(details); return Promise.resolve(true); } };
+  browser.permissions = { ...browser.permissions, request: details => { requested.push(details); return Promise.resolve(true); } };
   browser.storage.session.set = async () => {};
   browser.tabs.sendMessage = async () => jack;
   await saveTweet({ id: 9 });
@@ -440,4 +443,100 @@ test('the Marked button counts saved bookmarks related to an unsaved page, and o
   await ask({ type: 'marked:page-highlights', topics }, { id: 14, url: 'https://example.com/essay' });
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(badges.filter(badge => badge.tabId === 14).length, 0, 'a saved page keeps its check');
+});
+
+// Access to the pages you visit is asked for in Marked's own page, not at
+// install, so nothing runs in web pages until the user allows it.
+test('the page scripts run only once access to the pages you visit is granted, and stop when it is taken back', async () => {
+  let granted = false;
+  const registered = new Map(), injected = [];
+  browser.permissions.contains = async () => granted;
+  browser.scripting = {
+    getRegisteredContentScripts: async () => [...registered.values()],
+    registerContentScripts: async scripts => {
+      for (const script of scripts) {
+        if (registered.has(script.id)) throw new Error(`Duplicate script ID '${script.id}'`);
+        registered.set(script.id, script);
+      }
+    },
+    unregisterContentScripts: async ({ ids }) => { for (const id of ids) registered.delete(id); },
+    executeScript: async details => { injected.push([details.target.tabId, ...details.files]); return []; }
+  };
+  const open = [{ id: 1, url: 'https://example.com/' }, { id: 2, url: 'https://x.com/home' }, { id: 3, url: 'moz-extension://marked/manager.html' }];
+  const query = browser.tabs.query;
+  browser.tabs.query = async ({ url } = {}) => url ? open.filter(tab => url.some(pattern => tab.url.startsWith(pattern.replace('*/*', '').replace(/\*$/, '')))) : [];
+  const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
+  onInstalled({ reason: 'install' });
+  await settle();
+  assert.equal(registered.size, 0, 'nothing runs in pages before access is granted');
+
+  granted = true;
+  onPermissionAdded({ origins: ['<all_urls>'] });
+  await settle();
+  assert.deepEqual([...registered.values()].map(script => [script.id, script.matches, script.js, script.runAt, script.allFrames]), [
+    ['marked-highlighter', ['http://*/*', 'https://*/*'], ['highlighter.js'], 'document_idle', false],
+    ['marked-tweet-capture', ['https://x.com/*', 'https://twitter.com/*'], ['tweet-capture.js'], 'document_idle', false]
+  ]);
+  assert.deepEqual(injected, [[1, 'highlighter.js'], [2, 'highlighter.js'], [2, 'tweet-capture.js']], 'pages already open get them without a reload');
+  onPermissionAdded({ origins: ['<all_urls>'] });
+  onInstalled({ reason: 'update' });
+  await settle();
+  assert.equal(registered.size, 2, 'registered once, however often it syncs');
+
+  granted = false;
+  onPermissionRemoved({ origins: ['<all_urls>'] });
+  await settle();
+  assert.equal(registered.size, 0, 'taken back, they stop');
+  browser.tabs.query = query;
+  browser.permissions.contains = async () => true;
+});
+
+test('revisiting a saved post never asks its site for a card: what Marked sees while you browse stays on the device', async () => {
+  const mock = await useLibrary([{ title: 'Show HN: Marked', url: 'https://news.ycombinator.com/item?id=100' }]);
+  const fetched = [], injected = [];
+  globalThis.fetch = async url => { fetched.push(url); return new Response('null'); };
+  browser.scripting = { executeScript: async details => { injected.push(details); return []; } };
+  await onTabUpdated(7, { status: 'complete' }, { id: 7, url: 'https://news.ycombinator.com/item?id=100', title: 'Show HN: Marked' });
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(fetched, []);
+  assert.deepEqual(injected, [], 'nor is its page read');
+  delete globalThis.fetch;
+  void mock;
+});
+
+test('taking access back tells open pages to stand down, forgets their related counts, and clears every badge', async () => {
+  await useLibrary([{ title: 'Saved', url: 'https://example.com/saved' }]);
+  let granted = true;
+  browser.permissions.contains = async () => granted;
+  browser.scripting = { getRegisteredContentScripts: async () => [], registerContentScripts: async () => {}, unregisterContentScripts: async () => {}, executeScript: async () => [] };
+  const told = [];
+  browser.tabs.sendMessage = async (tabId, message) => { told.push([tabId, message.type, message.allowed]); return true; };
+  const query = browser.tabs.query;
+  const open = [{ id: 21, url: 'https://example.com/saved' }, { id: 22, url: 'https://other.test/' }];
+  browser.tabs.query = async () => open;
+  const session = { 'related:22': { key: 'https://other.test/', count: 2 }, 'capture-1': {} };
+  browser.storage.session.get = async () => ({ ...session });
+  browser.storage.session.remove = async keys => { for (const key of [].concat(keys)) delete session[key]; };
+  const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
+  badges.length = 0;
+  await onTabUpdated(21, { status: 'complete' }, open[0]);
+  await settle();
+  assert.deepEqual(badges.filter(badge => badge.tabId === 21).at(-1), { tabId: 21, text: '✓' });
+
+  granted = false; badges.length = 0;
+  onPermissionRemoved({ origins: ['<all_urls>'] });
+  await settle();
+  assert.deepEqual(told.sort(), [[21, 'marked:page-access', false], [22, 'marked:page-access', false]], 'pages already open drop their marks');
+  assert.deepEqual(badges.sort((a, b) => a.tabId - b.tabId), [{ tabId: 21, text: '' }, { tabId: 22, text: '' }], 'no ✓, though Marked can still see the address');
+  assert.deepEqual(Object.keys(session), ['capture-1'], 'related counts are forgotten');
+  await onTabUpdated(21, { status: 'complete' }, open[0]);
+  await settle();
+  assert.deepEqual(badges.filter(badge => badge.tabId === 21).at(-1), { tabId: 21, text: '' }, 'and it stays off');
+
+  told.length = 0; granted = true;
+  onPermissionAdded({ origins: ['<all_urls>'] });
+  await settle();
+  assert.deepEqual(told.sort(), [[21, 'marked:page-access', true], [22, 'marked:page-access', true]], 'given again, they come back');
+  browser.tabs.query = query;
+  browser.permissions.contains = async () => true;
 });

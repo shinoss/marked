@@ -10,6 +10,7 @@ import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
 import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
+import { ALL_SITES, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
@@ -1065,8 +1066,7 @@ async function readSite(node, signal) {
 async function downloadTexts() {
   // Reading other sites needs access to them. Ask while the click still counts
   // as user input; without one, go ahead if access was already given.
-  const sites = { origins: ['<all_urls>'] };
-  const access = browser.permissions?.request?.(sites).catch(() => browser.permissions.contains(sites)).catch(() => false);
+  const access = browser.permissions?.request?.(ALL_SITES).catch(() => browser.permissions.contains(ALL_SITES)).catch(() => false);
   const targets = textsMissing();
   if (!targets.length || textDownload.controller) return;
   if (await access === false) { $('text-status').textContent = 'Allow Marked on all websites to download pages, then try again.'; return; }
@@ -1590,12 +1590,37 @@ $('tag-form').addEventListener('submit', async event => {
     $('tag-dialog').close(); await load(); toast(`Added the tag “${tag}”.`);
   } catch (error) { $('tag-error').textContent = error.message; }
 });
-// Firefox may leave content-script sites ungranted; the Highlight button needs all of them.
-const ALL_SITES = ['http://*/*', 'https://*/*'];
-$('allow-sites').addEventListener('click', async () => {
-  try { if (await browser.permissions.request({ origins: ALL_SITES })) $('site-access').hidden = true; } catch (error) { fail(error); }
+// Access to the pages you visit is asked for here, in Marked's own words, not
+// at install. "Not now" puts the question away; Settings → Browsing keeps the switch.
+let siteAccess = false;
+async function renderSiteAccess() {
+  siteAccess = await hasSiteAccess(browser);
+  const asked = await browser.storage.local.get(SITE_ACCESS_ASKED_KEY).then(saved => !!saved[SITE_ACCESS_ASKED_KEY], () => false);
+  $('site-access').hidden = siteAccess || asked;
+  $('site-access-state').textContent = siteAccess ? 'Allowed on all websites' : 'Not allowed';
+  $('site-access-toggle').textContent = siteAccess ? 'Turn off' : 'Allow';
+}
+// The browser shows its prompt only for a request made in the click itself.
+function allowSites() {
+  return browser.permissions.request(ALL_SITES).then(granted => {
+    if (granted) toast('Marked can now read the pages you visit. What it reads never leaves your device.');
+    return renderSiteAccess();
+  }).catch(fail);
+}
+$('allow-sites').addEventListener('click', allowSites);
+$('site-access-later').addEventListener('click', () => {
+  $('site-access').hidden = true;
+  browser.storage.local.set({ [SITE_ACCESS_ASKED_KEY]: Date.now() }).catch(() => {});
+  toast('You can allow it later in Settings → Browsing.');
 });
-browser.permissions?.contains?.({ origins: ALL_SITES }).then(granted => { $('site-access').hidden = granted; }, () => {});
+$('site-access-toggle').addEventListener('click', () => {
+  if (!siteAccess) { allowSites(); return; }
+  browser.permissions.remove(ALL_SITES).then(renderSiteAccess).catch(fail);
+});
+// Granted or taken back in another Marked page or the browser's own settings.
+browser.permissions?.onAdded?.addListener(() => { renderSiteAccess(); });
+browser.permissions?.onRemoved?.addListener(() => { renderSiteAccess(); });
+renderSiteAccess();
 $('note-edit').addEventListener('click', () => { $('note-dialog').close(); if (noteNode) openEditor(noteNode); });
 // Enter adds the typed tag instead of submitting the editor.
 $('new-tag').addEventListener('keydown', event => {
@@ -1612,9 +1637,9 @@ $('open-all').addEventListener('click', async () => {
 // Saves the web pages open in this window to a new folder, to pick the session up later.
 let openTabs = [];
 $('save-tabs').addEventListener('click', async () => {
-  // Firefox shows other tabs' addresses only with site access. Ask while the
+  // Other tabs' addresses need access to the pages you visit. Ask while the
   // click still counts as user input; where access is granted this resolves at once.
-  const access = browser.permissions?.request?.({ origins: ['<all_urls>'] }).catch(() => false);
+  const access = browser.permissions?.request?.(ALL_SITES).catch(() => false);
   try {
     const granted = await access;
     const current = await browser.tabs.getCurrent();

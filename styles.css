@@ -312,8 +312,13 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: default; }
 .highlights-list .quote { margin: 0; max-height: none; }
 .highlight-note { grid-column: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .highlight-date { grid-column: 1; color: var(--muted); }
-.site-access { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; padding: 10px 12px; border: 1px solid var(--chip-line); background: var(--banner-bg); }
+/* Marked's own question for access to the pages you visit, before the browser's prompt. */
+.site-access { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; margin-bottom: 20px; padding: 12px 14px; border: 1px solid var(--chip-line); background: var(--banner-bg); }
+.site-access p { flex: 1 1 360px; margin: 0; }
+.site-access-actions { display: flex; gap: 16px; }
 .site-access button { padding: 0; font-weight: 600; }
+.site-access #site-access-later { font-weight: 400; color: var(--muted); }
+.site-access-setting { display: flex; align-items: baseline; gap: 16px; margin: 8px 0 20px; }
 .table-wrap:not(.gallery) .item-age::before { content: none; }
 .gallery .item-text { padding-top: 4px; }
 .item-location { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

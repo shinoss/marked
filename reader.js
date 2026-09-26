@@ -8,6 +8,7 @@ import { cleanHighlightText, safeURL, HIGHLIGHT_COLORS } from './bookmarks.js';
 import { fetchPageText, readingMinutes, searchTerms, READING_KEY } from './page-text.js';
 import { renderText, loadReadability, renderCard } from './text-view.js';
 import { documentTerms, expandIndex, similar, weigh, RELATED_KEY } from './related.js';
+import { ALL_SITES } from './site-access.js';
 
 const library = createLibraryStore(browser);
 // The window, through the document, as the library page does, so tests can supply one.
@@ -141,8 +142,7 @@ function showEmpty() {
   download.hidden = !/^https?:/.test(node.url);
   download.onclick = async () => {
     // Reading another site needs access to it; ask while the click counts as user input.
-    const sites = { origins: ['<all_urls>'] };
-    const access = browser.permissions?.request?.(sites).catch(() => browser.permissions.contains(sites)).catch(() => false);
+    const access = browser.permissions?.request?.(ALL_SITES).catch(() => browser.permissions.contains(ALL_SITES)).catch(() => false);
     download.disabled = true;
     $('reader-error').textContent = '';
     try {

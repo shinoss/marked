@@ -1,9 +1,9 @@
-// Content script for x.com and twitter.com, declared in manifest.json. It notes
-// the tweet under the pointer when the context menu opens and gives it to
-// background.js for "Save tweet to Marked". background.js may also inject it
-// again, so it registers its listeners once and declares no top-level let or
-// const. Content scripts are classic scripts, not modules; tests evaluate this
-// file in a JSDOM window.
+// Content script for x.com and twitter.com, registered by background.js once
+// Marked is allowed there. It notes the tweet under the pointer when the
+// context menu opens and gives it to background.js for "Save tweet to Marked".
+// background.js may also inject it again, so it registers its listeners once
+// and declares no top-level let or const. Content scripts are classic scripts,
+// not modules; tests evaluate this file in a JSDOM window.
 
 // Returns { url, author, handle, text } for the tweet containing target, or null.
 // Signed-in X marks tweets with data-testid attributes. Its signed-out client

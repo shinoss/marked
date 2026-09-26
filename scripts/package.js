@@ -13,9 +13,6 @@ export function manifestFor(browser, manifest) {
     // Chrome reports background.scripts as an MV2-only key.
     delete out.background.scripts;
     delete out.browser_specific_settings;
-    // <all_urls> already grants what activeTab would, and reviewers read the
-    // pair as asking for more than the extension needs.
-    out.permissions = out.permissions.filter(permission => permission !== 'activeTab');
   } else if (browser === 'firefox') {
     delete out.background.service_worker;
     delete out.minimum_chrome_version;

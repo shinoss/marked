@@ -30,13 +30,16 @@ function unzip(archive) {
   return files;
 }
 
-test('the Chrome package drops Firefox-only keys and activeTab, which <all_urls> already covers', () => {
+// Access to all sites is optional, asked for in Marked's page, so activeTab
+// stays: it lets the button, the menu, and the shortcuts read the current tab.
+test('the Chrome package drops Firefox-only keys and keeps the same permissions', () => {
   const chrome = manifestFor('chrome', manifest);
   assert.deepEqual(chrome.background, { service_worker: 'background.js', type: 'module' });
   assert.equal(chrome.browser_specific_settings, undefined);
-  assert.deepEqual(chrome.permissions, manifest.permissions.filter(permission => permission !== 'activeTab'));
-  assert.ok(!chrome.permissions.includes('activeTab'));
-  assert.deepEqual(chrome.host_permissions, ['<all_urls>']);
+  assert.deepEqual(chrome.permissions, manifest.permissions);
+  assert.ok(chrome.permissions.includes('activeTab'));
+  assert.equal(chrome.host_permissions, undefined);
+  assert.deepEqual(chrome.optional_host_permissions, ['<all_urls>']);
   assert.equal(chrome.minimum_chrome_version, manifest.minimum_chrome_version);
   assert.equal(chrome.version, manifest.version);
   // The repo's dual manifest is left as it is.
@@ -66,12 +69,15 @@ test('packages take the extension’s own files and nothing from docs, tests, th
 });
 
 test('every file the manifest and the pages load is packaged', async () => {
+  const root = new URL('..', import.meta.url);
+  // The page scripts background.js registers once access is granted.
+  const background = await readFile(new URL('background.js', root), 'utf8');
+  const pageScripts = [...background.matchAll(/\bjs: \['([^']+)'\]/g)].map(match => match[1]);
+  assert.deepEqual(pageScripts, ['highlighter.js', 'tweet-capture.js']);
   const referenced = [
-    ...manifest.background.scripts, manifest.background.service_worker,
-    ...manifest.content_scripts.flatMap(script => script.js),
+    ...manifest.background.scripts, manifest.background.service_worker, ...pageScripts,
     ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)
   ];
-  const root = new URL('..', import.meta.url);
   for (const page of (await readdir(root)).filter(name => name.endsWith('.html'))) {
     const html = await readFile(new URL(page, root), 'utf8');
     referenced.push(page, ...[...html.matchAll(/\s(?:src|href)="([^"#:]+)"/g)].map(match => match[1]));

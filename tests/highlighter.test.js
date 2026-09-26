@@ -155,3 +155,25 @@ test('on load, the page says what it is about: title, description, main headings
   await tick(page.window);
   assert.deepEqual(page.sent[0], { type: 'marked:page-highlights', topics: { title: 'On attention · Essays', description: 'Deciding what deserves it.', headings: ['On attention', 'Why it matters'], lead: opening } });
 });
+
+// Access to the pages you visit can be taken back in Marked while the page is open.
+test('taken back, a page drops its marks and stops offering Highlight; given again, the marks return', async () => {
+  const page = load('<p id="text">Green words and blue words.</p>', { 'marked:page-highlights': { highlights: [{ id: '1', text: 'Green words', color: 'green', note: 'A note.' }] } });
+  await tick(page.window);
+  const paragraph = page.window.document.getElementById('text');
+  const marks = () => page.window.document.querySelectorAll('marked-highlight').length;
+  assert.equal(marks(), 1);
+  let answered = false;
+  page.listen({ type: 'marked:page-access', allowed: false }, {}, () => { answered = true; });
+  assert.ok(answered);
+  assert.equal(marks(), 0);
+  assert.deepEqual([paragraph.textContent, paragraph.childNodes.length], ['Green words and blue words.', 1], 'the text is whole again');
+  page.select('#text'); await page.mouseup('#text');
+  assert.equal(page.box(), null, 'no Highlight button without access');
+
+  page.listen({ type: 'marked:page-access', allowed: true }, {}, () => {});
+  await tick(page.window);
+  assert.equal(marks(), 1, 'marked again');
+  page.select('#text'); await page.mouseup('#text');
+  assert.deepEqual(page.buttons(), ['Highlight']);
+});

@@ -20,13 +20,14 @@ test('one manifest runs in both Chrome and Firefox', async () => {
 });
 
 // Firefox shows required data types at install. Gallery posts load from X
-// (each saved post's ID) and saved Hacker News and GitHub pages get their card
-// from the sites' APIs when saved or revisited, both without asking. Semantic
-// search, which sends the query and each bookmark's title, abstract, and (if
-// allowed) notes and highlights to TypeSafe, is opt-in, so its types are optional.
+// (each saved post's ID) without asking. Hacker News and GitHub cards come from
+// the sites' APIs only when a page is saved or its text downloaded, never while
+// browsing. Semantic search, which sends the query and each bookmark's title,
+// abstract, and (if allowed) notes and highlights to TypeSafe, is opt-in, so
+// its types are optional.
 test('Firefox is told what data leaves the device', () => {
   const data = manifest.browser_specific_settings.gecko.data_collection_permissions;
-  assert.deepEqual(data, { required: ['bookmarksInfo', 'browsingActivity'], optional: ['searchTerms', 'websiteContent'] });
+  assert.deepEqual(data, { required: ['bookmarksInfo'], optional: ['searchTerms', 'websiteContent'] });
   assert.ok(!data.required.includes('none'));
   assert.ok(data.optional.every(type => !data.required.includes(type)));
   // Built-in data consent needs Firefox 140; Marked needs 142 anyway.
@@ -42,28 +43,21 @@ test('extension and toolbar icons are PNG files, which Chrome requires', async (
   }
 });
 
-// The highlighter saves pages from a click in the page, not in Marked's own UI, so
-// activeTab does not apply; capturing a preview then needs <all_urls>.
-test('page capture uses scripting with activeTab or, for the highlighter, <all_urls>', () => {
+// Nothing asks for the pages you visit at install: access to all sites is
+// optional, asked for in Marked's own page, and the page scripts are registered
+// only once it's granted (background.js). Until then, activeTab lets the
+// button, the menu, and the shortcuts read the tab they were used on. The
+// highlighter saves pages from a click in the page, where activeTab does not
+// apply; capturing a preview there uses the granted <all_urls>.
+test('access to the pages you visit is optional, and nothing runs in pages until it is granted', async () => {
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('scripting'));
-  assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
-});
-
-test('the tweet content script runs only in the top frame of x.com and twitter.com', async () => {
-  const script = manifest.content_scripts.find(entry => entry.js.includes('tweet-capture.js'));
-  assert.deepEqual(script.matches, ['https://x.com/*', 'https://twitter.com/*']);
-  assert.deepEqual(script.js, ['tweet-capture.js']);
-  assert.equal(script.run_at, 'document_idle');
-  assert.equal(script.all_frames, false);
-  await exists(script.js[0]);
-});
-
-test('the highlighter runs in the top frame of every web page', async () => {
-  const script = manifest.content_scripts.find(entry => entry.js.includes('highlighter.js'));
-  assert.deepEqual(script.matches, ['http://*/*', 'https://*/*']);
-  assert.equal(script.all_frames, false);
+  assert.equal(manifest.host_permissions, undefined);
+  assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
+  // Declared content scripts would ask for their sites at install.
+  assert.equal(manifest.content_scripts, undefined);
   await exists('highlighter.js');
+  await exists('tweet-capture.js');
 });
 
 test('mk searches Marked from the address bar, and Alt+Shift+M adds the page, with no new permissions', () => {
