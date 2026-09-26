@@ -49,19 +49,39 @@ export function documentTerms({ title = '', tags = [], note = '', highlights = [
 
 // docs: [{ id, terms }]. Keeps each bookmark's keep most telling terms.
 export function buildIndex(docs, keep = 40) {
-  const df = new Map();
-  for (const { terms } of docs) for (const term of terms.keys()) df.set(term, (df.get(term) || 0) + 1);
-  const index = { n: docs.length, df, vectors: new Map(), postings: new Map() };
-  for (const { id, terms } of docs) {
-    // Even a word no other bookmark uses stays: a page you visit may share it.
-    const vector = weigh(index, terms, keep);
-    index.vectors.set(id, vector);
-    for (const [term, weight] of vector) {
-      const list = index.postings.get(term) ?? index.postings.set(term, []).get(term);
-      list.push([id, weight]);
+  const builder = indexBuilder(keep);
+  for (const { id, terms } of docs) builder.add(id, terms);
+  builder.weigh();
+  return builder.index;
+}
+// buildIndex a little at a time, so a page can do it while idle: add every
+// bookmark's terms, then weigh(count) a few bookmarks at a time until it says
+// they all are. index is complete only then.
+export function indexBuilder(keep = 40) {
+  const docs = [], index = { n: 0, df: new Map(), vectors: new Map(), postings: new Map() };
+  let weighed = 0;
+  return {
+    index,
+    add(id, terms) {
+      docs.push({ id, terms });
+      index.n = docs.length;
+      for (const term of terms.keys()) index.df.set(term, (index.df.get(term) || 0) + 1);
+    },
+    weigh(count = Infinity) {
+      for (const end = Math.min(docs.length, weighed + count); weighed < end; weighed++) {
+        const { id, terms } = docs[weighed];
+        // Even a word no other bookmark uses stays: a page you visit may share it.
+        const vector = weigh(index, terms, keep);
+        index.vectors.set(id, vector);
+        for (const [term, weight] of vector) {
+          const list = index.postings.get(term) ?? index.postings.set(term, []).get(term);
+          list.push([id, weight]);
+        }
+        docs[weighed] = null;
+      }
+      return weighed === docs.length;
     }
-  }
-  return index;
+  };
 }
 // Terms weighted by TF-IDF, the keep strongest, scaled to length 1; terms fewer
 // than minDf bookmarks use are left out.

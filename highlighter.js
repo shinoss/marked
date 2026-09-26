@@ -17,35 +17,49 @@ function selectedText(selection) {
 }
 
 // The page's text without whitespace, so a passage matches however the page
-// breaks it into lines, paragraphs, and elements, with where each character is.
+// breaks it into lines, paragraphs, and elements, with where each text node
+// starts in it. Long pages have tens of thousands of text nodes, so elements
+// are checked once each and characters are found only where a passage is.
 function pageText(root) {
-  const segments = [];
-  let text = '';
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: node => node.parentElement?.closest('script, style, noscript, textarea, select, marked-highlighter, marked-note, [contenteditable]:not([contenteditable="false"])') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  // Text in these is never marked. (Not a top-level const: this file can be
+  // injected again into a page that has it.)
+  const UNMARKED = 'script, style, noscript, textarea, select, marked-highlighter, marked-note, [contenteditable]:not([contenteditable="false"])';
+  const segments = [], chunks = [];
+  let length = 0;
+  if (root.closest(UNMARKED)) return { text: '', segments };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: node => node.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : node.matches(UNMARKED) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP
   });
   for (let node; (node = walker.nextNode());) {
-    const offsets = [];
-    let chunk = '';
-    for (let i = 0; i < node.data.length; i++) if (!/\s/.test(node.data[i])) { chunk += node.data[i]; offsets.push(i); }
-    if (chunk) { segments.push({ node, start: text.length, offsets }); text += chunk; }
+    const chunk = node.data.replace(/\s+/g, '');
+    if (chunk) { segments.push({ node, start: length, length: chunk.length }); chunks.push(chunk); length += chunk.length; }
   }
-  return { text, segments };
+  return { text: chunks.join(''), segments };
+}
+// Where the nth character that isn't a space is in data.
+function nonSpaceOffset(data, n) {
+  for (let i = 0; i < data.length; i++) if (!/\s/.test(data[i]) && n-- === 0) return i;
+  return data.length;
 }
 // The pieces of text nodes that hold passage, in page order, or [] if it isn't there.
 function locate(page, passage) {
   const needle = String(passage).replace(/\s+/g, '');
   const at = needle ? page.text.indexOf(needle) : -1;
   if (at < 0) return [];
-  const end = at + needle.length, pieces = [];
-  page.segments.forEach((segment, order) => {
-    const last = segment.start + segment.offsets.length;
-    if (last <= at || segment.start >= end) return;
+  const end = at + needle.length, pieces = [], { segments } = page;
+  // The last segment starting at or before the passage holds its start.
+  let low = 0, high = segments.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (segments[middle].start <= at) low = middle; else high = middle - 1;
+  }
+  for (let order = low; order < segments.length && segments[order].start < end; order++) {
+    const { node, start, length } = segments[order];
     // Spaces between the pieces are marked too, so the passage reads as one highlight.
-    const from = segment.start <= at ? segment.offsets[at - segment.start] : 0;
-    const to = last >= end ? segment.offsets[end - 1 - segment.start] + 1 : segment.node.data.length;
-    pieces.push({ node: segment.node, from, to, order });
-  });
+    const from = start <= at ? nonSpaceOffset(node.data, at - start) : 0;
+    const to = start + length >= end ? nonSpaceOffset(node.data, end - 1 - start) + 1 : node.data.length;
+    pieces.push({ node, from, to, order });
+  }
   return pieces;
 }
 
@@ -269,15 +283,23 @@ if (!globalThis.markedHighlighter) {
       lead: lead.trim().slice(0, 1000)
     };
   };
-  // Pages that build their text after loading get two more tries.
+  // Pages that build their text after loading get two more tries, each only if
+  // the page changed since the last: another look at the same page finds nothing new.
   (async () => {
     let reply;
     try { reply = await api.runtime.sendMessage({ type: 'marked:page-highlights', topics: topics() }); } catch { return; }
-    let missing = reply?.highlights || [];
+    let missing = reply?.highlights || [], changed = true;
+    const watcher = new MutationObserver(() => { changed = true; });
     for (const wait of [0, 1500, 5000]) {
-      if (!missing.length || !document.body) return;
+      if (!missing.length || !document.body) break;
       if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+      if (!changed) continue;
       missing = markPassages(missing);
+      // The marks just made aren't the page changing.
+      watcher.takeRecords();
+      changed = false;
+      if (!wait) watcher.observe(document, { childList: true, characterData: true, subtree: true });
     }
+    watcher.disconnect();
   })();
 }

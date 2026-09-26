@@ -2,11 +2,13 @@ import { safeURL, cleanAbstract, cleanNote, cleanTags, cleanHighlights, validIco
 import { cleanPageText } from './page-text.js';
 import { cleanCard } from './sites.js';
 
-// texts: saved page texts by bookmark id. Each rides along on its bookmark;
-// notes of pages that couldn't be read are left out.
-export function exportBackup(root, texts = {}) {
+// texts and previews: saved page texts and previews by bookmark id. Each rides
+// along on its bookmark; notes of pages that couldn't be read are left out.
+export function exportBackup(root, texts = {}, previews = {}) {
   return JSON.stringify({ format: 'marked', version: 1, exportedAt: new Date().toISOString(), children: root.children || [] },
-    (key, value) => value?.url && texts[value.id]?.text ? { ...value, text: texts[value.id] } : value);
+    (key, value) => value?.url && (texts[value.id]?.text || previews[value.id])
+      ? { ...value, ...(previews[value.id] && { preview: previews[value.id] }), ...(texts[value.id]?.text && { text: texts[value.id] }) }
+      : value);
 }
 export function parseBackup(data) {
   if (data?.format !== 'marked' || data.version !== 1 || !Array.isArray(data.children)) throw new Error('Unsupported Marked backup.');

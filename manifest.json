@@ -7,7 +7,7 @@
   "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["https://huggingface.co/*", "https://*.huggingface.co/*", "https://*.hf.co/*"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https: http:; img-src 'self' data:; worker-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https:; img-src 'self' data:; worker-src 'self'"
   },
   "omnibox": { "keyword": "mk" },
   "commands": {

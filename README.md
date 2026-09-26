@@ -213,5 +213,3 @@ npm run build            # extension ZIP in web-ext-artifacts/
 ```
 
 After changing the manifest or background script, reload the extension. The tests mock the browser and don't run the model.
-
-<p align="center"><sub>Screenshots show a demo library; the essay is a demo page served at <code>example.com</code>.</sub></p>

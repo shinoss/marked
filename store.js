@@ -7,14 +7,19 @@ import { cleanCard } from './sites.js';
 // changes the browser's own bookmarks.
 export const STORAGE_KEY = 'markedLibraryV1';
 // What web pages and the address bar need at a glance: each bookmark's address,
-// title, and highlights, without the previews the library holds. It is
-// rewritten with every change, so nothing reads the whole library on each page.
+// title, and highlights. It is rewritten when one of those changes, so nothing
+// reads the whole library on each page.
 export const INDEX_KEY = 'markedIndexV1';
 // Each bookmark's page text has a key of its own, apart from the library, so a
 // change to the library never rewrites every page's text.
 export const TEXT_PREFIX = 'markedText:';
 export const textKey = id => `${TEXT_PREFIX}${id}`;
-const bookmarkIds = node => node.url ? [node.id] : (node.children || []).flatMap(bookmarkIds);
+// So does each preview (a JPEG data URL): they are most of a library's size and
+// change only with their page, so an edit doesn't rewrite them all.
+export const PREVIEW_PREFIX = 'markedPreview:';
+export const previewKey = id => `${PREVIEW_PREFIX}${id}`;
+export const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
+const nodeIds = node => [node.id, ...(node.children || []).flatMap(nodeIds)];
 const LOCK = 'marked-library-write';
 // The tag list lives beside the tree; libraries saved before tags start with these.
 export const DEFAULT_TAGS = ['Technology', 'AI', 'History', 'Fiction'];
@@ -36,18 +41,44 @@ export function indexLibrary(root) {
   return { version: 1, pages };
 }
 const withIndex = library => ({ [STORAGE_KEY]: library, [INDEX_KEY]: indexLibrary(library.root) });
+// Moves the previews kept on nodes into entries of their own ({ key: preview })
+// and says whether there were any. Nodes carry one only on their way in (add)
+// and in libraries saved before previews had keys.
+function takeInline(root, entries) {
+  let found = false;
+  (function walk(node) {
+    if ('preview' in node) {
+      found = true;
+      if (validPreview(node.preview)) entries[previewKey(node.id)] = node.preview;
+      delete node.preview;
+    }
+    node.children?.forEach(walk);
+  })(root);
+  return found;
+}
 
 export function createLibraryStore(api, locks = navigator.locks) {
+  // Always under the lock.
   async function read() {
     const saved = (await api.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
     if (saved !== undefined) {
       if (saved.version !== 1 || !saved.root?.children) throw new Error('Cannot read the saved Marked library. Export a backup before changing extension data.');
+      // A library saved with its previews inside gives them keys of their own.
+      // They are written before the library without them, so a move cut short
+      // loses nothing and is made again on the next read.
+      const previews = {};
+      if (takeInline(saved.root, previews)) {
+        if (Object.keys(previews).length) await api.storage.local.set(previews);
+        await api.storage.local.set({ [STORAGE_KEY]: saved });
+      }
       return saved;
     }
     return null;
   }
-  async function initialize() {
-    return locks.request(LOCK, async () => {
+  // Calls made together, like the manager's for the tree and the tags, share one read.
+  let reading = null;
+  function initialize() {
+    reading ??= locks.request(LOCK, async () => {
       const saved = await read();
       if (saved) return saved;
       // A new library starts empty. Marked asks before importing the browser's
@@ -56,7 +87,8 @@ export function createLibraryStore(api, locks = navigator.locks) {
       const library = { version: 1, createdAt: now, root: { id: 'root', title: '', type: 'folder', dateAdded: now, children: [] } };
       await api.storage.local.set(withIndex(library));
       return library;
-    });
+    }).finally(() => { reading = null; });
+    return reading;
   }
   function find(root, id) {
     if (root.id === id) return root;
@@ -80,14 +112,19 @@ export function createLibraryStore(api, locks = navigator.locks) {
     if (node.id === root.id) throw new Error('The library root cannot be changed.');
     return node;
   }
-  // Changes the library under the lock; then, still under it, after(result)
-  // brings the page texts in line.
+  // Changes the library under the lock, writing the previews it gained in the
+  // same write and the index only if it changed; then, still under the lock,
+  // after(result) brings the page texts and old previews in line.
   async function mutate(action, after) {
     await initialize();
     return locks.request(LOCK, async () => {
       const library = await read();
+      const before = JSON.stringify(indexLibrary(library.root));
       const result = action(library.root, library);
-      await api.storage.local.set(withIndex(library));
+      const entries = {};
+      takeInline(library.root, entries);
+      const index = indexLibrary(library.root);
+      await api.storage.local.set({ ...entries, [STORAGE_KEY]: library, ...(JSON.stringify(index) !== before && { [INDEX_KEY]: index }) });
       return after ? after(result) : result;
     });
   }
@@ -95,19 +132,19 @@ export function createLibraryStore(api, locks = navigator.locks) {
     await initialize();
     return locks.request(LOCK, action);
   }
-  async function takeTexts(ids) {
-    if (!ids.length) return {};
-    const saved = await api.storage.local.get(ids.map(textKey));
-    const keys = Object.keys(saved);
-    if (keys.length) await api.storage.local.remove(keys);
-    return Object.fromEntries(keys.map(key => [key.slice(TEXT_PREFIX.length), saved[key]]));
+  // The saved page texts and previews of ids, by id, and their keys.
+  async function extras(ids) {
+    const saved = ids.length ? await api.storage.local.get(ids.flatMap(id => [textKey(id), previewKey(id)])) : {};
+    const byId = prefix => Object.fromEntries(Object.keys(saved).filter(key => key.startsWith(prefix)).map(key => [key.slice(prefix.length), saved[key]]));
+    return { keys: Object.keys(saved), texts: byId(TEXT_PREFIX), previews: byId(PREVIEW_PREFIX) };
   }
   function add(root, details, parent = destination(root, details.parentId)) {
     const type = details.type || (details.url ? 'bookmark' : 'folder');
     // Restored backups keep their original dates; everything else is new.
     const dateAdded = Number.isFinite(details.dateAdded) && details.dateAdded > 0 ? details.dateAdded : Date.now();
     const node = { id: crypto.randomUUID(), parentId: parent.id, title: details.title || '', type, dateAdded, ...(type === 'folder' ? { children: [] } : {}), ...(details.url ? { url: details.url } : {}) };
-    if (typeof details.preview === 'string' && details.preview.startsWith('data:image/jpeg;base64,') && details.preview.length < 500000) node.preview = details.preview;
+    // Until mutate moves it to a key of its own.
+    if (validPreview(details.preview)) node.preview = details.preview;
     if (validIcon(details.icon)) node.icon = details.icon;
     const card = type === 'bookmark' && cleanCard(details.card);
     if (card) node.card = card;
@@ -162,7 +199,6 @@ export function createLibraryStore(api, locks = navigator.locks) {
         // A new address is a different page: its preview, icon, card, and text go.
         if (changes.url !== undefined && changes.url !== node.url) {
           node.url = changes.url;
-          delete node.preview;
           delete node.icon;
           delete node.card;
           moved = true;
@@ -171,7 +207,6 @@ export function createLibraryStore(api, locks = navigator.locks) {
           const card = cleanCard(changes.card);
           if (card) node.card = card; else delete node.card;
         }
-        if (changes.preview === null) delete node.preview;
         if (changes.abstract !== undefined && node.url) {
           const abstract = cleanAbstract(changes.abstract);
           if (abstract) node.abstract = abstract; else delete node.abstract;
@@ -185,7 +220,10 @@ export function createLibraryStore(api, locks = navigator.locks) {
           if (tags.length) node.tags = tags; else delete node.tags;
           remember(library, tags);
         }
-      }, async () => { if (moved) await api.storage.local.remove(textKey(id)); });
+      }, async () => {
+        if (moved) await api.storage.local.remove([textKey(id), previewKey(id)]);
+        else if (changes.preview === null) await api.storage.local.remove(previewKey(id));
+      });
     },
     // Moves ids, in order, into parentId before beforeId (or at the end), and
     // returns where each was, for placeMany to put them back.
@@ -239,11 +277,14 @@ export function createLibraryStore(api, locks = navigator.locks) {
         }
         return records;
       }, async records => {
-        // The page texts go too, into the records, so Undo can bring them back.
-        const texts = await takeTexts(records.flatMap(({ node }) => bookmarkIds(node)));
+        // The page texts and previews go too, into the records, so Undo can bring them back.
+        const { keys, texts, previews } = await extras(records.flatMap(({ node }) => nodeIds(node)));
+        if (keys.length) await api.storage.local.remove(keys);
         for (const record of records) {
-          const own = bookmarkIds(record.node).filter(id => texts[id]);
-          if (own.length) record.texts = Object.fromEntries(own.map(id => [id, texts[id]]));
+          for (const [field, saved] of [['texts', texts], ['previews', previews]]) {
+            const own = nodeIds(record.node).filter(id => saved[id]);
+            if (own.length) record[field] = Object.fromEntries(own.map(id => [id, saved[id]]));
+          }
         }
         return records;
       });
@@ -263,8 +304,10 @@ export function createLibraryStore(api, locks = navigator.locks) {
           parent.children.splice(Math.min(record.index, parent.children.length), 0, node);
         }
       }, async () => {
-        const texts = Object.assign({}, ...records.map(record => record.texts || {}));
-        const entries = Object.entries(texts).map(([id, text]) => [textKey(id), text]);
+        const entries = records.flatMap(record => [
+          ...Object.entries(record.texts || {}).map(([id, text]) => [textKey(id), text]),
+          ...Object.entries(record.previews || {}).map(([id, preview]) => [previewKey(id), preview])
+        ]);
         if (entries.length) await api.storage.local.set(Object.fromEntries(entries));
       });
     },
@@ -364,7 +407,7 @@ export function createLibraryStore(api, locks = navigator.locks) {
           const seen = new Set();
           const highlights = nodes.flatMap(node => node.highlights || []).filter(highlight => !seen.has(highlight.text) && seen.add(highlight.text));
           if (highlights.length) keep.highlights = highlights.slice(0, HIGHLIGHTS_PER_BOOKMARK);
-          for (const field of ['abstract', 'preview', 'icon', 'card']) {
+          for (const field of ['abstract', 'icon', 'card']) {
             const found = keep[field] || copies.find(node => node[field])?.[field];
             if (found) keep[field] = found;
           }
@@ -378,15 +421,19 @@ export function createLibraryStore(api, locks = navigator.locks) {
         return removed;
       }, async removed => {
         if (!merged.length) return removed;
-        // The kept bookmark takes a copy's page text if it has none of its own.
-        const texts = await takeTexts(merged.flatMap(group => group.copies));
-        const saved = await api.storage.local.get(merged.map(group => textKey(group.keep)));
+        // The kept bookmark takes a copy's page text and preview if it has none
+        // of its own; then the copies' go.
+        const copies = await extras(merged.flatMap(group => group.copies));
+        const kept = await extras(merged.map(group => group.keep));
         const adopted = {};
-        for (const { keep, copies } of merged) {
-          const found = copies.map(id => texts[id]).find(text => text?.text);
-          if (found && !saved[textKey(keep)]?.text) adopted[textKey(keep)] = found;
+        for (const { keep, copies: ids } of merged) {
+          const text = ids.map(id => copies.texts[id]).find(text => text?.text);
+          if (text && !kept.texts[keep]?.text) adopted[textKey(keep)] = text;
+          const preview = ids.map(id => copies.previews[id]).find(Boolean);
+          if (preview && !kept.previews[keep]) adopted[previewKey(keep)] = preview;
         }
         if (Object.keys(adopted).length) await api.storage.local.set(adopted);
+        if (copies.keys.length) await api.storage.local.remove(copies.keys);
         return removed;
       });
     },
@@ -431,6 +478,12 @@ export function createLibraryStore(api, locks = navigator.locks) {
       if (!ids.length) return {};
       const saved = await api.storage.local.get(ids.map(textKey));
       return Object.fromEntries(ids.filter(id => saved[textKey(id)]).map(id => [id, saved[textKey(id)]]));
+    },
+    // Previews by bookmark id, for those of ids that have one.
+    async getPreviews(ids) {
+      if (!ids.length) return {};
+      const saved = await api.storage.local.get(ids.map(previewKey));
+      return Object.fromEntries(ids.filter(id => saved[previewKey(id)]).map(id => [id, saved[previewKey(id)]]));
     },
     // Keeps a page's text with its bookmark and returns it as saved. Unless
     // replace, a text already saved stays; a failure never replaces a text.

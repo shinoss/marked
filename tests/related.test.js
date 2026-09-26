@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenize, documentTerms, buildIndex, similar, weigh, compactIndex, expandIndex } from '../related.js';
+import { tokenize, documentTerms, buildIndex, indexBuilder, similar, weigh, compactIndex, expandIndex } from '../related.js';
 
 const library = [
   ['transformer', { title: 'Transformer (deep learning architecture)', tags: ['AI'], text: 'A transformer relates tokens with multi-head attention. It trains on GPUs.' }],
@@ -30,6 +30,16 @@ test('similar bookmarks come first, with the words they share; unrelated ones do
   assert.deepEqual(like('taxes'), [], 'nothing shares its words');
   const page = weigh(index, documentTerms({ title: 'How attention works in transformers' }));
   assert.equal(similar(index, page)[0].id, 'attention', 'a page not in Marked finds its bookmarks too');
+});
+
+test('an index built a slice at a time, as the library page does while idle, is the one built at once', () => {
+  const builder = indexBuilder();
+  for (const { id, terms } of library) builder.add(id, terms);
+  let slices = 1;
+  while (!builder.weigh(2)) slices++;
+  assert.equal(slices, 3);
+  const whole = buildIndex(library);
+  assert.deepEqual([builder.index.n, [...builder.index.df], [...builder.index.vectors], [...builder.index.postings]], [whole.n, [...whole.df], [...whole.vectors], [...whole.postings]]);
 });
 
 test('the stored index is small and finds the same bookmarks', () => {

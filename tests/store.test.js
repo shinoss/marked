@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLibraryStore, DEFAULT_TAGS } from '../store.js';
+import { createLibraryStore, DEFAULT_TAGS, STORAGE_KEY, INDEX_KEY, PREVIEW_PREFIX, previewKey } from '../store.js';
+import { exportBackup, parseBackup } from '../backup.js';
 import { fixture } from './storage-fixture.js';
 const tree = () => ({ id: 'root', children: [{ id: 'home', parentId: 'root', title: 'Home', children: [{ id: 'a', parentId: 'home', title: 'Original', url: 'https://example.com' }, { id: 'folder', parentId: 'home', title: 'Folder', children: [] }] }] });
 
@@ -111,20 +112,87 @@ test('undo preserves original order for multiple deleted siblings', async () => 
   assert.deepEqual(await store.getTree(), before);
 });
 
-test('stores local previews, preserves them through undo, and clears stale previews', async () => {
+test('stores local previews apart from the library, preserves them through undo, and clears stale previews', async () => {
   const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
   const preview = 'data:image/jpeg;base64,dGVzdA==';
+  const saved = async () => Object.fromEntries(Object.entries(await mock.api.storage.local.get()).filter(([key]) => key.startsWith(PREVIEW_PREFIX)));
   const node = await store.create({ parentId: 'home', title: 'Preview', url: 'https://example.test/', preview });
-  assert.equal(node.preview, preview);
-  await store.update(node.id, { title: 'Renamed', url: node.url });
+  assert.deepEqual(await store.getPreviews([node.id, 'a']), { [node.id]: preview });
+  assert.ok(!JSON.stringify((await mock.api.storage.local.get()).markedLibraryV1).includes('base64'), 'the library itself doesn’t hold the preview');
+  await store.update(node.id, { title: 'Renamed', url: node.url, preview });
+  assert.deepEqual(await saved(), { [previewKey(node.id)]: preview }, 'an edit keeps it');
   const deleted = await store.removeMany([node.id]);
-  assert.equal(deleted[0].node.preview, preview);
+  assert.deepEqual(deleted[0].previews, { [node.id]: preview });
+  assert.deepEqual(await saved(), {}, 'deleting a bookmark deletes its preview');
   await store.restoreMany(deleted);
+  assert.deepEqual(await store.getPreviews([node.id]), { [node.id]: preview }, 'Undo brings it back');
   await store.update(node.id, { title: 'Changed URL', url: 'https://different.test/' });
-  const [root] = await store.getTree();
-  assert.equal(root.children[0].children.find(n => n.id === node.id).preview, undefined);
+  assert.deepEqual(await saved(), {}, 'a new address is a different page');
+  const kept = await store.create({ parentId: 'home', title: 'Kept', url: 'https://kept.test/', preview });
+  await store.update(kept.id, { title: 'Kept', url: kept.url, preview: null });
+  assert.deepEqual(await saved(), {}, 'and the editor can drop one');
   const unsafe = await store.create({ parentId: 'home', title: 'No remote preview', url: node.url, preview: 'https://remote.test/image.jpg' });
-  assert.equal(unsafe.preview, undefined);
+  assert.deepEqual(await store.getPreviews([unsafe.id]), {});
+});
+
+test('libraries saved with previews inside move them to keys of their own, once, even if the move is cut short', async () => {
+  const preview = id => `data:image/jpeg;base64,${btoa(id)}`;
+  const library = tree();
+  library.children[0].children.push({ id: 'b', parentId: 'home', title: 'B', url: 'https://b.test/', preview: preview('b') }, { id: 'c', parentId: 'home', title: 'C', url: 'https://c.test/', preview: 'https://remote.test/image.jpg' });
+  library.children[0].children[1].children.push({ id: 'd', parentId: 'folder', title: 'D', url: 'https://d.test/', preview: preview('d'), tags: ['AI'] });
+  const mock = fixture(library);
+  const writes = [];
+  const set = mock.api.storage.local.set;
+  let cut = true;
+  mock.api.storage.local.set = async value => {
+    writes.push(Object.keys(value));
+    if (cut && STORAGE_KEY in value) throw new Error('Interrupted');
+    return set(value);
+  };
+  const store = createLibraryStore(mock.api, mock.locks);
+  await assert.rejects(store.getTree(), /Interrupted/);
+  assert.deepEqual(writes, [[previewKey('d'), previewKey('b')], [STORAGE_KEY]], 'the previews are written before the library without them');
+  assert.ok(JSON.stringify((await mock.api.storage.local.get()).markedLibraryV1).includes(preview('d')), 'until then the library keeps them');
+  cut = false; writes.length = 0;
+  const [root] = await store.getTree();
+  assert.deepEqual(writes, [[previewKey('d'), previewKey('b')], [STORAGE_KEY]], 'the next read makes the move again');
+  assert.ok(!JSON.stringify(root).includes('preview'));
+  assert.ok(!JSON.stringify((await mock.api.storage.local.get()).markedLibraryV1).includes('preview'));
+  assert.deepEqual(await store.getPreviews(['a', 'b', 'c', 'd']), { b: preview('b'), d: preview('d') }, 'a preview that isn’t JPEG data is dropped');
+  writes.length = 0;
+  await Promise.all([store.getTree(), store.getTags(), createLibraryStore(mock.api, mock.locks).getTree()]);
+  assert.deepEqual(writes, [], 'a moved library is only read');
+  assert.equal(root.children[0].children.find(node => node.id === 'folder').children[0].tags[0], 'AI', 'the rest of each bookmark stays');
+});
+
+test('previews follow their bookmark through merges and backups, and edits write neither previews nor an unchanged index', async () => {
+  const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
+  const two = 'data:image/jpeg;base64,dHdv', three = 'data:image/jpeg;base64,dGhyZWU=';
+  const first = await store.create({ parentId: 'home', title: 'First', url: 'https://page.test/', dateAdded: 1 });
+  const second = await store.create({ parentId: 'home', title: 'Second', url: 'https://page.test/#top', dateAdded: 2, preview: two });
+  const third = await store.create({ parentId: 'folder', title: 'Third', url: 'https://www.page.test/', dateAdded: 3, preview: three });
+  const writes = [];
+  const set = mock.api.storage.local.set;
+  mock.api.storage.local.set = async value => { writes.push(Object.keys(value)); return set(value); };
+  await store.update(first.id, { title: 'First', url: first.url, tags: ['AI'] });
+  await store.moveMany([first.id], 'folder');
+  assert.deepEqual(writes, [[STORAGE_KEY], [STORAGE_KEY]], 'a tag or a move rewrites neither the previews nor the index');
+  await store.update(first.id, { title: 'Renamed', url: first.url });
+  assert.deepEqual(writes.at(-1), [STORAGE_KEY, INDEX_KEY], 'a new title is in the index');
+  mock.api.storage.local.set = set;
+
+  assert.equal(await store.mergeDuplicates([[third.id, second.id, first.id]]), 2);
+  assert.deepEqual(await store.getPreviews([first.id, second.id, third.id]), { [first.id]: two }, 'the kept bookmark takes the oldest copy’s preview');
+  const keys = Object.keys(await mock.api.storage.local.get()).filter(key => key.startsWith(PREVIEW_PREFIX));
+  assert.deepEqual(keys, [previewKey(first.id)], 'and the copies’ go');
+
+  const [root] = await store.getTree();
+  const backup = exportBackup(root, {}, await store.getPreviews([first.id, 'a']));
+  const restored = await store.importTree(parseBackup(JSON.parse(backup)).nodes, 'root', 'Restored');
+  const copy = restored.children[0].children[1].children[0];
+  assert.equal(copy.title, 'Renamed');
+  assert.deepEqual(await store.getPreviews([copy.id]), { [copy.id]: two }, 'a restored backup keeps the preview under the new bookmark');
+  assert.ok(!JSON.stringify((await mock.api.storage.local.get()).markedLibraryV1).includes('base64'));
 });
 
 test('stores cleaned abstracts on bookmarks and lets edits change or clear them', async () => {

@@ -94,6 +94,10 @@ test('downloads a page without cookies, in its own encoding, and says why one ca
   await assert.rejects(fetchPageText('https://example.com/paper.pdf', { fetchImpl: respond('%PDF', { 'content-type': 'application/pdf' }) }), /Not a web page \(application\/pdf\)/);
   await assert.rejects(fetchPageText('https://example.com/empty', { fetchImpl: respond('<body><script>app()</script></body>', { 'content-type': 'text/html' }) }), /No readable text/);
   await assert.rejects(fetchPageText('https://down.test/', { fetchImpl: async () => { throw new TypeError('Failed to fetch'); } }), /Couldn’t reach the site/);
+  const asked = [];
+  await fetchPageText('http://example.com/essay?page=2', { fetchImpl: async (url, init) => { asked.push(url); return respond(article, { 'content-type': 'text/html' })(url, init); } });
+  assert.deepEqual(asked, ['https://example.com/essay?page=2'], 'a page saved at http is asked for at https');
+  await assert.rejects(fetchPageText('http://old.test/', { fetchImpl: async () => { throw new TypeError('Failed to fetch'); } }), /doesn’t answer over https/);
   const big = await fetchPageText('https://example.com/big', { limit: 1000, fetchImpl: respond(`<body><p>${'a '.repeat(5000)}</p></body>`, { 'content-type': 'text/html' }) });
   assert.ok(big.text.length < 1000, 'reads no more than the limit');
 });

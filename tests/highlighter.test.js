@@ -115,6 +115,19 @@ test('saved passages are marked again when the page opens; notes show only in Ma
   assert.equal(marks().at(-1), 'Loaded later');
 });
 
+test('a page that hasn’t changed isn’t searched again for a missing passage, and editable text is never marked', async () => {
+  const page = load('<div contenteditable="true">Kept <i>words</i></div><p>Other words</p>', { 'marked:page-highlights': { highlights: [{ id: '1', text: 'Kept words' }] } });
+  const document = page.window.document;
+  let walks = 0;
+  const createTreeWalker = document.createTreeWalker.bind(document);
+  document.createTreeWalker = (...args) => { walks++; return createTreeWalker(...args); };
+  await tick(page.window);
+  assert.equal(walks, 1);
+  assert.equal(document.querySelector('marked-highlight'), null, 'not in an editable area');
+  await new Promise(resolve => setTimeout(resolve, 1600));
+  assert.equal(walks, 1, 'the same page has nothing new to find');
+});
+
 test('the shortcut highlights the selection, or asks for one', async () => {
   const page = load('<p id="text">Pressed, not clicked.</p>', { 'marked:highlight': { saved: 'The essay' } });
   await tick(page.window);

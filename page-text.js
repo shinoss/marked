@@ -161,13 +161,16 @@ export async function captureTabText(api, tabId, url, { timeout = 4000, articles
 // Marked's own pages call this: the response is parsed as inert data, never
 // run, and no cookies go with the request.
 export async function fetchPageText(url, { signal, fetchImpl = globalThis.fetch, limit = 5 * 1024 * 1024, timeout = 20000 } = {}) {
+  // Marked's pages connect over https only (the manifest's connect-src), so a
+  // page saved at an http address is asked for at https, where most sites answer.
+  const secure = httpsOf(url);
   const timer = AbortSignal.timeout(timeout);
   let response;
   try {
-    response = await fetchImpl(url, { signal: signal ? AbortSignal.any([signal, timer]) : timer, credentials: 'omit', headers: { Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9' } });
+    response = await fetchImpl(secure, { signal: signal ? AbortSignal.any([signal, timer]) : timer, credentials: 'omit', headers: { Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9' } });
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new Error(timer.aborted ? 'The site took too long to answer.' : 'Couldn’t reach the site.');
+    throw new Error(timer.aborted ? 'The site took too long to answer.' : secure !== url ? 'The site doesn’t answer over https, so Marked can’t download this page.' : 'Couldn’t reach the site.');
   }
   if (!response.ok) throw new Error(`The site answered ${response.status}${response.statusText ? ` ${response.statusText}` : ''}.`);
   const type = (response.headers.get('content-type') || 'text/html').toLowerCase();
@@ -177,6 +180,14 @@ export async function fetchPageText(url, { signal, fetchImpl = globalThis.fetch,
   const record = cleanPageText(plain ? { text: markup } : readPageText(new DOMParser().parseFromString(markup, 'text/html')));
   if (!record?.text) throw new Error('No readable text on the page.');
   return record;
+}
+function httpsOf(url) {
+  try {
+    const address = new URL(url);
+    if (address.protocol !== 'http:') return url;
+    address.protocol = 'https:';
+    return address.href;
+  } catch { return url; }
 }
 async function readBody(response, limit) {
   if (!response.body?.getReader) return new Uint8Array(await response.arrayBuffer()).subarray(0, limit);

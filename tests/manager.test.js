@@ -184,7 +184,7 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children: [
     { id: 'pasta', parentId: 'unfiled_____', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark' },
-    { id: 'essay', parentId: 'unfiled_____', title: 'On attention', url: 'https://example.com/essays/attention?session=secret', type: 'bookmark', abstract: 'Deciding what deserves your attention.' }
+    { id: 'essay', parentId: 'unfiled_____', title: 'On attention', url: 'https://example.com/essays/attention?session=secret', type: 'bookmark', abstract: 'Deciding what deserves your attention.', note: 'Reread before the weekly review.', highlights: [{ id: 'h1', text: 'Deciding is the hard part.' }] }
   ] }] });
   const permissions = [];
   mock.api.permissions = { request: async request => { permissions.push(request); return true; } };
@@ -221,7 +221,8 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   assert.ok(!$('settings-dialog').open);
   assert.deepEqual(permissions, [{ origins: ['https://api.typesafe.ai/*'] }]);
   assert.equal(requests[0].auth, 'Bearer sk-test', 'the key is checked before it is saved');
-  assert.deepEqual((await browser.storage.local.get()).markedJev, { apiKey: 'sk-test', notes: true, highlights: true, preview: false });
+  assert.deepEqual((await browser.storage.local.get()).markedJev, { apiKey: 'sk-test', notes: false, highlights: false, preview: false }, 'notes and highlights stay home until turned on');
+  assert.ok(!$('jev-notes').checked && !$('jev-highlights').checked);
   assert.equal(pressed(), 'false');
 
   await type('protecting my focus');
@@ -229,7 +230,7 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   $('semantic-toggle').click(); await settle(50);
   assert.equal(requests.length, 2, 'choosing Semantic asks once');
   assert.equal(pressed(), 'true');
-  assert.equal(requests[1].body.state, 'B000| Weeknight pasta\nB001| On attention; Deciding what deserves your attention.', 'no address, folder, or tags');
+  assert.equal(requests[1].body.state, 'B000| Weeknight pasta\nB001| On attention; Deciding what deserves your attention.', 'no address, folder, or tags, and no note or highlight until they are turned on');
   assert.deepEqual(titles(), ['On attention'], 'found by meaning with no keyword in common');
   assert.equal($('semantic-status').textContent, 'Ranked by meaning with Jev. This search $0.000084 · $0.000086 in total.', 'the key check counts toward the total');
 
@@ -870,4 +871,69 @@ test('More like this shows the bookmarks that share a bookmark’s telling words
   assert.equal(asked.window.document.getElementById('page-title').textContent, 'Like “How attention works”');
   assert.equal([...asked.window.document.querySelectorAll('#items .item-title')][0].textContent, 'Attention (machine learning)');
   asked.window.close();
+});
+
+test('long lists build their rows as they near the window; Select all still takes every one, and renders keep unchanged rows', async () => {
+  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  globalThis.document = dom.window.document;
+  globalThis.DOMParser = dom.window.DOMParser;
+  const $ = id => document.getElementById(id);
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+  // jsdom has no IntersectionObserver; this one says the list's end is near when nearEnd() is called.
+  const watched = new Set();
+  let notify;
+  dom.window.IntersectionObserver = class { constructor(callback) { notify = callback; } observe(target) { watched.add(target); } unobserve(target) { watched.delete(target); } };
+  const nearEnd = () => notify([...watched].map(target => ({ target, isIntersecting: true })));
+  const children = Array.from({ length: 100 }, (_, i) => ({ id: `b${i}`, parentId: 'unfiled_____', title: `Page ${i}${i % 10 === 0 ? ' python' : ''}`, url: `https://example.com/${i}`, type: 'bookmark', dateAdded: 1000 - i, ...(i === 1 && { tags: ['Kept'] }) }));
+  const mock = fixture({ id: 'root________', children: [{ id: 'unfiled_____', parentId: 'root________', title: 'Other Bookmarks', children }] });
+  await mock.api.storage.local.set({ markedBrowserImportAsked: 1 });
+  globalThis.browser = mock.api;
+  Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
+  await import('../manager.js?rows');
+  const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  const search = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await new Promise(resolve => setTimeout(resolve, 150)); };
+  const rows = () => [...$('items').rows];
+  const selected = () => rows().every(row => row.querySelector('input').checked && row.classList.contains('selected'));
+  await settle();
+  assert.equal(rows().length, 40, 'only the first rows are built');
+  assert.equal($('list-label').textContent, '100 items');
+  $('select-all').click();
+  assert.equal($('selection-count').textContent, '100 selected', 'Select all takes every bookmark shown, built or not');
+  assert.ok(selected());
+  nearEnd();
+  assert.equal(rows().length, 80, 'more rows are built as the end nears');
+  assert.ok(selected(), 'selected, like the rest');
+  nearEnd(); nearEnd();
+  assert.deepEqual([rows().length, rows().at(-1).dataset.id], [100, 'b99']);
+  assert.equal($('select-all').checked, true);
+  const first = rows()[0];
+  $('clear-selection').click();
+  assert.equal(rows()[0], first, 'a render keeps a row that hasn’t changed');
+  assert.equal(first.querySelector('input').checked, false);
+  rows()[1].querySelector('.tag').click();
+  assert.equal($('page-title').textContent, 'Kept', 'a row’s buttons still work');
+  $('all-bookmarks').click();
+  const fourth = rows()[3];
+  rows()[2].querySelector('[aria-label="Edit Page 2"]').click();
+  assert.equal($('edit-name').value, 'Page 2');
+  $('edit-name').value = 'Renamed';
+  $('editor-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('editor-form').querySelector('[type=submit]') }));
+  await settle();
+  assert.equal(rows()[2].querySelector('.item-title').textContent, 'Renamed');
+  assert.equal(rows()[3], fourth, 'and after the library is read again');
+  rows()[3].querySelector('[aria-label="Edit Page 3"]').click();
+  assert.equal($('edit-name').value, 'Page 3', 'a kept row edits its bookmark as it is now');
+  $('editor').close();
+  // Typing more of the same words narrows the last results; anything else searches afresh.
+  const titles = () => rows().map(row => row.querySelector('.item-title').textContent);
+  await search('pyt');
+  assert.equal($('list-label').textContent, '10 items');
+  await search('python 5');
+  assert.deepEqual(titles(), ['Page 50 python']);
+  await search('pytho');
+  assert.equal($('list-label').textContent, '10 items');
+  await search('"page 9"');
+  assert.deepEqual(titles(), ['Page 9', ...Array.from({ length: 10 }, (_, i) => `Page ${90 + i}${i ? '' : ' python'}`)]);
+  dom.window.close();
 });

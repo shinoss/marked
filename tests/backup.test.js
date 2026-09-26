@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { exportBackup, parseBackup } from '../backup.js';
-import { createLibraryStore, STORAGE_KEY } from '../store.js';
+import { createLibraryStore, STORAGE_KEY, previewKey } from '../store.js';
 import { fixture } from './storage-fixture.js';
 
 const preview = 'data:image/jpeg;base64,/9j/AAAA';
@@ -60,7 +60,7 @@ test('restored items keep their original dates; other new items are dated now', 
   const [folder] = container.children;
   assert.equal(folder.dateAdded, 1000);
   assert.deepEqual(folder.children.map(n => [n.type, n.dateAdded]), [['bookmark', 2000], ['separator', 3000]]);
-  assert.equal(folder.children[0].preview, preview);
+  assert.deepEqual(await store.getPreviews([folder.children[0].id]), { [folder.children[0].id]: preview }, 'the preview is kept apart from the library');
   assert.equal(folder.children[0].abstract, 'What the article is about.');
 });
 
@@ -87,6 +87,7 @@ test('Export’s Backup downloads a Marked file that Import restores with dates 
   $('export-backup').click();
   await flush();
   assert.match(filename, /^marked-backup-\d{4}-\d{2}-\d{2}\.json$/);
+  assert.equal(JSON.parse(await blob.text()).children[0].children[0].preview, preview, 'the backup carries the preview, moved out of the library when it was first read');
 
   const file = new File([await blob.text()], filename, { type: 'application/json' });
   Object.defineProperty($('import-file'), 'files', { value: [file], configurable: true });
@@ -101,7 +102,8 @@ test('Export’s Backup downloads a Marked file that Import restores with dates 
   const imported = saved.children.find(node => node.title.startsWith('Imported'));
   const [article] = imported.children[0].children;
   assert.equal(article.dateAdded, 2000);
-  assert.equal(article.preview, preview);
+  assert.equal((await browser.storage.local.get(previewKey(article.id)))[previewKey(article.id)], preview);
+  assert.ok(!JSON.stringify(saved).includes('base64'), 'the library holds no previews');
   assert.equal(library().children[0].children.length, 3, 'browser bookmarks are unchanged');
   t.mock.timers.runAll();
   dom.window.close();

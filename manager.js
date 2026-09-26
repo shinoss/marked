@@ -1,11 +1,11 @@
 import './browser-api.js';
 import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram, HIGHLIGHT_COLORS } from './bookmarks.js';
 import { exportBackup, parseBackup } from './backup.js';
-import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX } from './store.js';
+import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX, PREVIEW_PREFIX } from './store.js';
 import { captureTabText, cleanPageText, fetchPageText, passageAround, readingStatus, searchTerms, PAGE_TEXT_SETTINGS_KEY, READING_KEY } from './page-text.js';
 import { markText, loadReadability, renderCard, cardStats } from './text-view.js';
 import { cleanCard, fetchSite, siteOf } from './sites.js';
-import { buildIndex, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
+import { indexBuilder, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
@@ -27,7 +27,16 @@ let pendingHighlight = '', pendingColor = 'yellow';
 // The page's text, and a post's card, when they came with the page from Add to Marked.
 let pendingText = null, pendingCard = null;
 // Saved page texts by bookmark id, read after the library; search looks through them.
-const pageTexts = new Map();
+// version counts changes, so work done over the texts knows when it's stale.
+const pageTexts = new class extends Map {
+  version = 0;
+  set(id, text) { this.version++; return super.set(id, text); }
+  delete(id) { this.version++; return super.delete(id); }
+  clear() { this.version++; super.clear(); }
+}();
+// Previews by bookmark id, kept apart from the library and read after it.
+const previews = new Map();
+let previewTimer;
 let textSettings = { keep: true };
 // Related bookmarks: an index of each bookmark's most telling words, built
 // when first needed after a change, and a smaller copy stored for the reader
@@ -40,7 +49,9 @@ const readerURL = (node, params = {}) => `reader.html?${new URLSearchParams({ id
 // Semantic search with the user's own Jev key. Jev is asked only when the user
 // chooses Semantic, never while typing.
 // preview is temporary: it works without a key and logs requests instead of sending them.
-let jev = { apiKey: '', notes: true, highlights: true, preview: false };
+// Notes and highlights go to Jev only after the user turns them on.
+const JEV_DEFAULTS = { apiKey: '', notes: false, highlights: false, preview: false };
+let jev = { ...JEV_DEFAULTS };
 let jevUsage = null;
 const semantic = { query: '', result: null, status: '', error: '', cost: 0, cached: false, controller: null, cache: new Map() };
 const semanticReady = () => !!jev.apiKey || jev.preview;
@@ -83,9 +94,20 @@ function button(text, action, className, label) {
   const el = element('button', className, text);
   el.type = 'button';
   if (label) { el.title = label; el.setAttribute('aria-label', label); }
-  el.addEventListener('click', action);
+  // A row's buttons name their action; one listener on the list runs it (rowActions).
+  if (typeof action === 'string') el.dataset.action = action;
+  else el.addEventListener('click', action);
   return el;
 }
+// Runs callback when the page is idle, or after timeout at the latest; Firefox
+// and Chrome have requestIdleCallback, and anything else gets a short timer.
+function whenIdle(callback, timeout = 1000) {
+  const win = document.defaultView;
+  if (win.requestIdleCallback) win.requestIdleCallback(callback, { timeout });
+  else setTimeout(() => callback({ timeRemaining: () => 0 }), 16);
+}
+// A slice of idle time to work in: what the browser offers, between 5 and 12 ms.
+const sliceEnd = deadline => performance.now() + Math.min(12, Math.max(5, deadline.timeRemaining()));
 function glyph(path) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -190,11 +212,22 @@ async function load() {
   render();
 }
 async function loadTexts() {
-  const texts = await library.getTexts([...state.nodes.values()].filter(node => node.url).map(node => node.id));
+  const ids = [...state.nodes.values()].filter(node => node.url).map(node => node.id);
+  // A few hundred at a time: a library's texts run to many megabytes, and
+  // reading them all at once holds the page up.
+  const texts = {};
+  for (let at = 0; at < ids.length; at += 200) Object.assign(texts, await library.getTexts(ids.slice(at, at + 200)));
   pageTexts.clear();
   for (const [id, text] of Object.entries(texts)) pageTexts.set(id, text);
   render();
   if ($('settings-dialog').open) renderTextSettings();
+}
+// Only the gallery shows previews, so the list isn't drawn again for them.
+async function loadPreviews() {
+  const saved = await library.getPreviews([...state.nodes.values()].filter(node => node.url).map(node => node.id));
+  previews.clear();
+  for (const [id, preview] of Object.entries(saved)) previews.set(id, preview);
+  if (view === 'gallery') render();
 }
 function navigate(id) {
   state.folder = id;
@@ -241,22 +274,48 @@ function relatedList() {
 }
 // What a bookmark is about, for comparing it with others.
 const termsOf = node => documentTerms({ title: title(node), tags: node.tags || [], note: node.note || '', highlights: node.highlights || [], abstract: node.abstract || '', card: node.card, text: pageTexts.get(node.id)?.text || '' });
+// The index, built a slice at a time while the page is idle: each bookmark's
+// words, then their weights. relatedIndexNow finishes it at once if it's
+// needed sooner, and builds it all if the library or its texts changed since.
+let relatedBuild = null;
+function startRelatedBuild() {
+  return relatedBuild = { root: state.root, texts: pageTexts.version, nodes: [...state.nodes.values()].filter(node => node.url), added: 0, builder: indexBuilder() };
+}
+function buildRelatedIndexLater() {
+  const build = startRelatedBuild();
+  whenIdle(function step(deadline) {
+    if (relatedBuild !== build || relatedIndex) return;
+    if (build.root !== state.root || build.texts !== pageTexts.version) { buildRelatedIndexLater(); return; }
+    const end = sliceEnd(deadline);
+    while (build.added < build.nodes.length && performance.now() < end) {
+      const node = build.nodes[build.added++];
+      build.builder.add(node.id, termsOf(node));
+    }
+    while (build.added === build.nodes.length && performance.now() < end) if (build.builder.weigh(20)) { relatedIndexNow(); return; }
+    whenIdle(step);
+  });
+}
 function relatedIndexNow() {
   if (!relatedIndex) {
-    relatedIndex = buildIndex([...state.nodes.values()].filter(node => node.url).map(node => ({ id: node.id, terms: termsOf(node) })));
+    const build = relatedBuild?.root === state.root && relatedBuild.texts === pageTexts.version ? relatedBuild : startRelatedBuild();
+    relatedBuild = null;
+    for (const node of build.nodes.slice(build.added)) build.builder.add(node.id, termsOf(node));
+    build.builder.weigh();
+    relatedIndex = build.builder.index;
     clearTimeout(relatedSaveTimer);
     relatedSaveTimer = setTimeout(saveRelatedIndex, 1500);
   }
   return relatedIndex;
 }
-// The small copy for the reader and the background, written only when it changed.
+// The small copy for the reader and the background, written only when it
+// changed; the write waits for the next idle moment, apart from the comparing.
 function saveRelatedIndex() {
   if (!relatedIndex) return;
   const compact = compactIndex(relatedIndex);
   const signature = JSON.stringify([compact.n, compact.docs]);
   if (signature === storedRelated) return;
   storedRelated = signature;
-  browser.storage.local.set({ [RELATED_KEY]: compact }).catch(() => {});
+  whenIdle(() => browser.storage.local.set({ [RELATED_KEY]: compact }).catch(() => {}));
 }
 // Bookmarks like the one with source.id, or like a page described by source.page.
 function relatedMatches(source) {
@@ -276,8 +335,11 @@ function continuing() {
   return [...state.nodes.values()].filter(node => node.url && pageTexts.get(node.id)?.text && readingStatus(pageTexts.get(node.id), reading[node.id]).state === 'reading')
     .sort((a, b) => (reading[b.id].at || 0) - (reading[a.id].at || 0));
 }
-// Bookmarks for the same page, grouped, oldest first in each group.
+// Bookmarks for the same page, grouped, oldest first in each group. Every
+// render asks, so the answer is kept until the library is read again.
+let duplicateGroups = { root: null, groups: [] };
 function findDuplicates() {
+  if (duplicateGroups.root === state.root) return duplicateGroups.groups;
   const groups = new Map();
   for (const node of state.nodes.values()) {
     if (!node.url) continue;
@@ -285,7 +347,8 @@ function findDuplicates() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(node);
   }
-  return [...groups.values()].filter(group => group.length > 1).map(group => group.sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0)));
+  duplicateGroups = { root: state.root, groups: [...groups.values()].filter(group => group.length > 1).map(group => group.sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0))) };
+  return duplicateGroups.groups;
 }
 async function mergeGroups(groups) {
   const copies = groups.reduce((sum, group) => sum + group.length - 1, 0);
@@ -369,6 +432,8 @@ function renderTree() {
 }
 function render() {
   if (!state.root) return;
+  // Measured before anything changes, while the layout is still current.
+  const reach = rowsInReach();
   renderTree();
   const highlighting = state.special === 'highlights';
   $('highlight-tools').hidden = $('highlight-list').hidden = !highlighting;
@@ -400,7 +465,7 @@ function render() {
     : tag ? [...state.nodes.values()].filter(n => n.url && n.tags?.some(t => sameTag(t, tag)))
     : current ? [...(current.children || [])].filter(n => n.type !== 'separator') : [...state.nodes.values()].filter(n => n.url);
   const sort = $('sort').value;
-  if (sort !== 'default' && !special) nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? title(a).localeCompare(title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
+  if (sort !== 'default' && !special) nodes.sort((a, b) => Number(isFolder(b)) - Number(isFolder(a)) || (sort === 'title' ? collator.compare(title(a), title(b)) : (b.dateAdded || 0) - (a.dateAdded || 0)));
   // Matches in a bookmark's own details come before those only in its page's text.
   if (query) nodes.sort((a, b) => Number(passages.has(a.id)) - Number(passages.has(b.id)));
   // Jev's matches lead, most relevant first; the remaining keyword matches follow.
@@ -429,109 +494,7 @@ function render() {
     : special === 'rediscover' ? 'A few things you saved a while ago, picked at random. The ones with notes and highlights come up more often.'
     : `${duplicates.length.toLocaleString()} ${duplicates.length === 1 ? 'page is' : 'pages are'} saved more than once. Merging keeps the oldest bookmark with every tag, note, and highlight.`;
   if (current) for (const node of ancestors(current.id)) $('breadcrumbs').append(element('span', '', '/'), crumb(title(node), node.id));
-  const fragment = document.createDocumentFragment();
-  for (const node of nodes) {
-    const row = element('tr', state.selected.has(node.id) ? 'selected' : '');
-    row.dataset.id = node.id;
-    row.draggable = !protectedNode(node);
-    const group = groupStarts.get(node.id);
-    if (group) row.classList.add('group-start');
-    const checkCell = element('td', 'check-cell');
-    const check = element('input'); check.type = 'checkbox'; check.checked = state.selected.has(node.id); check.disabled = protectedNode(node);
-    check.setAttribute('aria-label', `Select ${title(node)}`);
-    check.addEventListener('change', () => { if (check.checked) state.selected.add(node.id); else state.selected.delete(node.id); row.classList.toggle('selected', check.checked); renderSelection(); });
-    checkCell.append(check);
-    const nameCell = element('td');
-    const main = element('div', 'item-main');
-    const text = element('div', 'item-text');
-    let link;
-    if (isFolder(node)) link = button(title(node), () => navigate(node.id), 'item-title');
-    else {
-      link = element('a', 'item-title', title(node));
-      const url = safeURL(node.url);
-      if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-      else { link.title = 'This URL cannot be opened here. Use your browser’s bookmark manager for special bookmark URLs.'; }
-    }
-    link.title ||= title(node);
-    const metadata = element('div', 'item-metadata');
-    const domain = element('span', 'item-url', isFolder(node) ? `${node.children?.length || 0} ${node.children?.length === 1 ? 'item' : 'items'}` : displayDomain(node.url));
-    if (node.url) domain.title = node.url;
-    const details = element('span', 'item-details');
-    const age = relativeAge(node.dateAdded);
-    if (age) {
-      const added = element('time', 'item-age', age);
-      added.dateTime = new Date(node.dateAdded).toISOString();
-      added.title = new Date(node.dateAdded).toLocaleString();
-      details.append(added);
-    }
-    const page = node.url && pageTexts.get(node.id);
-    if (page?.text) {
-      const status = readingStatus(page, reading[node.id]);
-      const read = element('a', `item-read ${status.state}`, status.label);
-      read.href = readerURL(node);
-      read.target = '_blank';
-      read.title = `Read the text saved from ${title(node)} in Marked`;
-      details.append(read);
-    }
-    const stats = node.card && cardStats(node.card);
-    if (stats) details.append(element('span', 'item-stats', stats));
-    // Tags and the note marker share one line. Gallery cards keep the line even
-    // when empty so page cards are the same height; X posts show the note itself.
-    const labels = element('span', 'item-tags');
-    for (const tag of node.tags || []) labels.append(button(tag, () => showTag(tag), 'tag', `Show bookmarks tagged ${tag}`));
-    if (node.note) labels.append(button('Note', () => showNote(node), 'note-chip', `Show the note on ${title(node)}`));
-    const highlights = node.highlights?.length;
-    if (highlights) labels.append(button(`${highlights} ${highlights === 1 ? 'highlight' : 'highlights'}`, () => showHighlights(node.id), 'highlight-chip', `Show highlights on ${title(node)}`));
-    if (group) labels.append(button(`Merge ${group.length} copies`, () => mergeGroups([group]).catch(fail), 'merge-chip', `Merge the ${group.length} bookmarks for ${displayDomain(node.url)}`));
-    if (!isFolder(node)) details.append(labels);
-    metadata.append(domain, details);
-    text.append(link, metadata);
-    const shared = special === 'related' && relatedShared.get(node.id);
-    if (shared?.length) text.append(element('p', 'item-reason', `Shares ${shared.length > 1 ? `${shared.slice(0, -1).join(', ')} and ${shared.at(-1)}` : shared[0]}`));
-    const passage = passages.get(node.id);
-    if (passage) {
-      const quote = element('a', 'item-passage');
-      quote.href = readerURL(node, { q: query });
-      quote.target = '_blank';
-      quote.title = 'Read this in the saved text';
-      markText(quote, `${passage.cutBefore ? '…' : ''}${passage.text}${passage.cutAfter ? '…' : ''}`, { terms });
-      text.append(quote);
-    }
-    if (node.note) {
-      const note = element('p', 'item-note', node.note);
-      note.title = node.note;
-      text.append(note);
-    }
-    const preview = element('div', 'card-preview');
-    const tweet = view === 'gallery' && !isFolder(node) ? tweetId(node.url) : null;
-    // Only the gallery shows X's embed, so the list view never contacts X.
-    if (tweet) {
-      row.classList.add('tweet-row');
-      preview.classList.add('tweet');
-      preview.append(tweetEmbed(tweet));
-    } else if (node.card) {
-      preview.classList.add('card-site');
-      preview.append(renderCard(document, node.card));
-    } else if (validPreview(node.preview)) {
-      const image = element('img'); image.src = node.preview; image.alt = ''; image.loading = 'lazy';
-      preview.append(image);
-    } else {
-      // Without a screenshot, a card shows the site's icon or its letter on the site's color.
-      const tile = siteIcon(node, true);
-      preview.classList.add(isFolder(node) ? 'folder-preview' : tile.classList.contains('image') ? 'icon-preview' : 'letter-preview');
-      if (tile.style.getPropertyValue('--hue')) preview.style.setProperty('--hue', tile.style.getPropertyValue('--hue'));
-      preview.append(tile);
-    }
-    main.append(preview, siteIcon(node), text); nameCell.append(main);
-    const location = element('td', 'item-location', path(node.parentId)); location.title = path(node.parentId);
-    const actions = element('td', 'row-actions');
-    if (node.url) actions.append(iconButton('related', () => showRelated({ id: node.id }), 'item-action', `More like ${title(node)}`));
-    if (!protectedNode(node)) actions.append(iconButton('pencil', () => openEditor(node), 'item-action', `Edit ${title(node)}`), iconButton('trash', () => removeItems([node.id]).catch(fail), 'item-action', `Delete ${title(node)}`));
-    row.append(checkCell, nameCell);
-    if (showLocation) row.append(location);
-    row.append(actions); fragment.append(row);
-  }
-  $('items').replaceChildren(fragment);
+  showRows(nodes, { view, special, query, terms, passages, groups: groupStarts, showLocation, dark: isDark() }, reach);
   document.querySelector('.table-wrap').hidden = nodes.length === 0;
   $('empty').hidden = nodes.length > 0;
   // An empty library greets you with ways to fill it.
@@ -545,23 +508,253 @@ function render() {
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
 }
+// The list and gallery are built as they come near the window: a render builds
+// the first rows, or as many as reach past the window when it's scrolled, and
+// more follow as the end comes within a screen (moreRows). A row whose details
+// haven't changed is kept as it is, so a render keeps the page where it was and
+// costs little. Without IntersectionObserver, every row is built at once.
+const FIRST_ROWS = 40;
+const shown = { nodes: [], context: null, count: 0, rows: new Map() };
+const collator = new Intl.Collator();
+const rowsEnd = element('div', 'rows-end');
+rowsEnd.setAttribute('aria-hidden', 'true');
+document.querySelector('.table-wrap').append(rowsEnd);
+const Observer = document.defaultView.IntersectionObserver;
+const moreRows = Observer && new Observer(entries => {
+  // Look again after adding rows: they may not reach far enough yet.
+  if (entries.at(-1).isIntersecting && addRows()) watchRowsEnd();
+}, { rootMargin: '0px 0px 100% 0px' });
+function watchRowsEnd() {
+  if (!moreRows) return;
+  moreRows.unobserve(rowsEnd);
+  moreRows.observe(rowsEnd);
+}
+// How many of the rows shown reach down to a screen below the window, when it's scrolled.
+function rowsInReach() {
+  const win = document.defaultView;
+  if (!moreRows || !(win.scrollY > 0)) return 0;
+  const rows = $('items').rows, limit = win.innerHeight * 2;
+  let low = 0, high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (rows[middle].getBoundingClientRect().top < limit) low = middle + 1; else high = middle;
+  }
+  return low;
+}
+function showRows(nodes, context, reach = 0) {
+  const body = $('items'), old = shown.rows;
+  Object.assign(shown, { nodes, context, rows: new Map() });
+  const wanted = nodes.slice(0, moreRows ? Math.max(FIRST_ROWS, reach) : nodes.length).map(node => rowFor(node, old));
+  if (!wanted.some(row => row.parentNode === body)) {
+    const fragment = document.createDocumentFragment();
+    for (const row of wanted) fragment.append(row);
+    body.replaceChildren(fragment);
+  } else {
+    // Rows no longer shown go; kept rows stay in place, and new ones go between them.
+    const keep = new Set(wanted);
+    for (const row of [...body.rows]) if (!keep.has(row)) row.remove();
+    let next = body.firstElementChild;
+    for (const row of wanted) {
+      if (row === next) next = next.nextElementSibling;
+      else body.insertBefore(row, next);
+    }
+  }
+  shown.count = wanted.length;
+  watchRowsEnd();
+}
+// The next rows, when the end of the list comes near the window.
+function addRows(count = FIRST_ROWS) {
+  const end = Math.min(shown.nodes.length, shown.count + count);
+  if (shown.count >= end) return false;
+  const fragment = document.createDocumentFragment();
+  for (let at = shown.count; at < end; at++) fragment.append(rowFor(shown.nodes[at], shown.rows));
+  $('items').append(fragment);
+  shown.count = end;
+  return true;
+}
+function rowFor(node, old) {
+  const key = rowKey(node, shown.context);
+  const kept = old.get(node.id);
+  const preview = previews.get(node.id);
+  const row = kept && kept.key === key && kept.preview === preview && kept.icon === node.icon ? kept.row : buildRow(node, shown.context);
+  shown.rows.set(node.id, { row, key, preview, icon: node.icon });
+  // Selection and dragging change without a rebuild.
+  const selected = state.selected.has(node.id);
+  row.classList.toggle('selected', selected);
+  row.cells[0].firstChild.checked = selected;
+  row.classList.toggle('dragged', !!drag?.ids.includes(node.id));
+  return row;
+}
+// Everything a row shows but its selection (and its preview and icon, compared as they are).
+function rowKey(node, { view, special, query, passages, groups, showLocation, dark }) {
+  const page = node.url && pageTexts.get(node.id);
+  const status = page?.text && readingStatus(page, reading[node.id]);
+  const tweet = view === 'gallery' && !isFolder(node) && tweetId(node.url);
+  return JSON.stringify([view, tweet && dark, showLocation && path(node.parentId), node.title, node.url, node.type, node.children?.length,
+    node.dateAdded, relativeAge(node.dateAdded), status && `${status.state} ${status.label}`, node.card, node.tags, node.note, node.highlights?.length,
+    groups.get(node.id)?.map(copy => copy.id), special === 'related' && relatedShared.get(node.id), passages.get(node.id), passages.has(node.id) && query, protectedNode(node)]);
+}
+// A bookmark or folder as a list row or a gallery card. Its buttons name their
+// action, which rowActions runs for the row's bookmark as it is then.
+function buildRow(node, { view, special, query, terms, passages, groups, showLocation }) {
+  const row = element('tr');
+  row.dataset.id = node.id;
+  row.draggable = !protectedNode(node);
+  const group = groups.get(node.id);
+  if (group) row.classList.add('group-start');
+  const checkCell = element('td', 'check-cell');
+  const check = element('input'); check.type = 'checkbox'; check.disabled = protectedNode(node);
+  check.setAttribute('aria-label', `Select ${title(node)}`);
+  checkCell.append(check);
+  const nameCell = element('td');
+  const main = element('div', 'item-main');
+  const text = element('div', 'item-text');
+  let link;
+  if (isFolder(node)) link = button(title(node), 'open', 'item-title');
+  else {
+    link = element('a', 'item-title', title(node));
+    const url = safeURL(node.url);
+    if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    else { link.title = 'This URL cannot be opened here. Use your browser’s bookmark manager for special bookmark URLs.'; }
+  }
+  link.title ||= title(node);
+  const metadata = element('div', 'item-metadata');
+  const domain = element('span', 'item-url', isFolder(node) ? `${node.children?.length || 0} ${node.children?.length === 1 ? 'item' : 'items'}` : displayDomain(node.url));
+  if (node.url) domain.title = node.url;
+  const details = element('span', 'item-details');
+  const age = relativeAge(node.dateAdded);
+  if (age) {
+    const added = element('time', 'item-age', age);
+    added.dateTime = new Date(node.dateAdded).toISOString();
+    added.title = new Date(node.dateAdded).toLocaleString();
+    details.append(added);
+  }
+  const page = node.url && pageTexts.get(node.id);
+  if (page?.text) {
+    const status = readingStatus(page, reading[node.id]);
+    const read = element('a', `item-read ${status.state}`, status.label);
+    read.href = readerURL(node);
+    read.target = '_blank';
+    read.title = `Read the text saved from ${title(node)} in Marked`;
+    details.append(read);
+  }
+  const stats = node.card && cardStats(node.card);
+  if (stats) details.append(element('span', 'item-stats', stats));
+  // Tags and the note marker share one line. Gallery cards keep the line even
+  // when empty so page cards are the same height; X posts show the note itself.
+  const labels = element('span', 'item-tags');
+  for (const tag of node.tags || []) labels.append(Object.assign(button(tag, 'tag', 'tag', `Show bookmarks tagged ${tag}`), { value: tag }));
+  if (node.note) labels.append(button('Note', 'note', 'note-chip', `Show the note on ${title(node)}`));
+  const highlights = node.highlights?.length;
+  if (highlights) labels.append(button(`${highlights} ${highlights === 1 ? 'highlight' : 'highlights'}`, 'highlights', 'highlight-chip', `Show highlights on ${title(node)}`));
+  if (group) labels.append(button(`Merge ${group.length} copies`, 'merge', 'merge-chip', `Merge the ${group.length} bookmarks for ${displayDomain(node.url)}`));
+  if (!isFolder(node)) details.append(labels);
+  metadata.append(domain, details);
+  text.append(link, metadata);
+  const shared = special === 'related' && relatedShared.get(node.id);
+  if (shared?.length) text.append(element('p', 'item-reason', `Shares ${shared.length > 1 ? `${shared.slice(0, -1).join(', ')} and ${shared.at(-1)}` : shared[0]}`));
+  const passage = passages.get(node.id);
+  if (passage) {
+    const quote = element('a', 'item-passage');
+    quote.href = readerURL(node, { q: query });
+    quote.target = '_blank';
+    quote.title = 'Read this in the saved text';
+    markText(quote, `${passage.cutBefore ? '…' : ''}${passage.text}${passage.cutAfter ? '…' : ''}`, { terms });
+    text.append(quote);
+  }
+  if (node.note) {
+    const note = element('p', 'item-note', node.note);
+    note.title = node.note;
+    text.append(note);
+  }
+  // Only the gallery shows previews (the list hides them), and X's embeds, so the list view never contacts X.
+  main.append(view === 'gallery' ? cardPreview(node, row) : siteIcon(node), text);
+  nameCell.append(main);
+  row.append(checkCell, nameCell);
+  if (showLocation) {
+    const location = element('td', 'item-location', path(node.parentId));
+    location.title = location.textContent;
+    row.append(location);
+  }
+  const actions = element('td', 'row-actions');
+  if (node.url) actions.append(iconButton('related', 'related', 'item-action', `More like ${title(node)}`));
+  if (!protectedNode(node)) actions.append(iconButton('pencil', 'edit', 'item-action', `Edit ${title(node)}`), iconButton('trash', 'delete', 'item-action', `Delete ${title(node)}`));
+  row.append(actions);
+  return row;
+}
+function cardPreview(node, row) {
+  const preview = element('div', 'card-preview');
+  const tweet = !isFolder(node) && tweetId(node.url);
+  if (tweet) {
+    row.classList.add('tweet-row');
+    preview.classList.add('tweet');
+    preview.append(tweetEmbed(tweet));
+  } else if (node.card) {
+    preview.classList.add('card-site');
+    preview.append(renderCard(document, node.card));
+  } else if (validPreview(previews.get(node.id))) {
+    const image = element('img'); image.src = previews.get(node.id); image.alt = ''; image.loading = 'lazy';
+    preview.append(image);
+  } else {
+    // Without a screenshot, a card shows the site's icon or its letter on the site's color.
+    const tile = siteIcon(node, true);
+    preview.classList.add(isFolder(node) ? 'folder-preview' : tile.classList.contains('image') ? 'icon-preview' : 'letter-preview');
+    if (tile.style.getPropertyValue('--hue')) preview.style.setProperty('--hue', tile.style.getPropertyValue('--hue'));
+    preview.append(tile);
+  }
+  return preview;
+}
+// What a row's buttons do, for its bookmark or folder as it is now.
+const rowActions = {
+  open: node => navigate(node.id),
+  tag: (node, target) => showTag(target.value),
+  note: node => showNote(node),
+  highlights: node => showHighlights(node.id),
+  merge: node => { const group = shown.context.groups.get(node.id); if (group) mergeGroups([group]).catch(fail); },
+  related: node => showRelated({ id: node.id }),
+  edit: node => openEditor(node),
+  delete: node => removeItems([node.id]).catch(fail)
+};
+$('items').addEventListener('click', event => {
+  const target = event.target.closest?.('[data-action]');
+  const node = target && state.nodes.get(target.closest('tr[data-id]')?.dataset.id);
+  if (node) rowActions[target.dataset.action]?.(node, target);
+});
+$('items').addEventListener('change', event => {
+  const check = event.target, row = check.closest?.('tr[data-id]');
+  if (!row || check.type !== 'checkbox') return;
+  if (check.checked) state.selected.add(row.dataset.id); else state.selected.delete(row.dataset.id);
+  row.classList.toggle('selected', check.checked);
+  renderSelection();
+});
 // Bookmarks and folders with every search term in their details or, for a
 // bookmark, in its saved page text; passages gets the text around the first
 // term only the page has.
+// Each item's details as search reads them, lowercased once per library; and
+// the last search, so typing more of the same words (every earlier word part
+// of a new one) looks only through what already matched.
+let searchable = { root: null, details: new Map() }, lastSearch = null;
 function searchLibrary(terms, passages) {
   const highlightText = node => (node.highlights || []).map(h => `${h.text} ${h.note || ''}`).join(' ');
-  return [...state.nodes.values()].filter(node => {
-    if (node.id === state.root.id || node.type === 'separator') return false;
-    const details = `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase();
+  if (searchable.root !== state.root) searchable = { root: state.root, details: new Map() };
+  const narrower = lastSearch?.root === state.root && lastSearch.texts === pageTexts.version && lastSearch.terms.every(term => terms.some(next => next.includes(term)));
+  const matches = [];
+  for (const node of narrower ? lastSearch.matches : state.nodes.values()) {
+    if (node.id === state.root.id || node.type === 'separator') continue;
+    let details = searchable.details.get(node.id);
+    if (details === undefined) searchable.details.set(node.id, details = `${title(node)} ${node.url || ''} ${path(node.parentId)} ${node.abstract || ''} ${node.note || ''} ${(node.tags || []).join(' ')} ${highlightText(node)}`.toLowerCase());
     const missing = terms.filter(term => !details.includes(term));
-    if (!missing.length) return true;
-    const page = node.url && pageTexts.get(node.id);
-    if (!page?.text) return false;
-    page.lower ??= page.text.toLowerCase();
-    if (!missing.every(term => page.lower.includes(term))) return false;
-    passages.set(node.id, passageAround(page.text, page.lower, missing[0]));
-    return true;
-  });
+    if (missing.length) {
+      const page = node.url && pageTexts.get(node.id);
+      if (!page?.text) continue;
+      page.lower ??= page.text.toLowerCase();
+      if (!missing.every(term => page.lower.includes(term))) continue;
+      passages.set(node.id, passageAround(page.text, page.lower, missing[0]));
+    }
+    matches.push(node);
+  }
+  lastSearch = { root: state.root, texts: pageTexts.version, terms, matches };
+  return [...matches];
 }
 // X's official post embed. Its frame reports its height with a postMessage.
 // Heights X last reported, so a reload starts each post at its real size
@@ -956,7 +1149,7 @@ function fillFolders(select, excluded = new Set(), selected = defaultFolder()) {
 }
 function openEditor(node = null, folder = false) {
   state.editing = node;
-  pendingPreview = validPreview(node?.preview) ? node.preview : null;
+  pendingPreview = validPreview(previews.get(node?.id)) ? previews.get(node.id) : null;
   pendingPreviewURL = node?.url || null;
   showEditorPreview();
   const isDir = node ? isFolder(node) : folder;
@@ -1243,8 +1436,9 @@ function download(contents, type, name, extension) {
 // bookmarks file is for other browsers and apps; the notes and highlights go
 // to a notes app as Markdown.
 async function downloadBackup() {
-  const texts = await library.getTexts([...state.nodes.values()].filter(node => node.url).map(node => node.id));
-  download(exportBackup(state.root, texts), 'application/json', 'marked-backup', 'json');
+  const ids = [...state.nodes.values()].filter(node => node.url).map(node => node.id);
+  const [texts, saved] = await Promise.all([library.getTexts(ids), library.getPreviews(ids)]);
+  download(exportBackup(state.root, texts, saved), 'application/json', 'marked-backup', 'json');
   toast('Backup downloaded. Import it into Marked, in this browser or another, to restore your library.');
 }
 function exportBookmarks() {
@@ -1778,12 +1972,19 @@ browser.storage.onChanged.addListener((changes, area) => {
     clearTimeout(textTimer);
     textTimer = setTimeout(() => { render(); if ($('settings-dialog').open) renderTextSettings(); }, 200);
   }
+  // Previews come and go with their bookmarks; a change to the library redraws anyway.
+  const shots = area === 'local' ? Object.keys(changes).filter(key => key.startsWith(PREVIEW_PREFIX)) : [];
+  for (const key of shots) {
+    const id = key.slice(PREVIEW_PREFIX.length);
+    if (changes[key].newValue) previews.set(id, changes[key].newValue); else previews.delete(id);
+  }
+  if (shots.length && view === 'gallery' && !changes[STORAGE_KEY]) { clearTimeout(previewTimer); previewTimer = setTimeout(render, 200); }
   if (area === 'local' && changes[PAGE_TEXT_SETTINGS_KEY]) textSettings = { keep: true, ...changes[PAGE_TEXT_SETTINGS_KEY].newValue };
   if (area === 'local' && changes[READING_KEY]) { reading = changes[READING_KEY].newValue || {}; clearTimeout(textTimer); textTimer = setTimeout(render, 200); }
   // Settings and usage changed in another Marked tab.
   if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
   // This tab's own saves arrive here too, unchanged, and are skipped.
-  const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { apiKey: '', notes: true, highlights: true, preview: false, ...changes[JEV_SETTINGS_KEY].newValue };
+  const settings = area === 'local' && changes[JEV_SETTINGS_KEY] && { ...JEV_DEFAULTS, ...changes[JEV_SETTINGS_KEY].newValue };
   if (settings && ['apiKey', 'notes', 'highlights', 'preview'].some(key => settings[key] !== jev[key])) { jev = settings; refreshSemantic(); }
 });
 Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, JEV_USAGE_KEY, PAGE_TEXT_SETTINGS_KEY, READING_KEY, RELATED_KEY, BROWSING_KEY]).then(saved => {
@@ -1795,10 +1996,12 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   jevUsage = saved[JEV_USAGE_KEY] || null;
   textSettings = { keep: true, ...(saved[PAGE_TEXT_SETTINGS_KEY] || {}) };
 })]).then(async () => {
-  render();
+  // The library's first render is already on screen, unless it chose another view.
+  if (shown.context?.view !== view) render();
   askFirstImport();
+  const previewsLoaded = loadPreviews().catch(fail);
   // With the texts in, the Marked button and the reader get an up-to-date index.
-  loadTexts().then(() => setTimeout(() => relatedIndexNow(), 1000)).catch(fail);
+  loadTexts().then(() => setTimeout(buildRelatedIndexLater, 1000)).catch(fail);
   const params = new URLSearchParams(document.location.search);
   if (!['add', 'edit', 'q', 'folder', 'related'].some(key => params.has(key))) return;
   // Consume the request so refreshing the tab does not repeat it.
@@ -1815,6 +2018,8 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   if (params.has('folder')) { if (isFolder(state.nodes.get(params.get('folder')))) navigate(params.get('folder')); return; }
   // Add to Marked on a page that's already saved edits its bookmark.
   if (params.has('edit')) {
+    // The editor shows the bookmark's preview.
+    await previewsLoaded;
     const node = state.nodes.get(params.get('edit'));
     if (node?.url) openEditor(node); else toast('This bookmark is no longer in Marked.');
     return;
