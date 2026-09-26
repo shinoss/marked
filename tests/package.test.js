@@ -31,7 +31,7 @@ function unzip(archive) {
 }
 
 // Access to all sites is optional, asked for in Marked's page, so activeTab
-// stays: it lets the button, the menu, and the shortcuts read the current tab.
+// stays: it lets the menu and the shortcuts read the current tab.
 test('the Chrome package drops Firefox-only keys and keeps the same permissions', () => {
   const chrome = manifestFor('chrome', manifest);
   assert.deepEqual(chrome.background, { service_worker: 'background.js', type: 'module' });

@@ -46,7 +46,7 @@ test('extension and toolbar icons are PNG files, which Chrome requires', async (
 // Nothing asks for the pages you visit at install: access to all sites is
 // optional, asked for in Marked's own page, and the page scripts are registered
 // only once it's granted (background.js). Until then, activeTab lets the
-// button, the menu, and the shortcuts read the tab they were used on. The
+// menu and the shortcuts read the tab they were used on. The
 // highlighter saves pages from a click in the page, where activeTab does not
 // apply; capturing a preview there uses the granted <all_urls>.
 test('access to the pages you visit is optional, and nothing runs in pages until it is granted', async () => {

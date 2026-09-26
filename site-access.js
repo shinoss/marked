@@ -1,8 +1,10 @@
 // Access to the pages you visit (http and https), which Marked asks for in its
-// own page, in its own words, rather than at install. It powers the Highlight
-// button, saved highlights on pages, ✓ on saved pages, the related count,
-// keeping the text of saved pages, and Save open tabs. What Marked reads there
-// stays on the device.
+// own page, in its own words, rather than at install. It lets Marked show the
+// Highlight button on selected text, bring back highlights and ✓ on pages you
+// revisit, count related bookmarks, and keep the text of saved articles you
+// revisit; Save open tabs and downloading text for older bookmarks ask for it
+// when used. Saving a page doesn't need it: the menu and the shortcuts use
+// activeTab. What Marked reads stays on the device.
 // <all_urls> rather than http and https patterns: Firefox only lets an
 // extension capture a tab's preview with <all_urls> (or activeTab).
 export const ALL_SITES = { origins: ['<all_urls>'] };

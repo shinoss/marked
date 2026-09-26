@@ -199,14 +199,14 @@ Your library stays in your browser. There's no account and no server of ours.
 
 Marked can read the pages you visit only if you allow it. It asks the first time you open it, not when you install it, and you can turn it off at any time in **Settings → Browsing**. Turned off, Marked leaves every page at once, open ones included: no marks, no ✓, no **Highlight** button. Everything you saved stays in Marked.
 
-- **Why:** for the **Highlight** button, marking your saved highlights, ✓ on saved pages, counting related bookmarks, keeping the text of pages you save or revisit, and **Save open tabs**.
+- **Why:** so it can show the **Highlight** button when you select text, bring back your highlights and ✓ on pages you revisit, count related bookmarks while you browse, and keep the text of saved articles you revisit. **Save open tabs** and downloading text for older bookmarks ask for it when you use them.
 - **On every page,** it reads the address, title, description, main headings, and opening paragraphs, and compares them with your library to count related bookmarks. It forgets them when you close the tab.
 - **On pages you've saved,** it reads their text, to keep it for search and the reader, and marks the passages you highlighted.
 - **Only when you act,** it reads the text you select to highlight, a picture of the visible page if you save it with **Save preview**, and your open tabs for **Save open tabs**.
 - **It never reads** what you type into forms, including passwords.
 - **None of it leaves your device.**
 
-Without it, you can still save the page you're on with the Marked button, the right-click menu, or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>; each lets Marked read just that tab, at that moment.
+Everything else works without it: save the page you're on with **Add to Marked** in the right-click menu or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, highlight with <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, and use the library, search, the reader, and chat. The menu and the shortcuts let Marked read just that tab, at that moment.
 
 ### What Marked contacts
 
