@@ -193,7 +193,6 @@ Local chat needs WebGPU and downloads the model (about 2.3 GB) from Hugging Face
 
 Your library stays in your browser. Marked only contacts:
 
-- **Google Fonts**, for the Inter and Literata fonts.
 - **Hugging Face**, when you download the chat model.
 - **X**, to show embedded posts in the gallery, and to read your bookmarks page on x.com when you import your X bookmarks.
 - **Hacker News and GitHub**, through their public APIs, for a card and the discussion or README when you save one of their pages, open it again, or download text. No cookies go with these requests.
@@ -206,10 +205,25 @@ Access to all websites lets Marked show the **Highlight** button, mark saved hig
 
 ```sh
 npm ci
-npm run bundle           # once
+npm run bundle           # once: WebLLM, Readability, and fonts into vendor/
 npm test                 # unit and DOM tests
-npm run lint:extension   # Firefox compatibility
-npm run build            # extension ZIP in web-ext-artifacts/
+npm run lint:extension   # web-ext lint of the Firefox package
+npm run build            # bundle, then a ZIP per store in web-ext-artifacts/
+npm run build:source     # source ZIP for Firefox review
 ```
+
+`npm run build` stages each browser's files in `dist/chrome` and `dist/firefox` and zips them as `web-ext-artifacts/marked-chrome-<version>.zip` and `marked-firefox-<version>.zip`. Each gets its own manifest: Chrome's drops `background.scripts`, `browser_specific_settings`, and `activeTab`, which `<all_urls>` covers; Firefox's drops `background.service_worker` and `minimum_chrome_version`. `npm run build:chrome` and `npm run build:firefox` repackage one browser without bundling again. The same files make the same ZIP every time.
+
+### Build for review
+
+Firefox reviewers rebuild the minified files in `vendor/` from source. `npm run build:source` writes `web-ext-artifacts/marked-source-<version>.zip`: every committed file outside `docs/` and `site/`, plus `vendor/qwen3-4b.wasm`, which git ignores. With that file present, `bundle.js` checks its SHA-256 and downloads nothing. Commit first, because files git doesn't track yet are left out. To rebuild:
+
+1. Use Ubuntu 24.04 (AMO's build machine) or macOS, with Node.js 22 or 24 and the npm that comes with it.
+2. Unzip the source, then run `npm ci` and `npm run build-for-amo`.
+3. The extension is in `dist/firefox`, zipped as `web-ext-artifacts/marked-firefox-<version>.zip`, and matches the uploaded package file for file.
+
+What the build does: esbuild bundles `ai/runtime.js` and `ai/worker.js` with `@mlc-ai/web-llm` 0.2.85 from `package-lock.json` into `vendor/`, minified but not obfuscated. On the way it writes the tokenizer and grammar WebAssembly that WebLLM embeds as base64 out as `vendor/web-llm-tokenizers.wasm` and `vendor/web-llm-xgrammar.wasm`, and empties WebLLM's built-in model list, whose URLs point to GitHub and Hugging Face; Marked always passes its own. `vendor/qwen3-4b.wasm` is `Qwen3-4B-q4f16_1_cs1k-webgpu.wasm` from [mlc-ai/binary-mlc-llm-libs](https://github.com/mlc-ai/binary-mlc-llm-libs/tree/025bcaf3780fa8254f5e5efd3bfea0a5397248f4/web-llm-models/v0_2_84/base) at commit `025bcaf`, SHA-256 `a986a53c92579714eb7ec36856004f5fb75272c9f69091f14eb6b2086eea4440`. Mozilla's Readability and the Inter and Literata font files ([Fontsource](https://fontsource.org), SIL Open Font License) are copied unchanged; `vendor/fonts/fonts.css` is Fontsource's `@font-face` rules under the family names Marked's styles use.
+
+None of this is needed day to day: load the repository folder itself, whose one manifest serves both browsers.
 
 After changing the manifest or background script, reload the extension. The tests mock the browser and don't run the model.

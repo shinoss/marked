@@ -19,6 +19,20 @@ test('one manifest runs in both Chrome and Firefox', async () => {
   assert.equal(manifest.browser_specific_settings.gecko.id, 'marked@local.extension');
 });
 
+// Firefox shows required data types at install. Gallery posts load from X
+// (each saved post's ID) and saved Hacker News and GitHub pages get their card
+// from the sites' APIs when saved or revisited, both without asking. Semantic
+// search, which sends the query and each bookmark's title, abstract, and (if
+// allowed) notes and highlights to TypeSafe, is opt-in, so its types are optional.
+test('Firefox is told what data leaves the device', () => {
+  const data = manifest.browser_specific_settings.gecko.data_collection_permissions;
+  assert.deepEqual(data, { required: ['bookmarksInfo', 'browsingActivity'], optional: ['searchTerms', 'websiteContent'] });
+  assert.ok(!data.required.includes('none'));
+  assert.ok(data.optional.every(type => !data.required.includes(type)));
+  // Built-in data consent needs Firefox 140; Marked needs 142 anyway.
+  assert.ok(Number.parseFloat(manifest.browser_specific_settings.gecko.strict_min_version) >= 140);
+});
+
 test('extension and toolbar icons are PNG files, which Chrome requires', async () => {
   const icons = [...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)];
   assert.ok(icons.length);
