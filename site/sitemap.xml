@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The site's address; change it if the site moves to its own domain. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://marked-bookmarks-sand.vercel.app/</loc>
+    <lastmod>2026-09-25</lastmod>
+  </url>
+  <url>
+    <loc>https://marked-bookmarks-sand.vercel.app/privacy.html</loc>
+    <lastmod>2026-09-25</lastmod>
+  </url>
+</urlset>

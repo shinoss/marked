@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy policy · Marked</title>
+  <meta name="description" content="How Marked handles your data: your library stays in your browser, and these are the only services it contacts, when, and what it sends.">
+  <link rel="canonical" href="https://marked-bookmarks-sand.vercel.app/privacy.html">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="color-scheme" content="light">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Marked">
+  <meta property="og:title" content="Marked privacy policy">
+  <meta property="og:description" content="Your library stays in your browser. These are the only services Marked contacts, when, and what it sends.">
+  <meta property="og:url" content="https://marked-bookmarks-sand.vercel.app/privacy.html">
+  <meta property="og:image" content="https://marked-bookmarks-sand.vercel.app/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Marked, a local-first bookmark library for Chrome and Firefox, next to its library in list view">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="marked.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
+  <link rel="stylesheet" href="site.css?v=7">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="Marked home"><img src="marked.svg" alt="" width="28" height="28">Marked</a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li class="nav-optional"><a href="./#features">Features</a></li>
+          <li><a href="privacy.html" aria-current="page">Privacy</a></li>
+          <li class="nav-wide"><a href="https://github.com/shinoss/marked">GitHub</a></li>
+          <li><a class="nav-cta" href="./#get">Install</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="doc">
+    <article class="wrap">
+      <h1>Privacy policy</h1>
+      <p class="meta">Effective September 26, 2026 · Applies to the Marked extension for Chrome and Firefox, and to this website.</p>
+
+      <div class="summary">
+        <p><strong>In short</strong></p>
+        <ul>
+          <li>Your library stays in your browser. There is no Marked account and no Marked server.</li>
+          <li>Marked has no analytics, no tracking, and no ads. It doesn't sell or share your data.</li>
+          <li>It contacts a few outside services, listed below, only for the feature that needs them. Most only happen when you ask: downloading the chat model, semantic search, downloading page text, and importing from X.</li>
+        </ul>
+      </div>
+
+      <nav class="toc" aria-label="On this page">
+        <ol>
+          <li><a href="#local">What stays on your device</a></li>
+          <li><a href="#services">What Marked contacts, and when</a></li>
+          <li><a href="#permissions">Why Marked asks for its permissions</a></li>
+          <li><a href="#not">What Marked doesn't do</a></li>
+          <li><a href="#control">Your control over your data</a></li>
+          <li><a href="#website">This website</a></li>
+          <li><a href="#changes">Changes and contact</a></li>
+        </ol>
+      </nav>
+
+      <h2 id="local">1. What stays on your device</h2>
+      <p>Everything Marked saves is kept in your browser's storage for the extension, on your computer:</p>
+      <ul>
+        <li>Your bookmarks, with their titles, addresses, folders, tags, notes, highlights, and abstracts.</li>
+        <li>The readable text of pages you save or open again, so you can search and read them later, and where you stopped reading in the reader.</li>
+        <li>An index of each bookmark's most telling words, which Marked works out from your library to find related bookmarks.</li>
+        <li>Site icons and page previews. A preview is a capture of the visible page, kept only if you tick <strong>Save preview</strong>.</li>
+        <li>Your settings, including a TypeSafe API key if you add one.</li>
+        <li>The chat model, if you download it, and your chat. The model runs on your GPU; your questions and its answers aren't sent anywhere.</li>
+      </ul>
+      <p>None of this is sent to the developer of Marked or to anyone else, except the specific pieces listed in the next section.</p>
+
+      <h2 id="services">2. What Marked contacts, and when</h2>
+      <p>Like any web request, each of these lets the service see your IP address and basic browser information. Beyond that, here is exactly what goes to each one.</p>
+
+      <section class="service" aria-labelledby="s-hf">
+        <h3 id="s-hf">Hugging Face</h3>
+        <dl>
+          <dt>When</dt><dd>Only when you choose to download the local chat model. Marked asks for your browser's permission to reach Hugging Face first.</dd>
+          <dt>What's sent</dt><dd>Requests for the model's files (about 2.3 GB, downloaded once). Nothing from your library, and nothing you ask the chat.</dd>
+          <dt>Their policy</dt><dd><a href="https://huggingface.co/privacy">huggingface.co/privacy</a></dd>
+        </dl>
+      </section>
+
+      <section class="service" aria-labelledby="s-x">
+        <h3 id="s-x">X</h3>
+        <dl>
+          <dt>When</dt><dd>In the gallery, to show posts you saved from X as embedded posts. And when you choose <strong>Import&nbsp;→ Bookmarks from X</strong>, which opens your X bookmarks in a tab.</dd>
+          <dt>What's sent</dt><dd>For embeds, the ID of each saved post that's shown, with X's do-not-track option set. For the import, the tab loads X as you normally would, signed in as you; Marked scrolls that page so X loads your bookmarks, reads the posts shown, and saves them in your library. It adds nothing of its own to what X receives.</dd>
+          <dt>Their policy</dt><dd><a href="https://x.com/en/privacy">x.com/en/privacy</a></dd>
+        </dl>
+      </section>
+
+      <section class="service" aria-labelledby="s-sites">
+        <h3 id="s-sites">Hacker News and GitHub</h3>
+        <dl>
+          <dt>When</dt><dd>When you save a Hacker News story or comment, or a GitHub repository, issue, or pull request; when you open one of them again; or when you download text for one.</dd>
+          <dt>What's sent</dt><dd>A request to the site's public API (<code>hacker-news.firebaseio.com</code> or <code>api.github.com</code>) for that item, to show its card and keep the discussion or README as its text. No cookies or sign-in go with it.</dd>
+          <dt>Their policy</dt><dd><a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a>; Hacker News's API is served by Google Firebase (<a href="https://policies.google.com/privacy">policies.google.com/privacy</a>)</dd>
+        </dl>
+      </section>
+
+      <section class="service" aria-labelledby="s-typesafe">
+        <h3 id="s-typesafe">TypeSafe (semantic search)</h3>
+        <dl>
+          <dt>When</dt><dd>Only if you add your own TypeSafe Jev API key in Settings, and only when you click <strong>Semantic</strong>.</dd>
+          <dt>What's sent</dt><dd>Your search, and for each bookmark its title and abstract. Its note and up to three highlights go too only if you turn on <strong>Include notes</strong> or <strong>Include highlights</strong> in <strong>Settings&nbsp;→ Semantic search</strong>; both start off. Never addresses, folders, or tags. Your API key goes with the request so TypeSafe can authorize it. <strong>Preview requests without sending them</strong> shows you what would be sent.</dd>
+          <dt>Their policy</dt><dd>See TypeSafe's terms and privacy policy at <a href="https://typesafe.ai">typesafe.ai</a>.</dd>
+        </dl>
+      </section>
+
+      <section class="service" aria-labelledby="s-bookmarked">
+        <h3 id="s-bookmarked">The sites you bookmarked</h3>
+        <dl>
+          <dt>When</dt><dd>When you download text in <strong>Settings&nbsp;→ Page text</strong>, or when the reader offers to download a bookmark's text and you accept, to get the text of pages saved before Marked kept it.</dd>
+          <dt>What's sent</dt><dd>A normal request for each page's address. No cookies go with it, so you aren't signed in to the site when Marked reads it.</dd>
+        </dl>
+      </section>
+
+      <h2 id="permissions">3. Why Marked asks for its permissions</h2>
+      <ul>
+        <li><strong>Access to all websites:</strong> to show the <strong>Highlight</strong> button, mark saved highlights, show ✓ on saved pages, count related bookmarks on other pages, keep the text of pages you save or open again, and read your open tabs for <strong>Save open tabs</strong>. None of that leaves your device. To count related bookmarks, Marked compares the page's title, description, headings, and opening paragraphs with your library, in your browser.</li>
+        <li><strong>Bookmarks:</strong> to import your browser's bookmarks on first run, if you agree. Marked never changes them.</li>
+        <li><strong>Storage and unlimited storage:</strong> to keep your library, including page text, in your browser.</li>
+        <li><strong>Context menus, active tab, and scripting:</strong> for <strong>Save tweet to Marked</strong>, highlighting, and saving the page you're on.</li>
+        <li><strong>Hugging Face (optional):</strong> requested only when you download the chat model.</li>
+      </ul>
+
+      <h2 id="not">4. What Marked doesn't do</h2>
+      <ul>
+        <li>No analytics, telemetry, crash reporting, or tracking of any kind.</li>
+        <li>No ads, and no selling, renting, or sharing of your data.</li>
+        <li>No accounts, and no server run by Marked that your data could reach.</li>
+        <li>No use of your data to train AI models. The chat model runs on your device.</li>
+        <li>No record of your browsing. To show ✓, your highlights, and related bookmarks, Marked compares the page you're on with your library, on your device. What it works out for an open tab is held in memory until the tab closes, and nothing about pages you haven't saved is stored or sent.</li>
+      </ul>
+
+      <h2 id="control">5. Your control over your data</h2>
+      <ul>
+        <li><strong>Export</strong> makes a full backup, saved page text included. It can also write a standard bookmarks file, or your notes and highlights as Markdown.</li>
+        <li>Delete any bookmark, highlight, or note in Marked, and it's gone from your browser.</li>
+        <li>In <strong>Settings</strong>, you can stop Marked keeping page text, delete all saved text, turn off the related-bookmarks count in <strong>Browsing</strong>, and remove your API key. In <strong>Chat</strong>, <strong>Remove download</strong> deletes the model.</li>
+        <li>Removing the extension deletes everything it stored. Export first if you want to keep it.</li>
+      </ul>
+      <p>Because your data never reaches us, we can't see, recover, or delete it for you. It's entirely in your hands.</p>
+
+      <h2 id="website">6. This website</h2>
+      <p>This site is a set of static pages. It sets no cookies and runs no analytics. It loads the Inter font from Google Fonts. The company hosting the site may keep standard server logs, such as IP addresses and the pages requested, for security and operations.</p>
+
+      <h2 id="changes">7. Changes and contact</h2>
+      <p>If Marked starts handling data differently, this page will be updated before the change ships, and the effective date above will change.</p>
+      <p>Questions or concerns? Open an issue at <a href="https://github.com/shinoss/marked/issues">github.com/shinoss/marked/issues</a>.</p>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="marked.svg" alt="" width="22" height="22">Marked</a>
+      <ul>
+        <li><a href="https://github.com/shinoss/marked">GitHub</a></li>
+        <li><a href="privacy.html" aria-current="page">Privacy policy</a></li>
+        <li><a href="./#get">Install</a></li>
+      </ul>
+      <p class="fineprint">© 2026 Marked.</p>
+    </div>
+  </footer>
+</body>
+</html>

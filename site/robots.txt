@@ -1,0 +1,5 @@
+# The site's address; change it if the site moves to its own domain.
+User-agent: *
+Allow: /
+
+Sitemap: https://marked-bookmarks-sand.vercel.app/sitemap.xml

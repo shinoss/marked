@@ -8,6 +8,7 @@ coverage/
 
 # Local configuration and credentials
 .env
+.vercel/
 .env.*
 !.env.example
 *.pem
