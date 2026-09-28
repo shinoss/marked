@@ -177,3 +177,30 @@ test('taken back, a page drops its marks and stops offering Highlight; given aga
   page.select('#text'); await page.mouseup('#text');
   assert.deepEqual(page.buttons(), ['Highlight']);
 });
+
+// A new page saved from Marked's save panel with a highlight (save-panel.js).
+test('a passage saved with its page from Marked’s save panel is marked at once', async () => {
+  const page = load('<p>Attention is the one budget that never grows.</p>');
+  await tick(page.window);
+  let answered = false;
+  page.listen({ type: 'marked:highlight-saved', highlight: { text: 'the one budget', note: 'Key.', color: 'blue' } }, {}, () => { answered = true; });
+  assert.ok(answered);
+  const marked = page.window.document.querySelector('marked-highlight');
+  assert.equal(marked.textContent, 'the one budget');
+  assert.match(marked.style.background, /91, 157, 240/);
+});
+
+test('text selected in Marked’s save panel is the panel’s, not a passage to highlight', async () => {
+  const page = load('<p id="text">Words</p>');
+  const panel = page.window.document.createElement('marked-save');
+  panel.textContent = 'A note typed in the panel';
+  page.window.document.documentElement.append(panel);
+  const range = page.window.document.createRange();
+  range.selectNodeContents(panel);
+  page.window.getSelection().removeAllRanges(); page.window.getSelection().addRange(range);
+  panel.dispatchEvent(new page.window.MouseEvent('mouseup', { bubbles: true, composed: true }));
+  await tick(page.window);
+  assert.equal(page.box(), null);
+  page.select('#text'); await page.mouseup('#text');
+  assert.deepEqual(page.buttons(), ['Highlight'], 'the page’s own text still is');
+});

@@ -5,7 +5,7 @@
 // before. When the user selects text it shows a Highlight button beside the
 // selection; the selection is read only when they click it. On a page already
 // in Marked, the highlight and an optional note are added right here in a small
-// panel; a new page opens Marked's editor, as Add to Marked does. Nothing it
+// panel; a new page gets Marked's save panel, as Add to Marked does. Nothing it
 // reads leaves the browser. Content scripts are classic scripts, not modules;
 // tests evaluate this file in a JSDOM window.
 
@@ -204,6 +204,12 @@ if (!globalThis.markedHighlighter) {
       if (allowed) arrive(); else standDown();
       return;
     }
+    // A passage saved with its page from Marked's save panel shows at once.
+    if (message?.type === 'marked:highlight-saved') {
+      reply(true);
+      markPassages([message.highlight]);
+      return;
+    }
     // The shortcut is the user's own request for this tab, so it works either way.
     if (message?.type !== 'marked:highlight-selection') return;
     reply(true);
@@ -222,8 +228,9 @@ if (!globalThis.markedHighlighter) {
     anchor = rects[rects.length - 1] ?? range.getBoundingClientRect?.() ?? { top: 0, bottom: 0, right: 0 };
     highlight();
   });
-  // An open panel stays until it is saved or cancelled.
-  const later = event => { if (allowed && !panel && !event.composedPath().includes(host)) setTimeout(show, 0); };
+  // An open panel stays until it is saved or cancelled. Text selected in
+  // Marked's save panel (save-panel.js) isn't the page's.
+  const later = event => { if (allowed && !panel && !event.composedPath().some(node => node === host || node.localName === 'marked-save')) setTimeout(show, 0); };
   document.addEventListener('mouseup', later, true);
   document.addEventListener('keyup', event => { if (event.shiftKey || event.key === 'Shift') later(event); }, true);
   document.addEventListener('selectionchange', () => { if (!panel && getSelection()?.isCollapsed) close(); });

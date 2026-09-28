@@ -74,8 +74,11 @@ test('every file the manifest and the pages load is packaged', async () => {
   const background = await readFile(new URL('background.js', root), 'utf8');
   const pageScripts = [...background.matchAll(/\bjs: \['([^']+)'\]/g)].map(match => match[1]);
   assert.deepEqual(pageScripts, ['highlighter.js', 'tweet-capture.js']);
+  // And the ones it adds to a page when the user saves or highlights there.
+  const injected = [...background.matchAll(/\bfiles: \[([^\]]+)\]/g)].flatMap(match => [...match[1].matchAll(/'([^']+)'/g)].map(file => file[1]));
+  assert.deepEqual([...new Set(injected)].sort(), ['highlighter.js', 'save-panel.js', 'tweet-capture.js']);
   const referenced = [
-    ...manifest.background.scripts, manifest.background.service_worker, ...pageScripts,
+    ...manifest.background.scripts, manifest.background.service_worker, ...pageScripts, ...injected,
     ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)
   ];
   for (const page of (await readdir(root)).filter(name => name.endsWith('.html'))) {

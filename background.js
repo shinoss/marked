@@ -7,12 +7,15 @@ import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 import { fetchSite, siteOf } from './sites.js';
 import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { hasSiteAccess } from './site-access.js';
+import { suggestTags, chooseTags } from './tagger.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
 const TWEET_URL = /^https:\/\/x\.com\/\w+\/status\/\d+$/;
 const TWEET_ORIGINS = ['https://x.com/*', 'https://twitter.com/*'];
 const RETRY_NOTICE = 'Marked is ready on this page now. Right-click the tweet again to save it.';
+// The folder the last page saved from its panel went into; the next one starts there.
+const SAVE_FOLDER_KEY = 'markedSaveFolder';
 
 // The scripts Marked runs in web pages: the Highlight button and saved
 // highlights on every page, and tweet capture on X. Their sites need access,
@@ -194,28 +197,137 @@ function openEditor(url, title, capture) {
   return openManager(new URLSearchParams({ add: url, title }), capture && { url, ...capture });
 }
 
+// What Marked reads from a page for its bookmark. The preview comes first,
+// before Marked shows anything on the page, with the abstract, which the save
+// panel shows. The rest, read while the user fills in the panel, is the icon,
+// the page's text, and a post's card: rest() resolves to them.
+async function readPage(tab, url) {
+  const abstract = captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; });
+  const icon = captureIcon(tab).catch(() => null);
+  const site = captureSite(url);
+  const [preview, description] = await Promise.all([takePreview(tab, url), abstract]);
+  const read = { ...(preview && { preview }), ...(description && { abstract: description }) };
+  const rest = async () => {
+    const [page, post, image] = await Promise.all([captureText(tab, url).catch(error => { console.warn('Page text unavailable; saving without it', error); return null; }), site, icon]);
+    // A post's own thread or discussion reads better than what the page shows of it.
+    const text = post?.text && await keepText() ? post.text : page;
+    return { ...(image && { icon: image }), ...(text && { text }), ...(post?.card && { card: post.card }) };
+  };
+  return { read, rest };
+}
+// Saving a page again while its panel is open keeps the preview taken before
+// the panel appeared; a new one would show the panel.
+async function takePreview(tab, url) {
+  const open = tab?.id != null && (await browser.storage.session.get(offerKey(tab.id)).catch(() => ({})))[offerKey(tab.id)];
+  if (open && !open.id && open.url === url) return open.preview ?? null;
+  return capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; });
+}
+
+// Saving happens on the page: Marked shows its save panel there
+// (save-panel.js) and keeps what it read from the page here, by tab, until the
+// user saves or cancels. It's in session storage, so a save after the worker
+// slept still has it. Only what the panel shows goes to the page: never the
+// preview or the page's text. offer is a new page ({ url, title, and what was
+// read }) or a saved one ({ id }). False where the panel can't show, as on the
+// browser's own pages; the caller opens Marked's editor instead.
+const offerKey = tabId => `save:${tabId}`;
+// What's still being read for each tab's offer.
+const reading = new Map();
+async function offerSave(tab, offer, rest = async () => ({})) {
+  if (tab?.id == null || (!offer.id && !safeURL(offer.url))) return false;
+  const key = offerKey(tab.id), token = crypto.randomUUID();
+  try {
+    await browser.storage.session.set({ [key]: { ...offer, token } });
+    await showSavePanel(tab, token, offer);
+  } catch (error) {
+    console.warn('Marked’s panel can’t show on this page; opening the editor instead', error);
+    try { await browser.storage.session.remove(key); } catch {}
+    return false;
+  }
+  reading.set(tab.id, rest().then(async found => {
+    const current = (await browser.storage.session.get(key))[key];
+    if (current?.token === token && Object.keys(found).length) await browser.storage.session.set({ [key]: { ...current, ...found } });
+  }).catch(error => console.warn('Could not finish reading the page', error)));
+  return true;
+}
+async function showSavePanel(tab, token, offer) {
+  const store = createLibraryStore(browser);
+  const [[root], tags, remembered] = await Promise.all([store.getTree(), store.getTags(), browser.storage.local.get(SAVE_FOLDER_KEY)]);
+  // Folders as the editor lists them, the library's top level first.
+  const folders = [];
+  let bookmark = null;
+  (function walk(node, depth) {
+    if (node.url) { if (node.id === offer.id) bookmark = node; return; }
+    if (node.type === 'separator') return;
+    folders.push({ id: node.id, label: depth ? `${'　'.repeat(depth)}${node.title || 'Untitled'}` : 'Library (top level)' });
+    node.children?.forEach(child => walk(child, depth + 1));
+  })(root, 0);
+  if (offer.id && !bookmark) throw new Error('This bookmark is no longer in Marked.');
+  const last = remembered[SAVE_FOLDER_KEY];
+  const folder = bookmark ? bookmark.parentId : folders.some(({ id }) => id === last) ? last : root.id;
+  // A new page gets the tags its title, address, and abstract suggest, as in the editor.
+  const chosen = bookmark ? bookmark.tags || [] : chooseTags(await suggestTags({ title: offer.title, url: offer.url, abstract: offer.abstract }, tags));
+  await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['save-panel.js'] });
+  const shown = await browser.tabs.sendMessage(tab.id, {
+    type: 'marked:save-panel', token, edit: !!bookmark, url: bookmark ? bookmark.url : offer.url, title: bookmark ? bookmark.title : offer.title,
+    folders, folder, tags, chosen, note: bookmark?.note || '', abstract: (bookmark ? bookmark.abstract : offer.abstract) || '',
+    highlight: offer.highlight || '', preview: !!offer.preview
+  }, { frameId: 0 });
+  if (shown !== true) throw new Error('The page didn’t show the panel.');
+}
+// Save in the panel. The page sends only what the user chose there; the page
+// being saved and what Marked read from it come from the offer.
+async function savePage(tab, message) {
+  const key = offerKey(tab.id);
+  await reading.get(tab.id);
+  const offer = (await browser.storage.session.get(key))[key];
+  if (!offer || offer.token !== message.token) throw new Error('This panel is out of date. Save the page again.');
+  const title = typeof message.title === 'string' ? message.title.trim().slice(0, 2000) : '';
+  if (!title) throw new Error('Enter a name.');
+  const store = createLibraryStore(browser);
+  const changes = { title, note: message.note, abstract: message.abstract, tags: message.tags };
+  if (offer.id) await store.update(offer.id, changes, message.parentId);
+  else {
+    const created = await store.create({
+      ...changes, url: offer.url, parentId: message.parentId, type: 'bookmark',
+      ...(message.preview === true && offer.preview && { preview: offer.preview }), ...(offer.icon && { icon: offer.icon }), ...(offer.card && { card: offer.card }),
+      ...(offer.highlight && { highlights: [{ text: offer.highlight, note: message.highlight?.note, color: message.highlight?.color }] })
+    });
+    if (offer.text && await keepText()) await store.setText(created.id, { ...offer.text, via: 'page' }).catch(error => console.warn('Could not keep the page text', error));
+    await browser.storage.local.set({ [SAVE_FOLDER_KEY]: created.parentId });
+    // The passage shows as highlighted on the page at once.
+    const [highlight] = created.highlights || [];
+    if (highlight) browser.tabs.sendMessage(tab.id, { type: 'marked:highlight-saved', highlight: { text: highlight.text, note: highlight.note || '', color: highlight.color } }, { frameId: 0 }).catch(() => {});
+  }
+  await browser.storage.session.remove(key);
+  reading.delete(tab.id);
+  return { ok: true };
+}
+async function dropOffer(tabId, token) {
+  await reading.get(tabId);
+  const key = offerKey(tabId);
+  if ((await browser.storage.session.get(key))[key]?.token !== token) return;
+  await browser.storage.session.remove(key);
+  reading.delete(tabId);
+}
+
 async function addPage(info, tab) {
   // Bookmark the top-level page, not a clicked link or embedded image/frame.
   const url = tab?.url || info.pageUrl;
   if (!url) return;
-  // A page already in Marked opens its bookmark instead of adding a second
+  // A page already in Marked edits its bookmark instead of adding a second
   // copy, and keeps the page's text if it has none yet.
   const saved = await findBookmark(url).catch(() => null);
   if (saved) {
+    if (!await offerSave(tab, { id: saved.id })) await openManager(new URLSearchParams({ edit: saved.id }));
     fillText(tab, saved, { articlesOnly: false }).catch(error => console.warn('Page text unavailable', error));
-    return openManager(new URLSearchParams({ edit: saved.id }));
+    return;
   }
-  const [preview, abstract, icon, page, site] = await Promise.all([
-    capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; }),
-    captureAbstract(tab, url).catch(error => { console.warn('Abstract unavailable; saving without one', error); return ''; }),
-    captureIcon(tab).catch(() => null),
-    captureText(tab, url).catch(error => { console.warn('Page text unavailable; saving without it', error); return null; }),
-    captureSite(url)
-  ]);
-  // A post's own thread or discussion reads better than what the page shows of it.
-  const text = site?.text && await keepText() ? site.text : page;
-  const card = site?.card;
-  await openEditor(url, tab?.title || url, preview || abstract || icon || text || card ? { ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(text && { text }), ...(card && { card }) } : null);
+  const title = tab?.title || url;
+  const { read, rest } = await readPage(tab, url);
+  if (await offerSave(tab, { url, title, ...read }, rest)) return;
+  const capture = { ...read, ...await rest() };
+  await openEditor(url, title, Object.keys(capture).length ? capture : null);
 }
 
 async function saveTweet(tab) {
@@ -241,7 +353,9 @@ async function saveTweet(tab) {
   const thread = posts.length > 1 && await keepText()
     ? { text: posts.flatMap((post, index) => [`${index + 1}/${posts.length}`, post]).join('\n\n'), kinds: posts.flatMap(() => ['by', 'p']).join(' ') }
     : null;
-  await openEditor(tweet.url, tweetTitle(tweet.author, tweet.handle, text), text || thread ? { ...(text && { abstract: text }), ...(thread && { text: thread }) } : null);
+  const title = tweetTitle(tweet.author, tweet.handle, text);
+  const read = { ...(text && { abstract: text }), ...(thread && { text: thread }) };
+  if (!await offerSave(tab, { url: tweet.url, title, ...read })) await openEditor(tweet.url, title, text || thread ? read : null);
 }
 
 // Titles a tweet after X's page titles, adding the handle: Name (@handle) on X: “text”.
@@ -350,7 +464,11 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[INDEX_KEY]) updateAllBadges();
   if (area === 'local' && changes[RELATED_KEY]) relatedCache = null;
 });
-browser.tabs.onRemoved?.addListener(tabId => { pageRelated.delete(tabId); browser.storage.session.remove?.(`related:${tabId}`)?.catch(() => {}); });
+browser.tabs.onRemoved?.addListener(tabId => {
+  pageRelated.delete(tabId);
+  reading.delete(tabId);
+  browser.storage.session.remove?.([`related:${tabId}`, offerKey(tabId)])?.catch(() => {});
+});
 browser.runtime.onStartup?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
 browser.runtime.onInstalled?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
 // Allowed in Marked's page, or in the browser's own settings; or taken back there.
@@ -431,21 +549,15 @@ async function openXBookmarks() {
 
 // highlighter.js asks about a passage the user chose to highlight. A saved page
 // answers with its title, and the page shows its own panel for the note; a new
-// page opens the editor, prefilled as Add to Marked, with the passage.
+// page gets the save panel, as with Add to Marked, with the passage.
 async function highlightPage(tab, message) {
   const text = cleanHighlightText(message.text);
   if (!text || !tab?.url) return null;
   const bookmark = await findBookmark(tab.url);
   if (bookmark) return { saved: bookmark.title || bookmark.url };
-  const [preview, abstract, icon, captured, site] = await Promise.all([
-    capturePreview(tab).catch(() => null),
-    captureAbstract(tab, tab.url).catch(() => ''),
-    captureIcon(tab).catch(() => null),
-    captureText(tab, tab.url).catch(() => null),
-    captureSite(tab.url)
-  ]);
-  const page = site?.text && await keepText() ? site.text : captured;
-  await openEditor(tab.url, tab.title || tab.url, { highlight: text, ...(preview && { preview }), ...(abstract && { abstract }), ...(icon && { icon }), ...(page && { text: page }), ...(site?.card && { card: site.card }) });
+  const title = tab.title || tab.url;
+  const { read, rest } = await readPage(tab, tab.url);
+  if (!await offerSave(tab, { url: tab.url, title, highlight: text, ...read }, rest)) await openEditor(tab.url, title, { highlight: text, ...read, ...await rest() });
   return { opened: true };
 }
 // The page's panel saves a highlight. The bookmark is looked up again from the
@@ -480,6 +592,15 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type === 'marked:save-highlight') {
     saveHighlight(sender.tab, message).then(reply, error => reply({ error: error.message }));
     return true;
+  }
+  // From the save panel, which Marked showed on this tab.
+  if (message?.type === 'marked:save-page') {
+    savePage(sender.tab, message).then(reply, error => reply({ error: error.message }));
+    return true;
+  }
+  if (message?.type === 'marked:cancel-save') {
+    dropOffer(sender.tab.id, message.token).catch(() => {});
+    return;
   }
   // highlighter.js asks on every page for the passages saved on it, to mark
   // them, and says what an unsaved page is about, to count related bookmarks.

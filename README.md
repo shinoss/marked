@@ -125,7 +125,7 @@ To bring in everything you've bookmarked on X, choose **Import → Bookmarks fro
 
 - Type `mk` and a space in the address bar to search your library.
 - The Marked button shows ✓ on pages you've saved, and on other pages how many of your bookmarks relate to them.
-- <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> saves the page you're on.
+- **Add to Marked** in the right-click menu, or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, saves the page you're on from a small panel on the page itself: name it, choose a folder, add tags and a note, and keep reading. On a page you've saved, the panel edits its bookmark.
 - **Save open tabs** keeps the whole window as a folder; **Open all** brings it back.
 
 <p align="center">
