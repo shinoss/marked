@@ -32,46 +32,33 @@ function load(body, replies = {}) {
   return page;
 }
 
-test('on a saved page, Highlight opens a panel on the page that saves the passage and a note', async () => {
-  const page = load('<p id="text">A passage worth keeping.</p>', { 'marked:highlight': { saved: 'The essay' }, 'marked:save-highlight': { ok: true } });
+test('Highlight hands the passage to Marked, whose panel takes over, and marks it once it’s saved', async () => {
+  const page = load('<p id="text">A passage worth keeping.</p>', { 'marked:highlight': { opened: true } });
   assert.equal(page.box(), null, 'nothing shows before a selection');
   page.select('#text'); await page.mouseup('#text');
   assert.deepEqual(page.buttons(), ['Highlight'], 'one option, not separate highlight and note');
   await page.click('Highlight');
-  assert.deepEqual(page.sent, [{ type: 'marked:page-highlights', topics: { title: '', description: '', headings: [], lead: '' } }, { type: 'marked:highlight', text: 'A passage worth keeping.' }], 'the page asks for its saved passages once, on load');
-  assert.match(page.box().textContent, /On “The essay”/);
-  assert.match(page.box().textContent, /A passage worth keeping\./);
-  assert.deepEqual(page.buttons(), ['', '', '', '', '', 'Cancel', 'Save highlight'], 'five color swatches, then the actions');
-  const swatch = color => page.box().querySelector(`[data-color="${color}"]`);
-  assert.equal(swatch('yellow').getAttribute('aria-pressed'), 'true', 'yellow unless another is chosen');
-  const note = page.box().querySelector('textarea');
-  assert.equal(page.shadow.activeElement, note, 'the note is ready to type');
-  // The panel stays open while its own clicks and keys happen.
-  await page.mouseup('#text');
-  assert.ok(page.box().querySelector('textarea'));
-  note.value = 'Quote this.';
-  swatch('green').click();
-  assert.deepEqual([swatch('green').getAttribute('aria-pressed'), swatch('yellow').getAttribute('aria-pressed')], ['true', 'false']);
-  await page.click('Save highlight');
-  assert.deepEqual(page.sent.at(-1), { type: 'marked:save-highlight', text: 'A passage worth keeping.', note: 'Quote this.', color: 'green' });
-  assert.equal(page.box().textContent, 'Highlight saved to Marked.');
+  assert.deepEqual(page.sent, [
+    { type: 'marked:page-highlights', topics: { title: '', description: '', headings: [], lead: '' } },
+    { type: 'marked:highlight', text: 'A passage worth keeping.', anchor: { top: 0, bottom: 0, right: 0 } }
+  ], 'the page asks for its saved passages once, on load; Highlight says where the passage is, for Marked’s panel');
+  assert.equal(page.box(), null, 'Marked’s panel takes over');
+  assert.equal(page.window.document.querySelector('textarea, input'), null, 'the page never gets a field to type the note in');
+  page.listen({ type: 'marked:highlight-saved', highlight: { text: 'A passage worth keeping.', note: 'Quote this.', color: 'green' } }, {}, () => {});
   const marked = page.window.document.querySelector('marked-highlight');
   assert.equal(marked.textContent, 'A passage worth keeping.', 'the new highlight shows at once');
   assert.match(marked.style.background, /92, 201, 138/, 'in its color');
 });
 
-test('on a new page, Highlight hands off to Marked and closes; failures are shown in the panel', async () => {
-  const page = load('<p id="text">Words</p>', { 'marked:highlight': { opened: true } });
-  page.select('#text'); await page.mouseup('#text');
-  await page.click('Highlight');
-  assert.equal(page.box(), null, "Marked's editor opened instead");
-  const failing = load('<p id="text">Words</p>', { 'marked:highlight': { saved: 'Page' }, 'marked:save-highlight': { error: 'This page is no longer in Marked.' } });
+test('where Marked’s panel can’t open, the passage is kept anyway; where Marked can’t help, it says so', async () => {
+  const kept = load('<p id="text">Words</p>', { 'marked:highlight': { highlighted: true } });
+  kept.select('#text'); await kept.mouseup('#text');
+  await kept.click('Highlight');
+  assert.equal(kept.box().textContent, 'Highlight saved to Marked.');
+  const failing = load('<p id="text">Words</p>');
   failing.select('#text'); await failing.mouseup('#text');
   await failing.click('Highlight');
-  await failing.click('Save highlight');
-  assert.match(failing.box().textContent, /This page is no longer in Marked\./);
-  await failing.click('Cancel');
-  assert.equal(failing.box(), null);
+  assert.equal(failing.box().textContent, 'Marked is unavailable here. Reload the page and try again.');
 });
 
 test('ignores empty selections and text in form fields or editable areas, and hides on a click elsewhere', async () => {
@@ -129,7 +116,7 @@ test('a page that hasn’t changed isn’t searched again for a missing passage,
 });
 
 test('the shortcut highlights the selection, or asks for one', async () => {
-  const page = load('<p id="text">Pressed, not clicked.</p>', { 'marked:highlight': { saved: 'The essay' } });
+  const page = load('<p id="text">Pressed, not clicked.</p>', { 'marked:highlight': { opened: true } });
   await tick(page.window);
   const replies = [];
   page.listen({ type: 'marked:highlight-selection' }, {}, reply => replies.push(reply));
@@ -137,8 +124,8 @@ test('the shortcut highlights the selection, or asks for one', async () => {
   page.select('#text');
   page.listen({ type: 'marked:highlight-selection' }, {}, reply => replies.push(reply));
   await tick(page.window);
-  assert.deepEqual(page.sent.at(-1), { type: 'marked:highlight', text: 'Pressed, not clicked.' });
-  assert.match(page.box().textContent, /On “The essay”/, 'the panel opens, as from the Highlight button');
+  assert.deepEqual(page.sent.at(-1), { type: 'marked:highlight', text: 'Pressed, not clicked.', anchor: { top: 0, bottom: 0, right: 0 } });
+  assert.equal(page.box(), null, 'Marked’s panel opens, as from the Highlight button');
   assert.deepEqual(replies, [true, true]);
   assert.equal(page.listen({ type: 'other' }, {}, () => {}), undefined, 'other messages are left alone');
 });

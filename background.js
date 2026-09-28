@@ -223,10 +223,11 @@ async function takePreview(tab, url) {
   return capturePreview(tab).catch(error => { console.warn('Preview unavailable; saving without one', error); return null; });
 }
 
-// Saving happens on the page: Marked shows its save panel there
-// (save-panel.js) and keeps what it read from the page here, by tab, until the
-// user saves or cancels. It's in session storage, so a save after the worker
-// slept still has it. Only what the panel shows goes to the page: never the
+// Saving happens on the page, in Marked's save panel: panel.html, which
+// save-panel.js shows there in a frame (showPanel). Marked keeps what it read
+// from the page here, by tab, until the user saves or cancels. It's in session
+// storage, so a save after the worker slept still has it. None of it goes to
+// the page: the panel asks for what it shows (panelData), which is never the
 // preview or the page's text. offer is a new page ({ url, title, and what was
 // read }) or a saved one ({ id }). False where the panel can't show, as on the
 // browser's own pages; the caller opens Marked's editor instead.
@@ -236,21 +237,30 @@ const reading = new Map();
 async function offerSave(tab, offer, rest = async () => ({})) {
   if (tab?.id == null || (!offer.id && !safeURL(offer.url))) return false;
   const key = offerKey(tab.id), token = crypto.randomUUID();
-  try {
-    await browser.storage.session.set({ [key]: { ...offer, token } });
-    await showSavePanel(tab, token, offer);
-  } catch (error) {
-    console.warn('Marked’s panel can’t show on this page; opening the editor instead', error);
-    try { await browser.storage.session.remove(key); } catch {}
-    return false;
-  }
-  reading.set(tab.id, rest().then(async found => {
+  // The rest is read once the panel shows, and a save waits for it, even one
+  // made the moment the panel appears.
+  let showing;
+  const read = new Promise(resolve => { showing = resolve; }).then(shown => shown && rest().then(async found => {
     const current = (await browser.storage.session.get(key))[key];
     if (current?.token === token && Object.keys(found).length) await browser.storage.session.set({ [key]: { ...current, ...found } });
-  }).catch(error => console.warn('Could not finish reading the page', error)));
-  return true;
+  })).catch(error => console.warn('Could not finish reading the page', error));
+  reading.set(tab.id, read);
+  let shown = false;
+  try {
+    await browser.storage.session.set({ [key]: { ...offer, token, form: await saveForm(offer) } });
+    shown = await showPanel(tab, 'save');
+  } catch (error) {
+    console.warn('Marked’s panel can’t show on this page; opening the editor instead', error);
+  }
+  showing(shown);
+  if (shown) return true;
+  if (reading.get(tab.id) === read) reading.delete(tab.id);
+  try { if ((await browser.storage.session.get(key))[key]?.token === token) await browser.storage.session.remove(key); } catch {}
+  return false;
 }
-async function showSavePanel(tab, token, offer) {
+// What the save panel shows for an offer: the page, or its saved bookmark, with
+// the library's folders and tags.
+async function saveForm(offer) {
   const store = createLibraryStore(browser);
   const [[root], tags, remembered] = await Promise.all([store.getTree(), store.getTags(), browser.storage.local.get(SAVE_FOLDER_KEY)]);
   // Folders as the editor lists them, the library's top level first.
@@ -267,15 +277,29 @@ async function showSavePanel(tab, token, offer) {
   const folder = bookmark ? bookmark.parentId : folders.some(({ id }) => id === last) ? last : root.id;
   // A new page gets the tags its title, address, and abstract suggest, as in the editor.
   const chosen = bookmark ? bookmark.tags || [] : chooseTags(await suggestTags({ title: offer.title, url: offer.url, abstract: offer.abstract }, tags));
-  await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['save-panel.js'] });
-  const shown = await browser.tabs.sendMessage(tab.id, {
-    type: 'marked:save-panel', token, edit: !!bookmark, url: bookmark ? bookmark.url : offer.url, title: bookmark ? bookmark.title : offer.title,
+  return {
+    edit: !!bookmark, url: bookmark ? bookmark.url : offer.url, title: bookmark ? bookmark.title : offer.title,
     folders, folder, tags, chosen, note: bookmark?.note || '', abstract: (bookmark ? bookmark.abstract : offer.abstract) || '',
     highlight: offer.highlight || '', preview: !!offer.preview
-  }, { frameId: 0 });
-  if (shown !== true) throw new Error('The page didn’t show the panel.');
+  };
 }
-// Save in the panel. The page sends only what the user chose there; the page
+// Shows one of Marked's panels on the tab's page: save-panel.js puts panel.html
+// there in a frame. True once the panel shows; false where its frame never
+// loads. Throws where Marked can't add to the page, as on the browser's own.
+async function showPanel(tab, kind, details = {}) {
+  await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['save-panel.js'] });
+  return await browser.tabs.sendMessage(tab.id, { type: 'marked:show-panel', kind, ...details }, { frameId: 0 }) === true;
+}
+// What a panel asks for as it opens: for a save, the offer's form; for a
+// highlight's note, the passage and its bookmark's title. Null if nothing
+// waits for it.
+async function panelData(tab, kind) {
+  const key = kind === 'highlight' ? noteKey(tab.id) : offerKey(tab.id);
+  const offer = (await browser.storage.session.get(key))[key];
+  if (!offer) return null;
+  return kind === 'highlight' ? { token: offer.token, title: offer.title, text: offer.text } : offer.form ? { token: offer.token, ...offer.form } : null;
+}
+// Save in the panel. The panel sends only what the user chose there; the page
 // being saved and what Marked read from it come from the offer.
 async function savePage(tab, message) {
   const key = offerKey(tab.id);
@@ -295,9 +319,7 @@ async function savePage(tab, message) {
     });
     if (offer.text && await keepText()) await store.setText(created.id, { ...offer.text, via: 'page' }).catch(error => console.warn('Could not keep the page text', error));
     await browser.storage.local.set({ [SAVE_FOLDER_KEY]: created.parentId });
-    // The passage shows as highlighted on the page at once.
-    const [highlight] = created.highlights || [];
-    if (highlight) browser.tabs.sendMessage(tab.id, { type: 'marked:highlight-saved', highlight: { text: highlight.text, note: highlight.note || '', color: highlight.color } }, { frameId: 0 }).catch(() => {});
+    markSaved(tab, created.highlights?.[0]);
   }
   await browser.storage.session.remove(key);
   reading.delete(tab.id);
@@ -309,6 +331,10 @@ async function dropOffer(tabId, token) {
   if ((await browser.storage.session.get(key))[key]?.token !== token) return;
   await browser.storage.session.remove(key);
   reading.delete(tabId);
+}
+// A highlight just saved shows as marked on the page at once.
+function markSaved(tab, highlight) {
+  if (highlight) browser.tabs.sendMessage(tab.id, { type: 'marked:highlight-saved', highlight: { text: highlight.text, note: highlight.note || '', color: highlight.color } }, { frameId: 0 }).catch(() => {});
 }
 
 async function addPage(info, tab) {
@@ -467,7 +493,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 browser.tabs.onRemoved?.addListener(tabId => {
   pageRelated.delete(tabId);
   reading.delete(tabId);
-  browser.storage.session.remove?.([`related:${tabId}`, offerKey(tabId)])?.catch(() => {});
+  browser.storage.session.remove?.([`related:${tabId}`, offerKey(tabId), noteKey(tabId)])?.catch(() => {});
 });
 browser.runtime.onStartup?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
 browser.runtime.onInstalled?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
@@ -548,25 +574,62 @@ async function openXBookmarks() {
 }
 
 // highlighter.js asks about a passage the user chose to highlight. A saved page
-// answers with its title, and the page shows its own panel for the note; a new
-// page gets the save panel, as with Add to Marked, with the passage.
+// gets Marked's note panel beside the passage; a new page gets the save panel,
+// as with Add to Marked, with the passage.
 async function highlightPage(tab, message) {
   const text = cleanHighlightText(message.text);
   if (!text || !tab?.url) return null;
   const bookmark = await findBookmark(tab.url);
-  if (bookmark) return { saved: bookmark.title || bookmark.url };
+  if (bookmark) return offerNote(tab, bookmark, text, cleanAnchor(message.anchor));
   const title = tab.title || tab.url;
   const { read, rest } = await readPage(tab, tab.url);
   if (!await offerSave(tab, { url: tab.url, title, highlight: text, ...read }, rest)) await openEditor(tab.url, title, { highlight: text, ...read, ...await rest() });
   return { opened: true };
 }
-// The page's panel saves a highlight. The bookmark is looked up again from the
-// tab's own URL rather than taken from the page.
-async function saveHighlight(tab, message) {
-  const bookmark = tab?.url && await findBookmark(tab.url);
+// Where the passage is in the window, for the note panel to go beside it.
+const cleanAnchor = anchor => ['top', 'bottom', 'right'].every(side => Number.isFinite(anchor?.[side])) ? { top: anchor.top, bottom: anchor.bottom, right: anchor.right } : null;
+// A highlight on a saved page gets its note in Marked's note panel. The passage
+// and the page it's on wait here, by tab, until the user saves or cancels there.
+const noteKey = tabId => `highlight:${tabId}`;
+async function offerNote(tab, bookmark, text, anchor) {
+  const key = noteKey(tab.id), token = crypto.randomUUID();
+  let shown = false;
+  try {
+    await browser.storage.session.set({ [key]: { token, url: tab.url, title: bookmark.title || bookmark.url, text } });
+    shown = await showPanel(tab, 'highlight', { anchor });
+  } catch (error) {
+    console.warn('Marked’s note panel can’t show on this page; keeping the highlight without a note', error);
+  }
+  if (shown) return { opened: true };
+  // Where the panel can't show, the passage is kept anyway, without a note.
+  try { if ((await browser.storage.session.get(key))[key]?.token === token) await browser.storage.session.remove(key); } catch {}
+  markSaved(tab, await createLibraryStore(browser).addHighlight(bookmark.id, { text }));
+  return { highlighted: true };
+}
+// Save in the note panel: the passage kept here goes to the bookmark of the
+// page it was highlighted on, looked up again.
+async function saveNote(tab, message) {
+  const key = noteKey(tab.id);
+  const offer = (await browser.storage.session.get(key))[key];
+  if (!offer || offer.token !== message.token) throw new Error('This panel is out of date. Highlight the passage again.');
+  const bookmark = await findBookmark(offer.url);
   if (!bookmark) throw new Error('This page is no longer in Marked.');
-  await createLibraryStore(browser).addHighlight(bookmark.id, { text: message.text, note: message.note, color: message.color });
+  const saved = await createLibraryStore(browser).addHighlight(bookmark.id, { text: offer.text, note: message.note, color: message.color });
+  await browser.storage.session.remove(key);
+  markSaved(tab, saved);
   return { ok: true };
+}
+async function dropNote(tabId, token) {
+  const key = noteKey(tabId);
+  if ((await browser.storage.session.get(key))[key]?.token === token) await browser.storage.session.remove(key);
+}
+// Marked's panels on web pages are its own page, panel.html, in save-panel.js's
+// frame. Only they save what the user chose there, never a script in the page.
+function fromPanel(sender) {
+  try {
+    const { protocol, pathname } = new URL(sender.url);
+    return protocol === new URL(browser.runtime.getURL('')).protocol && pathname === '/panel.html';
+  } catch { return false; }
 }
 // Chrome 123 does not accept promises from listeners, so reply through sendResponse.
 browser.runtime.onMessage.addListener((message, sender, reply) => {
@@ -589,18 +652,28 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
     highlightPage(sender.tab, message).then(reply, error => { console.error('Could not open the highlight', error); reply(null); });
     return true;
   }
-  if (message?.type === 'marked:save-highlight') {
-    saveHighlight(sender.tab, message).then(reply, error => reply({ error: error.message }));
-    return true;
-  }
-  // From the save panel, which Marked showed on this tab.
-  if (message?.type === 'marked:save-page') {
-    savePage(sender.tab, message).then(reply, error => reply({ error: error.message }));
-    return true;
-  }
-  if (message?.type === 'marked:cancel-save') {
-    dropOffer(sender.tab.id, message.token).catch(() => {});
-    return;
+  // From Marked's panels, which it showed on this tab.
+  if (fromPanel(sender)) {
+    if (message?.type === 'marked:panel-data') {
+      panelData(sender.tab, message.kind).then(reply, () => reply(null));
+      return true;
+    }
+    if (message?.type === 'marked:save-page') {
+      savePage(sender.tab, message).then(reply, error => reply({ error: error.message }));
+      return true;
+    }
+    if (message?.type === 'marked:cancel-save') {
+      dropOffer(sender.tab.id, message.token).catch(() => {});
+      return;
+    }
+    if (message?.type === 'marked:save-highlight') {
+      saveNote(sender.tab, message).then(reply, error => reply({ error: error.message }));
+      return true;
+    }
+    if (message?.type === 'marked:cancel-highlight') {
+      dropNote(sender.tab.id, message.token).catch(() => {});
+      return;
+    }
   }
   // highlighter.js asks on every page for the passages saved on it, to mark
   // them, and says what an unsaved page is about, to count related bookmarks.
@@ -635,11 +708,11 @@ async function highlightSelection(tab) {
     return;
   }
   const ask = () => browser.tabs.sendMessage(tab.id, { type: 'marked:highlight-selection' }, { frameId: 0 });
-  try { await ask(); }
-  catch {
-    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['highlighter.js'] });
-    await ask();
-  }
+  // The highlighter answers true. Without it the page has no answer, or one
+  // from another of Marked's scripts (save-panel.js) that leaves this alone.
+  if (await ask().catch(() => null) === true) return;
+  await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['highlighter.js'] });
+  await ask();
 }
 browser.commands?.onCommand.addListener(async (command, tab) => {
   if (command !== 'add-to-marked' && command !== 'highlight-selection') return;

@@ -64,6 +64,15 @@ test('access to the pages you visit is optional, and nothing runs in pages until
   await exists('tweet-capture.js');
 });
 
+// Marked's panels on web pages are its own page, panel.html, in a frame, so the
+// page's scripts never hear what's typed there (save-panel.js). It's the one
+// file of Marked's that a web page may load, and in Chrome only at an address
+// that changes every session, so no site can find Marked by asking for it.
+test('web pages may load Marked’s panel, and nothing else of it', async () => {
+  assert.deepEqual(manifest.web_accessible_resources, [{ resources: ['panel.html'], matches: ['<all_urls>'], use_dynamic_url: true }]);
+  await exists('panel.html');
+});
+
 test('mk searches Marked from the address bar, and Alt+Shift+M adds the page, with no new permissions', () => {
   assert.deepEqual(manifest.omnibox, { keyword: 'mk' });
   assert.equal(manifest.commands['add-to-marked'].suggested_key.default, 'Alt+Shift+M');

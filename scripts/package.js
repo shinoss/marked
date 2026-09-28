@@ -16,6 +16,8 @@ export function manifestFor(browser, manifest) {
   } else if (browser === 'firefox') {
     delete out.background.service_worker;
     delete out.minimum_chrome_version;
+    // Chrome-only: Firefox gives each install its own random address anyway.
+    for (const entry of out.web_accessible_resources || []) delete entry.use_dynamic_url;
   } else {
     throw new Error(`Unknown browser "${browser}". Use ${BROWSERS.join(' or ')}.`);
   }

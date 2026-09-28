@@ -8,6 +8,7 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; connect-src 'self' https:; img-src 'self' data:; worker-src 'self'"
   },
+  "web_accessible_resources": [{ "resources": ["panel.html"], "matches": ["<all_urls>"], "use_dynamic_url": true }],
   "omnibox": { "keyword": "mk" },
   "commands": {
     "add-to-marked": { "suggested_key": { "default": "Alt+Shift+M" }, "description": "Add this page to Marked" },

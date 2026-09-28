@@ -41,6 +41,7 @@ test('the Chrome package drops Firefox-only keys and keeps the same permissions'
   assert.equal(chrome.host_permissions, undefined);
   assert.deepEqual(chrome.optional_host_permissions, ['<all_urls>']);
   assert.equal(chrome.minimum_chrome_version, manifest.minimum_chrome_version);
+  assert.deepEqual(chrome.web_accessible_resources, manifest.web_accessible_resources, 'the panel at an address that changes every session');
   assert.equal(chrome.version, manifest.version);
   // The repo's dual manifest is left as it is.
   assert.deepEqual(manifest.background.scripts, ['background.js']);
@@ -51,6 +52,9 @@ test('the Firefox package drops Chrome-only keys and keeps its gecko settings', 
   const firefox = manifestFor('firefox', manifest);
   assert.deepEqual(firefox.background, { scripts: ['background.js'], type: 'module' });
   assert.equal(firefox.minimum_chrome_version, undefined);
+  // Firefox doesn't know use_dynamic_url; each install has its own address anyway.
+  assert.deepEqual(firefox.web_accessible_resources, [{ resources: ['panel.html'], matches: ['<all_urls>'] }]);
+  assert.equal(manifest.web_accessible_resources[0].use_dynamic_url, true, 'the repo’s manifest keeps it');
   assert.deepEqual(firefox.browser_specific_settings, manifest.browser_specific_settings);
   assert.deepEqual(firefox.permissions, manifest.permissions);
   assert.equal(manifest.background.service_worker, 'background.js');
@@ -79,6 +83,7 @@ test('every file the manifest and the pages load is packaged', async () => {
   assert.deepEqual([...new Set(injected)].sort(), ['highlighter.js', 'save-panel.js', 'tweet-capture.js']);
   const referenced = [
     ...manifest.background.scripts, manifest.background.service_worker, ...pageScripts, ...injected,
+    ...manifest.web_accessible_resources.flatMap(entry => entry.resources),
     ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)
   ];
   for (const page of (await readdir(root)).filter(name => name.endsWith('.html'))) {
@@ -86,6 +91,7 @@ test('every file the manifest and the pages load is packaged', async () => {
     referenced.push(page, ...[...html.matchAll(/\s(?:src|href)="([^"#:]+)"/g)].map(match => match[1]));
   }
   assert.ok(referenced.includes('vendor/fonts/fonts.css'));
+  assert.ok(['panel.html', 'panel.js', 'panel.css'].every(path => referenced.includes(path)), 'the panel web pages show, with its script and styles');
   for (const path of referenced) assert.ok(isExtensionFile(path), path);
 });
 

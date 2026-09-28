@@ -57,19 +57,27 @@ function useSession() {
   browser.storage.session.remove = async keys => { for (const key of [].concat(keys)) delete session[key]; };
   return session;
 }
-// A page that shows Marked's save panel. Injected functions answer from
-// results, by name; save-panel.js answers marked:save-panel, and other
-// messages to the page are kept in told.
+// Marked's panel on a page: panel.html, in the frame save-panel.js puts there.
+const panelSender = (tab, kind = 'save') => ({ tab: typeof tab === 'object' ? tab : { id: tab }, url: `moz-extension://marked/panel.html#${kind}`, frameId: 1 });
+// A page that shows Marked's panels. Injected functions answer from results,
+// by name. save-panel.js answers marked:show-panel (kept in shown) once the
+// panel in its frame has asked what to show (kept in panels); other messages
+// to the page are kept in told.
 function usePage(results = {}) {
-  const page = { injected: [], panels: [], told: [] };
+  const page = { injected: [], shown: [], panels: [], told: [] };
   browser.scripting = { executeScript: async details => { page.injected.push(details.func?.name ?? details.files.join()); return [{ result: results[details.func?.name] ?? null }]; } };
   browser.tabs.sendMessage = async (tabId, message, options) => {
-    if (message.type === 'marked:save-panel') { page.panels.push({ tabId, ...message }); return true; }
+    if (message.type === 'marked:show-panel') {
+      page.shown.push({ tabId, ...message });
+      page.panels.push({ tabId, kind: message.kind, ...await askPanel({ type: 'marked:panel-data', kind: message.kind }, tabId, message.kind) });
+      return true;
+    }
     page.told.push([tabId, message, options]);
   };
   return page;
 }
 const ask = (message, tab) => new Promise(resolve => { assert.equal(onMessage(message, { tab }, resolve), true); });
+const askPanel = (message, tab, kind) => new Promise(resolve => { assert.equal(onMessage(message, panelSender(tab, kind), resolve), true); });
 const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
 const rootOf = async mock => (await mock.api.storage.local.get()).markedLibraryV1.root;
 
@@ -83,9 +91,10 @@ test('Add to Marked shows Marked’s panel on the page, for the page and not the
   opened.length = 0;
   await onClick({ menuItemId: 'add-to-marked', pageUrl: 'https://example.com/', linkUrl: 'https://other.test/' }, { id: 4, url, title: 'AI & world models' });
   assert.equal(opened.length, 0, 'the user stays on the page');
+  assert.deepEqual(page.shown, [{ tabId: 4, type: 'marked:show-panel', kind: 'save' }], 'the page is told only to show the panel');
   const [panel] = page.panels;
   assert.deepEqual({ ...panel, token: typeof panel.token }, {
-    tabId: 4, type: 'marked:save-panel', token: 'string', edit: false, url, title: 'AI & world models',
+    tabId: 4, kind: 'save', token: 'string', edit: false, url, title: 'AI & world models',
     folders: [{ id: 'root', label: 'Library (top level)' }, { id: reading.id, label: '　Reading' }], folder: 'root',
     tags: ['Technology', 'AI', 'History', 'Fiction'], chosen: ['AI'], note: '', abstract: 'A post about world models.', highlight: '', preview: false
   }, 'the tags its title suggests are chosen, as in the editor');
@@ -108,16 +117,19 @@ test('Save in the panel keeps what the user chose, with the page’s icon and te
   const [{ token, ...panel }] = page.panels;
   assert.ok(!('text' in panel) && !('icon' in panel));
   assert.deepEqual([session['save:4'].icon, session['save:4'].text.text], [icon, 'Every word of the essay.'], 'they wait in Marked');
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: 'old', title: 'X', parentId: 'root' }, tab), { error: 'This panel is out of date. Save the page again.' });
-  assert.deepEqual(await ask({ type: 'marked:save-page', token, title: '  ', parentId: 'root' }, tab), { error: 'Enter a name.' });
-  assert.deepEqual(await ask({ type: 'marked:save-page', token, title: ' My essay ', parentId: reading.id, note: ' Why ', tags: ['AI', 'Essays', 'ai'], abstract: ' Edited. ', preview: true }, tab), { ok: true });
+  // A script in the page, which shares its process, can't save through the panel.
+  assert.equal(onMessage({ type: 'marked:save-page', token, title: 'Not mine', parentId: 'root' }, { tab, url }, () => {}), undefined);
+  assert.equal(onMessage({ type: 'marked:panel-data', kind: 'save' }, { tab, url }, () => {}), undefined, 'nor read what it shows');
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: 'old', title: 'X', parentId: 'root' }, tab), { error: 'This panel is out of date. Save the page again.' });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token, title: '  ', parentId: 'root' }, tab), { error: 'Enter a name.' });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token, title: ' My essay ', parentId: reading.id, note: ' Why ', tags: ['AI', 'Essays', 'ai'], abstract: ' Edited. ', preview: true }, tab), { ok: true });
   const saved = await mock.api.storage.local.get();
   const [bookmark] = saved.markedLibraryV1.root.children[0].children;
   assert.deepEqual([bookmark.title, bookmark.url, bookmark.note, bookmark.tags, bookmark.abstract, bookmark.icon], ['My essay', url, 'Why', ['AI', 'Essays'], 'Edited.', icon]);
   assert.deepEqual([saved[`markedText:${bookmark.id}`].text, saved[`markedText:${bookmark.id}`].via], ['Every word of the essay.', 'page']);
   assert.equal(saved[`markedPreview:${bookmark.id}`], undefined, 'there was no preview of a tab in the background to keep');
   assert.deepEqual(Object.keys(session), [], 'Marked forgets the page once it’s saved');
-  assert.deepEqual(await ask({ type: 'marked:save-page', token, title: 'Again', parentId: 'root' }, tab), { error: 'This panel is out of date. Save the page again.' }, 'and saves it once');
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token, title: 'Again', parentId: 'root' }, tab), { error: 'This panel is out of date. Save the page again.' }, 'and saves it once');
   // The next page starts in the folder the last one went into.
   assert.equal(saved.markedSaveFolder, reading.id);
   await onClick({ menuItemId: 'add-to-marked' }, { id: 5, url: 'https://example.com/next', title: 'Next' });
@@ -131,8 +143,8 @@ test('the preview never goes to the page, and is kept only if Save preview stays
   const tab = id => ({ id, url: `https://example.com/${id}` });
   session['save:6'] = { url: 'https://example.com/6', title: 'Kept', preview, token: 'six' };
   session['save:7'] = { url: 'https://example.com/7', title: 'Skipped', preview, token: 'seven' };
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: 'six', title: 'Kept', parentId: 'root', preview: true }, tab(6)), { ok: true });
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: 'seven', title: 'Skipped', parentId: 'root', preview: false }, tab(7)), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: 'six', title: 'Kept', parentId: 'root', preview: true }, tab(6)), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: 'seven', title: 'Skipped', parentId: 'root', preview: false }, tab(7)), { ok: true });
   const saved = await mock.api.storage.local.get();
   const [kept, skipped] = saved.markedLibraryV1.root.children;
   assert.equal(saved[`markedPreview:${kept.id}`], preview);
@@ -152,14 +164,16 @@ test('Cancel in the panel, or closing the tab, forgets what Marked read from the
   const page = usePage();
   await onClick({ menuItemId: 'add-to-marked' }, { id: 8, url: 'https://example.com/a', title: 'A' });
   const [{ token }] = page.panels;
-  onMessage({ type: 'marked:cancel-save', token: 'another' }, { tab: { id: 8 } }, () => {});
+  onMessage({ type: 'marked:cancel-save', token: 'another' }, panelSender(8), () => {});
+  onMessage({ type: 'marked:cancel-save', token }, { tab: { id: 8 }, url: 'https://example.com/a' }, () => {});
   await flush();
   assert.deepEqual(Object.keys(session), ['save:8'], 'only its own panel cancels it');
-  onMessage({ type: 'marked:cancel-save', token }, { tab: { id: 8 } }, () => {});
+  onMessage({ type: 'marked:cancel-save', token }, panelSender(8), () => {});
   await flush();
   assert.deepEqual(Object.keys(session), []);
   await onClick({ menuItemId: 'add-to-marked' }, { id: 9, url: 'https://example.com/b', title: 'B' });
-  assert.deepEqual(Object.keys(session), ['save:9']);
+  session['highlight:9'] = { token: 'nine', url: 'https://example.com/b', title: 'B', text: 'A passage' };
+  assert.deepEqual(Object.keys(session), ['save:9', 'highlight:9']);
   onTabRemoved(9);
   await flush();
   assert.deepEqual(Object.keys(session), []);
@@ -176,7 +190,7 @@ test('Add to Marked on a saved page edits its bookmark in the panel instead of a
   const [{ token, ...panel }] = page.panels;
   assert.deepEqual({ edit: panel.edit, url: panel.url, title: panel.title, folder: panel.folder, chosen: panel.chosen, note: panel.note, abstract: panel.abstract, preview: panel.preview },
     { edit: true, url: 'https://example.com/essay', title: 'Essay', folder: 'root', chosen: ['History'], note: 'Old note', abstract: 'About it.', preview: false });
-  assert.deepEqual(await ask({ type: 'marked:save-page', token, title: 'The essay', parentId: reading.id, note: 'New note', tags: ['History', 'Essays'], abstract: 'About it.' }, tab), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token, title: 'The essay', parentId: reading.id, note: 'New note', tags: ['History', 'Essays'], abstract: 'About it.' }, tab), { ok: true });
   const root = await rootOf(mock);
   assert.equal(root.children.length, 1, 'moved into Reading, not copied');
   const [moved] = root.children[0].children;
@@ -271,7 +285,7 @@ test('Save tweet to Marked shows the panel for the tweet under the pointer, and 
   const [panel] = page.panels;
   assert.deepEqual([panel.url, panel.title, panel.abstract, panel.preview], ['https://x.com/jack/status/20', 'jack (@jack) on X: “just setting up my twttr”', 'just setting up my twttr', false]);
   assert.equal(session['save:9'].text.text, '1/2\n\njust setting up my twttr\n\n2/2\n\nand more', 'the thread waits in Marked');
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: panel.token, title: panel.title, parentId: 'root', abstract: panel.abstract }, tab), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: panel.token, title: panel.title, parentId: 'root', abstract: panel.abstract }, tab), { ok: true });
   const [bookmark] = (await rootOf(mock)).children;
   assert.equal(bookmark.url, 'https://x.com/jack/status/20', 'the tweet, not the page it was on');
 });
@@ -344,7 +358,8 @@ test('in Firefox, Save tweet to Marked asks for access to X while the click coun
   } finally { delete browser.runtime.getBrowserInfo; }
 });
 
-test('a highlight on a saved page is answered with its title, and the page saves it to that bookmark', async t => {
+// A library where the page has two bookmarks, the newer in a folder.
+async function useArticle() {
   const { fixture } = await import('./storage-fixture.js');
   const mock = fixture({ id: 'root', children: [] });
   await mock.api.storage.local.set({ markedLibraryV1: { version: 1, root: { id: 'root', children: [
@@ -353,15 +368,75 @@ test('a highlight on a saved page is answered with its title, and the page saves
   ] } } });
   browser.storage.local = mock.api.storage.local;
   Object.defineProperty(navigator, 'locks', { value: mock.locks, configurable: true });
+  return mock;
+}
+const highlightsOf = async (mock, id) => {
+  const find = node => node.id === id ? node : node.children?.map(find).find(Boolean);
+  return (find((await mock.api.storage.local.get()).markedLibraryV1.root).highlights || []).map(({ text, note, color }) => ({ text, note, color }));
+};
+
+test('a highlight on a saved page opens Marked’s note panel beside the passage, and only the panel saves it', async () => {
+  const mock = await useArticle();
+  const session = useSession();
+  const page = usePage();
   opened.length = 0;
   const tab = { id: 3, url: 'https://example.com/article#part-2', title: 'Article' };
-  assert.deepEqual(await ask({ type: 'marked:highlight', text: '  A  passage ' }, tab), { saved: 'The essay' }, 'the newest bookmark of the page, ignoring #fragments');
-  assert.equal(opened.length, 0, 'the page shows its own panel');
-  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: ' A  passage ', note: ' Why ', color: 'purple' }, tab), { ok: true });
-  const root = (await mock.api.storage.local.get()).markedLibraryV1.root;
-  const [highlight] = root.children[1].children[0].highlights;
-  assert.deepEqual({ text: highlight.text, note: highlight.note, color: highlight.color }, { text: 'A passage', note: 'Why', color: 'purple' });
-  assert.deepEqual(await ask({ type: 'marked:save-highlight', text: 'X' }, { id: 4, url: 'https://other.test/' }), { error: 'This page is no longer in Marked.' });
+  const anchor = { top: 100, bottom: 120, right: 480 };
+  assert.deepEqual(await ask({ type: 'marked:highlight', text: '  A  passage ', anchor: { ...anchor, left: 7, note: 'extra' } }, tab), { opened: true });
+  assert.deepEqual(page.shown, [{ tabId: 3, type: 'marked:show-panel', kind: 'highlight', anchor }], 'beside the passage');
+  const [panel] = page.panels;
+  assert.deepEqual({ ...panel, token: typeof panel.token }, { tabId: 3, kind: 'highlight', token: 'string', title: 'The essay', text: 'A passage' }, 'the newest bookmark of the page, ignoring #fragments');
+  assert.equal(opened.length, 0, 'the note is added on the page');
+  // A script in the page can't save a highlight, or choose its passage.
+  assert.equal(onMessage({ type: 'marked:save-highlight', token: panel.token, note: 'Mine' }, { tab, url: tab.url }, () => {}), undefined);
+  assert.deepEqual(await askPanel({ type: 'marked:save-highlight', token: 'old', note: 'Why' }, tab, 'highlight'), { error: 'This panel is out of date. Highlight the passage again.' });
+  assert.deepEqual(await askPanel({ type: 'marked:save-highlight', token: panel.token, text: 'Another passage', note: ' Why ', color: 'purple' }, tab, 'highlight'), { ok: true });
+  assert.deepEqual(await highlightsOf(mock, 'new'), [{ text: 'A passage', note: 'Why', color: 'purple' }]);
+  assert.deepEqual(page.told, [[3, { type: 'marked:highlight-saved', highlight: { text: 'A passage', note: 'Why', color: 'purple' } }, { frameId: 0 }]], 'the page marks it at once');
+  assert.deepEqual(Object.keys(session), [], 'and Marked forgets the passage');
+  // Saved from a page that's no longer in Marked.
+  session['highlight:4'] = { token: 'four', url: 'https://other.test/', title: 'Gone', text: 'X' };
+  assert.deepEqual(await askPanel({ type: 'marked:save-highlight', token: 'four' }, { id: 4 }, 'highlight'), { error: 'This page is no longer in Marked.' });
+  // Cancel forgets the passage, for its own panel only.
+  onMessage({ type: 'marked:cancel-highlight', token: 'another' }, panelSender(4, 'highlight'), () => {});
+  onMessage({ type: 'marked:cancel-highlight', token: 'four' }, { tab: { id: 4 }, url: 'https://other.test/' }, () => {});
+  await flush();
+  assert.deepEqual(Object.keys(session), ['highlight:4']);
+  onMessage({ type: 'marked:cancel-highlight', token: 'four' }, panelSender(4, 'highlight'), () => {});
+  await flush();
+  assert.deepEqual(Object.keys(session), []);
+});
+
+test('where the note panel can’t show, the highlight is kept without a note', async () => {
+  const mock = await useArticle();
+  const session = useSession();
+  const page = usePage();
+  const show = browser.tabs.sendMessage;
+  // The panel's frame never loaded, so save-panel.js answers that it didn't show.
+  browser.tabs.sendMessage = async (tabId, message, options) => message.type === 'marked:show-panel' ? false : show(tabId, message, options);
+  const tab = { id: 3, url: 'https://example.com/article', title: 'Article' };
+  assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Kept anyway', anchor: { top: 1, bottom: 2, right: 3 } }, tab), { highlighted: true });
+  assert.deepEqual(await highlightsOf(mock, 'new'), [{ text: 'Kept anyway', note: undefined, color: undefined }]);
+  assert.deepEqual(page.told, [[3, { type: 'marked:highlight-saved', highlight: { text: 'Kept anyway', note: '', color: undefined } }, { frameId: 0 }]]);
+  assert.deepEqual(Object.keys(session), []);
+  // Nor where Marked can't add to the page at all.
+  browser.scripting.executeScript = async () => { throw new Error('Cannot access contents of the page.'); };
+  assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Kept too' }, tab), { highlighted: true });
+  assert.equal((await highlightsOf(mock, 'new')).length, 2);
+});
+
+test('where the panel’s frame never loads, Add to Marked opens the editor with what it read', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await useLibrary([]);
+  const session = useSession();
+  usePage({ readPageAbstract: { url: 'https://example.com/post', text: 'A post.' } });
+  browser.tabs.sendMessage = async () => false;
+  opened.length = 0;
+  await onClick({ menuItemId: 'add-to-marked' }, { id: 4, url: 'https://example.com/post', title: 'Post' });
+  const request = new URL(opened[0].url);
+  assert.equal(request.searchParams.get('add'), 'https://example.com/post');
+  assert.equal(session[request.searchParams.get('capture')].abstract, 'A post.');
+  assert.equal(session['save:4'], undefined, 'nothing waits for a panel that never showed');
 });
 
 test('a highlight on a new page shows the save panel with the passage, as Add to Marked does, and the page marks it once saved', async () => {
@@ -374,7 +449,7 @@ test('a highlight on a new page shows the save panel with the passage, as Add to
   assert.deepEqual(await ask({ type: 'marked:highlight', text: 'Quoted  words' }, tab), { opened: true });
   const [panel] = page.panels;
   assert.deepEqual([panel.url, panel.title, panel.highlight, panel.abstract], [url, 'New page', 'Quoted words', 'Page description.']);
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: panel.token, title: 'New page', parentId: 'root', highlight: { color: 'green', note: ' Why ' } }, tab), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: panel.token, title: 'New page', parentId: 'root', highlight: { color: 'green', note: ' Why ' } }, tab), { ok: true });
   const saved = await mock.api.storage.local.get();
   const [bookmark] = saved.markedLibraryV1.root.children;
   assert.deepEqual(bookmark.highlights.map(({ text, note, color }) => ({ text, note, color })), [{ text: 'Quoted words', note: 'Why', color: 'green' }]);
@@ -496,6 +571,12 @@ test('Alt+Shift+H asks the page to highlight its selection, adding the highlight
   for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(sent, [[9, 'marked:highlight-selection', 0], [9, 'marked:highlight-selection', 0]]);
   assert.deepEqual(injected, [['highlighter.js']], 'a tab opened before Marked gets the highlighter first');
+  // A page with Marked's panel script but no highlighter: that script leaves the message unanswered.
+  sent.length = 0; injected.length = 0; present = false;
+  browser.tabs.sendMessage = async (tabId, message, options) => { sent.push([tabId, message.type, options.frameId]); return present || undefined; };
+  await onCommand('highlight-selection', { id: 9, url: 'https://example.com/' });
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([sent.length, injected], [2, [['highlighter.js']]], 'the highlighter is added there too');
   const told = [];
   browser.runtime.sendMessage = async message => { told.push(message); };
   await onCommand('highlight-selection', { id: 5, url: 'moz-extension://marked/reader.html?id=essay' });
@@ -517,7 +598,7 @@ test('Add to Marked on a post reads its site’s API for a card and its thread',
   globalThis.fetch = async url => { fetched.push(url); return new Response(JSON.stringify(answers[url] ?? null)); };
   const tab = { id: 4, url, title: 'Show HN: Marked | Hacker News' };
   await onClick({ menuItemId: 'add-to-marked' }, tab);
-  assert.deepEqual(await ask({ type: 'marked:save-page', token: page.panels[0].token, title: 'Show HN: Marked', parentId: 'root' }, tab), { ok: true });
+  assert.deepEqual(await askPanel({ type: 'marked:save-page', token: page.panels[0].token, title: 'Show HN: Marked', parentId: 'root' }, tab), { ok: true });
   const saved = await mock.api.storage.local.get();
   const [bookmark] = saved.markedLibraryV1.root.children;
   assert.deepEqual([bookmark.card.site, bookmark.card.title, bookmark.card.stats], ['hn', 'Show HN: Marked', { score: 5, comments: 1 }]);

@@ -185,7 +185,7 @@ npm ci && npm run bundle
 - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…**, and select `manifest.json`.
 
 > [!NOTE]
-> Chrome shows a harmless `'background.scripts' requires manifest version of 2 or lower` error, because one manifest serves both browsers. Firefox removes temporary add-ons when it restarts.
+> Chrome shows a harmless `'background.scripts' requires manifest version of 2 or lower` error, and Firefox a harmless warning about `use_dynamic_url`, because one manifest serves both browsers. Firefox removes temporary add-ons when it restarts.
 
 Local chat needs WebGPU and downloads the model (about 2.3 GB) from Hugging Face once. On a Mac, use Chrome and 16 GB of memory or more.
 
@@ -227,7 +227,7 @@ npm run build            # bundle, then a ZIP per store in web-ext-artifacts/
 npm run build:source     # source ZIP for Firefox review
 ```
 
-`npm run build` stages each browser's files in `dist/chrome` and `dist/firefox` and zips them as `web-ext-artifacts/marked-chrome-<version>.zip` and `marked-firefox-<version>.zip`. Each gets its own manifest: Chrome's drops `background.scripts` and `browser_specific_settings`; Firefox's drops `background.service_worker` and `minimum_chrome_version`. `npm run build:chrome` and `npm run build:firefox` repackage one browser without bundling again. The same files make the same ZIP every time.
+`npm run build` stages each browser's files in `dist/chrome` and `dist/firefox` and zips them as `web-ext-artifacts/marked-chrome-<version>.zip` and `marked-firefox-<version>.zip`. Each gets its own manifest: Chrome's drops `background.scripts` and `browser_specific_settings`; Firefox's drops `background.service_worker`, `minimum_chrome_version`, and `use_dynamic_url`. `npm run build:chrome` and `npm run build:firefox` repackage one browser without bundling again. The same files make the same ZIP every time.
 
 ## License
 

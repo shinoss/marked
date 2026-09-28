@@ -1,0 +1,40 @@
+/* Marked's panel on web pages (panel.html), in the frame save-panel.js puts
+   there. The frame draws the border; the page's own styles never reach in. */
+:root { color-scheme: light; }
+html, body { margin: 0; background: #fff; }
+body { font: 13px/1.4 system-ui, sans-serif; color: #0f1419; }
+#panel { box-sizing: border-box; padding: 12px; }
+#panel[role="status"] { padding: 8px 12px; }
+h1 { margin: 0; font: inherit; font-weight: 600; }
+.muted { color: #536471; }
+.line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field { display: block; margin-top: 10px; }
+.label { color: #536471; font-size: 12px; }
+.control { box-sizing: border-box; display: block; width: 100%; margin: 4px 0 0; padding: 6px 8px; border: 1px solid #cfd9de; border-radius: 3px; background: #fff; color: inherit; font: inherit; }
+.control:focus { border-color: #0f1419; outline: none; }
+textarea.control { white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
+textarea.note { min-height: 64px; }
+select.control { cursor: pointer; }
+.quote { margin-top: 4px; padding: 2px 0 2px 10px; border-left: 3px solid #f2d94e; max-height: 96px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.highlight .quote { margin: 10px 0; }
+.swatches { display: flex; gap: 8px; margin: 8px 0 0 2px; }
+.highlight .swatches { margin: 0 0 10px 2px; }
+.swatch { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; box-shadow: 0 0 0 2px #fff, 0 0 0 3px transparent; }
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 3px #0f1419; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; max-height: 92px; overflow: auto; }
+.chip { padding: 2px 8px; border: 1px solid #cfd9de; border-radius: 3px; background: #fff; color: #0f1419; font: inherit; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: #0f1419; background: #0f1419; color: #fff; }
+.check { display: flex; align-items: center; gap: 6px; margin-top: 10px; cursor: pointer; }
+.check input { margin: 0; }
+.hint { margin: 2px 0 0 19px; color: #536471; font-size: 12px; }
+.error { margin-top: 10px; color: #b00020; }
+.error:empty { display: none; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.highlight .actions { margin-top: 10px; }
+.button { padding: 6px 10px; border: 0; border-radius: 3px; background: transparent; color: #0f1419; font: inherit; cursor: pointer; }
+.button:hover { background: #f0f0f0; }
+.button.primary { background: #0f1419; color: #fff; }
+.button.primary:hover { opacity: .8; }
+.button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 1px solid #0f1419; outline-offset: 2px; }
+.control:focus-visible { outline: none; }
