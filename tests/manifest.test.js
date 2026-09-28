@@ -16,7 +16,11 @@ test('one manifest runs in both Chrome and Firefox', async () => {
   assert.ok(!manifest.permissions.includes('menus'));
   // Promise-based contextMenus.removeAll requires Chrome 123.
   assert.ok(Number(manifest.minimum_chrome_version) >= 123);
-  assert.equal(manifest.browser_specific_settings.gecko.id, 'marked@local.extension');
+  // Permanent once uploaded to Firefox Add-ons: it's how Firefox finds updates
+  // and which add-on owns the library.
+  assert.equal(manifest.browser_specific_settings.gecko.id, 'marked@shinoss.github.io');
+  // Chrome's store shows the description as the summary, at most 132 characters.
+  assert.ok(manifest.description.length <= 132);
 });
 
 // Firefox shows required data types at install. Gallery posts load from X

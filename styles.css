@@ -483,6 +483,8 @@ dialog label.check-field input { width: 12px; margin: 0; }
 .field-heading button { padding: 0; color: var(--muted); }
 .tag-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .field-hint { margin-top: 8px; color: var(--muted); }
+/* What semantic search sends, right above the key the user agrees with. */
+.jev-consent { margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--line); color: var(--fg); }
 .field-hint:empty { display: none; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 24px; margin-top: 32px; }
 .error:not(:empty) { border-left: 1px solid currentColor; padding-left: 12px; }

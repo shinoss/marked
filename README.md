@@ -202,7 +202,7 @@ Marked can read the pages you visit only if you allow it. It asks the first time
 - **Why:** so it can show the **Highlight** button when you select text, bring back your highlights and ✓ on pages you revisit, count related bookmarks while you browse, and keep the text of saved articles you revisit. **Save open tabs** and downloading text for older bookmarks ask for it when you use them.
 - **On every page,** it reads the address, title, description, main headings, and opening paragraphs, and compares them with your library to count related bookmarks. It forgets them when you close the tab.
 - **On pages you've saved,** it reads their text, to keep it for search and the reader, and marks the passages you highlighted.
-- **Only when you act,** it reads the text you select to highlight, a picture of the visible page if you save it with **Save preview**, and your open tabs for **Save open tabs**.
+- **Only when you act,** it reads the text you select to highlight, a picture of the visible page when you save it (untick **Save preview** to skip it), and your open tabs for **Save open tabs**.
 - **It never reads** what you type into forms, including passwords.
 - **None of it leaves your device.**
 
@@ -227,4 +227,8 @@ npm run build            # bundle, then a ZIP per store in web-ext-artifacts/
 npm run build:source     # source ZIP for Firefox review
 ```
 
-`npm run build` stages each browser's files in `dist/chrome` and `dist/firefox` and zips them as `web-ext-artifacts/marked-chrome-<version>.zip` and `marked-firefox-<version>.zip`. Each gets its own manifest: Chrome's drops `background.scripts`, `browser_specific_settings`, and `activeTab`, which `<all_urls>` covers; Firefox's drops `background.service_worker` and `minimum_chrome_version`. `npm run build:chrome` and `npm run build:firefox` repackage one browser without bundling again. The same files make the same ZIP every time.
+`npm run build` stages each browser's files in `dist/chrome` and `dist/firefox` and zips them as `web-ext-artifacts/marked-chrome-<version>.zip` and `marked-firefox-<version>.zip`. Each gets its own manifest: Chrome's drops `background.scripts` and `browser_specific_settings`; Firefox's drops `background.service_worker` and `minimum_chrome_version`. `npm run build:chrome` and `npm run build:firefox` repackage one browser without bundling again. The same files make the same ZIP every time.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

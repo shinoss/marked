@@ -8,7 +8,7 @@ import { cleanCard, fetchSite, siteOf } from './sites.js';
 import { indexBuilder, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
-import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
+import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
 import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
 import { ALL_SITES, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
 const library = createLibraryStore(browser);
@@ -938,6 +938,14 @@ function clearSemantic() {
   semantic.controller?.abort();
   Object.assign(semantic, { query: '', result: null, status: '' });
 }
+// Firefox keeps its own record of the consent given when the key was saved; if
+// the user withdraws it in Firefox's settings, nothing goes to TypeSafe. Browsers
+// without built-in data consent (Chrome) rely on Marked's Agree step.
+async function jevConsent() {
+  const granted = await browser.permissions?.getAll?.().catch(() => null);
+  if (!Array.isArray(granted?.data_collection)) return true;
+  return JEV_DATA_COLLECTION.every(type => granted.data_collection.includes(type));
+}
 // One line per bookmark, as Jev reads them; bookmarks with nothing to read are left out.
 const searchEntries = (options = jev) => [...state.nodes.values()].filter(node => node.url)
   .map(node => ({ id: node.id, line: bookmarkLine(node, options) })).filter(entry => entry.line);
@@ -950,6 +958,7 @@ async function runSemantic(query) {
     recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderSemanticStatus(); }, () => {});
   };
   try {
+    if (!jev.preview && !await jevConsent()) throw new Error('Firefox isn’t letting Marked send search terms and page content to TypeSafe. Save your key in Settings again to allow it.');
     const result = await semanticSearch(query, searchEntries(), request => {
       estimated += estimateJevTokens(request);
       return askJev({ ...request, apiKey: jev.apiKey, preview: jev.preview, signal: controller.signal, onUsage });
@@ -1769,12 +1778,18 @@ $('settings-form').addEventListener('submit', async event => {
   const apiKey = $('jev-key').value.trim();
   $('settings-error').textContent = '';
   if (!apiKey) { $('settings-status').textContent = ''; $('settings-error').textContent = 'Paste your TypeSafe API key first.'; return; }
-  if (apiKey === jev.apiKey) { $('settings-status').textContent = 'This key is already saved.'; return; }
-  // Ask for access to TypeSafe while the click still counts as user input.
-  const access = browser.permissions.request({ origins: JEV_ORIGINS }).catch(() => false);
+  // Saving the key is the user's agreement to what a search sends, stated above
+  // the field. Ask while the click still counts as user input: for access to
+  // TypeSafe and, in Firefox, for its own consent to that data.
+  const access = browser.permissions.request({ origins: JEV_ORIGINS, ...(browser.runtime?.getBrowserInfo && { data_collection: JEV_DATA_COLLECTION }) }).catch(() => false);
+  if (apiKey === jev.apiKey) {
+    $('settings-status').textContent = await access ? 'This key is already saved.' : '';
+    if (!await access) $('settings-error').textContent = 'Marked needs your permission to send searches to TypeSafe.';
+    return;
+  }
   const submit = event.submitter || $('settings-form').querySelector('[type=submit]'); submit.disabled = true;
   try {
-    if (!await access) throw new Error('Marked needs access to api.typesafe.ai to use Jev.');
+    if (!await access) throw new Error('Marked needs your permission to send searches to TypeSafe (api.typesafe.ai).');
     if (!jev.preview) {
       // A tiny request confirms the key before anything depends on it.
       $('settings-status').textContent = 'Checking the key with TypeSafe…';

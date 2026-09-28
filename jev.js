@@ -3,6 +3,10 @@
 // the user's own API key, and only when the user turns a Jev feature on.
 export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_ORIGINS = ['https://api.typesafe.ai/*'];
+// What a semantic search sends, in Firefox's built-in data consent: the query,
+// and each bookmark's title and abstract (and notes and highlights if allowed).
+// Bookmark information is already declared, for the X posts in the gallery.
+export const JEV_DATA_COLLECTION = ['searchTerms', 'websiteContent'];
 export const JEV_MODEL = 'jev-latest';
 // TypeSafe's published prices (September 2026). Output is free.
 export const JEV_PRICE_PER_MILLION_INPUT_TOKENS = 0.042;

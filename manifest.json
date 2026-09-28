@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Marked — Bookmark Manager",
   "version": "1.3.0",
-  "description": "An independent, local bookmark library. Import your browser's bookmarks, then organize them separately.",
+  "description": "Save pages with notes, tags and highlights, read them in a clean reader, and search every word you saved. Stored in your browser.",
   "permissions": ["bookmarks", "storage", "unlimitedStorage", "contextMenus", "activeTab", "scripting"],
   "optional_host_permissions": ["<all_urls>"],
   "content_security_policy": {
@@ -19,7 +19,7 @@
   "minimum_chrome_version": "123",
   "browser_specific_settings": {
     "gecko": {
-      "id": "marked@local.extension",
+      "id": "marked@shinoss.github.io",
       "strict_min_version": "142.0",
       "data_collection_permissions": { "required": ["bookmarksInfo"], "optional": ["searchTerms", "websiteContent"] }
     }

@@ -8,11 +8,11 @@ import { zip } from './zip.js';
 // The source package AMO reviewers rebuild with `npm ci && npm run build-for-amo`:
 // every git-tracked file as it is in the working tree, plus vendor/qwen3-4b.wasm.
 // That file is gitignored, and without it bundle.js would download it from
-// GitHub, which AMO's rule on dependencies doesn't allow. docs/ and site/ are
-// neither part of the extension nor of its build.
+// GitHub, which AMO's rule on dependencies doesn't allow. docs/, site/, and
+// store/ (listing images and text) are neither part of the extension nor of its build.
 const root = fileURLToPath(new URL('..', import.meta.url));
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-const LEFT_OUT = /^(docs|site)\//;
+const LEFT_OUT = /^(docs|site|store)\//;
 const MODEL_LIB = 'vendor/qwen3-4b.wasm';
 
 const entries = [];

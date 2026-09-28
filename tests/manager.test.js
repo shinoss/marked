@@ -987,3 +987,40 @@ test('Marked asks for access to the pages you visit in its own words, remembers 
   assert.equal($('toast').textContent, 'Marked can now read the pages you visit. What it reads never leaves your device.');
   dom.window.close();
 });
+
+// Saving the TypeSafe key is the user's agreement to what semantic search sends,
+// stated right above it. Firefox also keeps its own consent to that data.
+test('in Firefox, agreeing asks for Firefox’s own data consent too, and a search without it sends nothing', async () => {
+  let consent = [];
+  const requested = [], sent = [];
+  const setup = api => {
+    api.runtime = { getBrowserInfo: async () => ({ name: 'Firefox' }) };
+    api.permissions = {
+      request: async request => { requested.push(request); if (request.data_collection) consent = [...request.data_collection]; return true; },
+      getAll: async () => ({ origins: [], permissions: [], data_collection: [...consent] }),
+      contains: async () => false
+    };
+  };
+  globalThis.fetch = async (url, init) => {
+    sent.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ answers: { check: { type: 'noul', noul: 0.8 } }, usage: { input_tokens: 40, output_tokens: 5 } }));
+  };
+  const library = { id: 'root', children: [{ id: 'essay', parentId: 'root', title: 'On attention', url: 'https://example.com/essays/attention', type: 'bookmark', abstract: 'Deciding what deserves your attention.', dateAdded: 1 }] };
+  const { dom, $, settle } = await openManager(library, 'jev-firefox', {}, setup);
+  const agree = document.querySelector('#settings-form [type=submit]');
+  assert.equal(agree.textContent, 'Agree and save key');
+  assert.match(document.querySelector('.jev-consent').textContent, /sends your query and, for every bookmark, its title and abstract to TypeSafe \(api\.typesafe\.ai\)/);
+  $('jev-key').value = 'sk-test';
+  $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: agree }));
+  await settle(50);
+  assert.deepEqual(requested, [{ origins: ['https://api.typesafe.ai/*'], data_collection: ['searchTerms', 'websiteContent'] }]);
+  assert.equal(sent.length, 1, 'only the key check');
+
+  consent = [];
+  $('search').value = 'protecting my focus'; $('search').dispatchEvent(new dom.window.Event('input')); await settle(550);
+  $('semantic-toggle').click(); await settle(50);
+  assert.equal(sent.length, 1, 'withdrawn in Firefox’s settings, nothing more goes to TypeSafe');
+  assert.match($('semantic-status').textContent, /Firefox isn’t letting Marked send search terms and page content to TypeSafe/);
+  delete globalThis.fetch;
+  dom.window.close();
+});

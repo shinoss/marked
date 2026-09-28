@@ -76,7 +76,7 @@
         <li>Your bookmarks, with their titles, addresses, folders, tags, notes, highlights, and abstracts.</li>
         <li>The readable text of pages you save or open again, so you can search and read them later, and where you stopped reading in the reader.</li>
         <li>An index of each bookmark's most telling words, which Marked works out from your library to find related bookmarks.</li>
-        <li>Site icons and page previews. A preview is a capture of the visible page, kept only if you tick <strong>Save preview</strong>.</li>
+        <li>Site icons and page previews. A preview is a capture of the visible page, taken when you save it and kept unless you untick <strong>Save preview</strong> in the editor.</li>
         <li>Your settings, including a TypeSafe API key if you add one.</li>
         <li>The chat model, if you download it, and your chat. The model runs on your GPU; your questions and its answers aren't sent anywhere.</li>
       </ul>
@@ -88,7 +88,7 @@
         <li><strong>Why it asks:</strong> to show the <strong>Highlight</strong> button when you select text, bring back your highlights and ✓ on pages you revisit, count related bookmarks while you browse, and keep the text of saved articles you revisit. <strong>Save open tabs</strong> and downloading text for older bookmarks ask for it when you use them.</li>
         <li><strong>What it reads on every page:</strong> the page's address, title, description, main headings, and opening paragraphs. Marked compares them with your library to count related bookmarks, holds the result in memory while the tab is open, and forgets it when you close the tab.</li>
         <li><strong>What it reads on pages you've saved:</strong> the page's readable text, which it keeps for search and the reader (turn this off in <strong>Settings&nbsp;→ Page text</strong>), and the passages you highlighted there, to mark them again.</li>
-        <li><strong>What it reads only when you act:</strong> the text you select when you click <strong>Highlight</strong>; a picture of the visible page when you save it with <strong>Save preview</strong> ticked, which shows whatever is on screen; and the addresses and titles of your open tabs when you choose <strong>Save open tabs</strong>.</li>
+        <li><strong>What it reads only when you act:</strong> the text you select when you click <strong>Highlight</strong>; a picture of the visible page when you save it, which shows whatever is on screen (untick <strong>Save preview</strong> to skip it); and the addresses and titles of your open tabs when you choose <strong>Save open tabs</strong>.</li>
         <li><strong>What it never reads:</strong> what you type into forms and text boxes, including passwords.</li>
         <li><strong>Where it goes:</strong> nowhere. What Marked reads from pages stays in your browser, on your device. It isn't sent to us or to anyone else.</li>
         <li><strong>If you don't allow it:</strong> you can still save the page you're on with <strong>Add to Marked</strong> in the right-click menu or <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>, and highlight with <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>; each lets Marked read just that tab, at that moment. Your library, search, the reader, and chat work as usual.</li>
@@ -156,6 +156,7 @@
         <li>No ads, and no selling, renting, or sharing of your data.</li>
         <li>No accounts, and no server run by Marked that your data could reach.</li>
         <li>No use of your data to train AI models. The chat model runs on your device.</li>
+        <li>Marked's use of information received through Chrome's extension APIs adheres to the <a href="https://developer.chrome.com/docs/webstore/program-policies/limited-use">Chrome Web Store User Data Policy</a>, including the Limited Use requirements.</li>
         <li>No record of your browsing. To show ✓, your highlights, and related bookmarks, Marked compares the page you're on with your library, on your device. What it works out for an open tab is held in memory until the tab closes, and nothing about pages you haven't saved is stored or sent.</li>
       </ul>
 
