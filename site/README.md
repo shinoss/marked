@@ -3,7 +3,7 @@
 The marketing site for Marked: plain static files, no framework, no build step, no external JavaScript.
 
 ```
-index.html          Landing page (hero with the install commands, features, privacy summary, FAQ)
+index.html          Landing page (hero with the Chrome Web Store button and the install commands, features, privacy summary, FAQ)
 privacy.html        Privacy policy (effective September 26, 2026)
 404.html            Not-found page (uses root-absolute paths, so it works at any URL)
 site.css            All styles; light only, colors are custom properties on :root
@@ -26,7 +26,7 @@ Open http://localhost:8000. (`http.server` doesn't serve `404.html` for missing 
 
 ## Before launch
 
-1. **Store links.** The page has no store buttons yet: it opens with the install-from-source commands (`#get`). Once the listings are live, add "Add to Chrome" and "Add to Firefox" links there.
+1. **Store links.** The hero (`#get`) has an "Add to Chrome" button for the Chrome Web Store listing, and the FAQ and footer link to it too. Firefox still installs from source; once its Firefox Add-ons listing is live, add an "Add to Firefox" button beside the Chrome one and update the FAQ's "What do I need?".
 2. **Domain.** The site is at `marked-bookmarks-sand.vercel.app` until it has its own domain. To move it, replace that address in `index.html` (canonical, Open Graph, Twitter), `privacy.html`, `robots.txt`, and `sitemap.xml`:
    ```sh
    grep -rl marked-bookmarks-sand.vercel.app . | xargs sed -i '' 's/marked-bookmarks-sand\.vercel\.app/your-domain.com/g'   # macOS sed

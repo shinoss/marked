@@ -258,6 +258,10 @@ pre code { overflow-wrap: normal; border: 0; padding: 0; font-size: inherit; }
 
 /* Install commands at the top of the page. */
 .hero-install { max-width: 560px; margin: 28px 0 32px; }
+/* The store button, then the install card for Firefox and source builds. */
+.hero-install .store-cta { margin-top: 0; }
+.store-meta { color: var(--faint); font-size: 14px; }
+.install-lead { margin: 24px 0 8px; color: var(--muted); font-size: 14px; }
 /* Name and description beside the install card on wide screens, centered on the same line. */
 @media (min-width: 760px) {
   .hero-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 56px; align-items: center; margin-bottom: 40px; }
