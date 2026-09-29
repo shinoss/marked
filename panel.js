@@ -89,6 +89,13 @@ function saveForm(data) {
   const heading = data.edit ? 'Edit bookmark' : 'Add to Marked';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', heading);
+  // The Marked button brings up this panel, so Marked itself is a click away
+  // here, as are the saved bookmarks related to the page, when there are any.
+  const head = element('div', 'head');
+  head.append(element('h1', '', heading), button('Open Marked', () => ask({ type: 'marked:open-marked' }), 'link'));
+  const related = data.related > 0
+    ? [button(data.related === 1 ? 'A saved bookmark relates to this page' : `${data.related} saved bookmarks relate to this page`, () => ask({ type: 'marked:open-related' }), 'link related')]
+    : [];
   const name = control('input', data.title || '', 2000, { autocomplete: 'off' });
   const folder = element('select', 'control');
   for (const { id, label } of data.folders || []) {
@@ -192,8 +199,8 @@ function saveForm(data) {
     else if (event.target === newTag) { event.preventDefault(); addTag(); }
   };
   panel.replaceChildren(
-    element('h1', '', heading),
-    element('div', 'muted line', String(data.url || '').replace(/^https?:\/\/(www\.)?/, '')),
+    head,
+    element('div', 'muted line', String(data.url || '').replace(/^https?:\/\/(www\.)?/, '')), ...related,
     labelled('Name', name), labelled('Folder', folder), ...highlight, labelled('Note', note), tags, labelled('Abstract', abstract),
     ...previewField, problem, actions
   );

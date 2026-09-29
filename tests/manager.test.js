@@ -73,6 +73,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   const pressed = () => chips().filter(chip => chip.getAttribute('aria-pressed') === 'true').map(chip => chip.textContent);
   await settle();
   assert.ok($('editor').open);
+  assert.ok($('editor-hint').hidden, 'the page is being saved from itself: no pointer to the Marked button');
   assert.equal($('edit-abstract').value, 'Agents that learn by imagining outcomes.');
   assert.deepEqual(session, {}, 'the capture is consumed');
   assert.deepEqual(pressed(), ['AI'], 'tags are suggested from the title');
@@ -437,9 +438,14 @@ test('an empty library welcomes you; the palette jumps anywhere; themes and shor
   let { dom, $ } = await openManager({ id: 'root', children: [] }, 'welcome');
   assert.equal($('welcome').hidden, false);
   assert.equal(document.querySelector('#empty h2').textContent, 'Welcome to Marked');
-  assert.equal($('welcome-tips').children.length, 4);
+  assert.match(document.querySelector('#empty p').textContent, /^Save the page you’re reading with the Marked button/);
+  assert.equal($('welcome-tips').children.length, 3);
   $('welcome-add').click();
   assert.ok($('editor').open, 'Add a bookmark opens the editor');
+  assert.equal($('editor-hint').hidden, false, 'which points to the Marked button for the page you’re on');
+  assert.match($('editor-hint').textContent, /click the Marked button on that page/);
+  $('editor').close(); $('new-folder').click();
+  assert.ok($('editor-hint').hidden, 'not for a folder');
   dom.window.close();
 
   const opened = [];
@@ -985,6 +991,51 @@ test('Marked asks for access to the pages you visit in its own words, remembers 
   assert.deepEqual(requested, [{ origins: ['<all_urls>'] }]);
   assert.ok($('site-access').hidden);
   assert.equal($('toast').textContent, 'Marked can now read the pages you visit. What it reads never leaves your device.');
+  dom.window.close();
+});
+
+// New users learn how to save the page they're on: the Marked button, pinned
+// first where the browser tucks it away, the right-click menu, or the shortcut.
+test('new users see how to save a page until they save one from its panel, or put the guide away', async () => {
+  const empty = { id: 'root', children: [] };
+  let onChanged;
+  const unpinned = api => {
+    api.action = { getUserSettings: async () => ({ isOnToolbar: false }) };
+    api.storage.onChanged = { addListener: listener => { onChanged = listener; } };
+  };
+  let { dom, $, mock, settle } = await openManager(empty, 'guide', {}, unpinned);
+  const guide = $('save-guide');
+  assert.equal(guide.hidden, false);
+  assert.match(guide.textContent, /Save pages as you browse/);
+  assert.equal($('save-guide-pin').hidden, false, 'the button isn’t on the toolbar yet');
+  assert.match($('save-guide-pin').textContent, /click Extensions \(the puzzle piece\) beside the address bar, then the pin beside Marked/);
+  assert.match(guide.textContent, /Click the Marked button\s+on any page to save it/);
+  assert.match(guide.textContent, /Or right-click the page and choose Add to Marked, or press/);
+  assert.equal([...$('save-guide-keys').querySelectorAll('kbd')].at(-1).textContent, 'M');
+  $('save-guide-done').click(); await settle();
+  assert.ok(guide.hidden);
+  assert.ok((await mock.api.storage.local.get()).markedSaveGuideDone, 'Got it is remembered');
+  dom.window.close();
+
+  // Already pinned: no pin step. Firefox pins its own way.
+  ({ dom, $ } = await openManager(empty, 'guide-pinned', {}, api => {
+    api.action = { getUserSettings: async () => ({ isOnToolbar: true }) };
+    api.runtime = { getBrowserInfo: async () => ({ name: 'Firefox' }) };
+  }));
+  assert.equal($('save-guide').hidden, false);
+  assert.ok($('save-guide-pin').hidden);
+  assert.match($('save-guide-pin').textContent, /then the gear beside Marked, and choose Pin to Toolbar/);
+  dom.window.close();
+
+  // A page saved from its panel puts the guide away, in a Marked tab already open too.
+  ({ dom, $, mock, settle } = await openManager({ id: 'root', children: [{ id: 'imported', parentId: 'root', title: 'Imported', url: 'https://example.com/', type: 'bookmark' }] }, 'guide-saved', {}, unpinned));
+  assert.equal($('save-guide').hidden, false, 'a library full of imported bookmarks still gets it');
+  await mock.api.storage.local.set({ markedSaveGuideDone: 1 });
+  onChanged({ markedSaveGuideDone: { newValue: 1 } }, 'local'); await settle();
+  assert.ok($('save-guide').hidden);
+  dom.window.close();
+  ({ dom, $ } = await openManager(empty, 'guide-done', { markedSaveGuideDone: 1 }));
+  assert.ok($('save-guide').hidden, 'and it stays away');
   dom.window.close();
 });
 

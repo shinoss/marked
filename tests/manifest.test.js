@@ -73,6 +73,12 @@ test('web pages may load Marked’s panel, and nothing else of it', async () => 
   await exists('panel.html');
 });
 
+// The Marked button saves the page you're on (background.js), as the
+// right-click menu and Alt+Shift+M do; its tooltip says so.
+test('the Marked button is for saving the page', () => {
+  assert.equal(manifest.action.default_title, 'Save to Marked');
+});
+
 test('mk searches Marked from the address bar, and Alt+Shift+M adds the page, with no new permissions', () => {
   assert.deepEqual(manifest.omnibox, { keyword: 'mk' });
   assert.equal(manifest.commands['add-to-marked'].suggested_key.default, 'Alt+Shift+M');

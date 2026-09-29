@@ -66,7 +66,7 @@ Choose **More like…** (the two rings) on any bookmark to see the bookmarks tha
   <img src="docs/images/related.png" width="880" alt="Bookmarks like the Transformer article, each with the words it shares, such as transformer, encoding and attention">
 </p>
 
-On a page you haven't saved, the Marked button shows how many of your bookmarks relate to it; choose the button to see them. Turn the count off in **Settings → Browsing**.
+On a page you haven't saved, the Marked button shows how many of your bookmarks relate to it, and the panel it opens links to them. Turn the count off in **Settings → Browsing**.
 
 <p align="center">
   <img src="docs/images/related-badge.png" width="880" alt="The Marked button in Firefox's toolbar shows 1 on a Wikipedia page related to a saved bookmark">
@@ -124,8 +124,9 @@ To bring in everything you've bookmarked on X, choose **Import → Bookmarks fro
 ### From any tab
 
 - Type `mk` and a space in the address bar to search your library.
+- The **Marked button** saves the page you're on from a small panel on the page itself: name it, choose a folder, add tags and a note, and keep reading. **Add to Marked** in the right-click menu and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> do the same. On a page you've saved, the panel edits its bookmark.
+- To open Marked, choose **Open Marked** in the panel or in the button's own right-click menu, or click the button on a new tab.
 - The Marked button shows ✓ on pages you've saved, and on other pages how many of your bookmarks relate to them.
-- **Add to Marked** in the right-click menu, or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, saves the page you're on from a small panel on the page itself: name it, choose a folder, add tags and a note, and keep reading. On a page you've saved, the panel edits its bookmark.
 - **Save open tabs** keeps the whole window as a folder; **Open all** brings it back.
 
 <p align="center">
@@ -189,7 +190,7 @@ npm ci && npm run bundle
 
 Local chat needs WebGPU and downloads the model (about 2.3 GB) from Hugging Face once. On a Mac, use Chrome and 16 GB of memory or more.
 
-The first time you open Marked, it asks to read the pages you visit. See [Access to the pages you visit](#access-to-the-pages-you-visit).
+Once it's installed, Marked opens and shows how to save a page: pin the Marked button to the toolbar if the browser tucked it away, then click it on any page. It also asks to read the pages you visit. See [Access to the pages you visit](#access-to-the-pages-you-visit).
 
 ## Privacy
 
@@ -197,7 +198,7 @@ Your library stays in your browser. There's no account and no server of ours.
 
 ### Access to the pages you visit
 
-Marked can read the pages you visit only if you allow it. It asks the first time you open it, not when you install it, and you can turn it off at any time in **Settings → Browsing**. Turned off, Marked leaves every page at once, open ones included: no marks, no ✓, no **Highlight** button. Everything you saved stays in Marked.
+Marked can read the pages you visit only if you allow it. It asks in its own page, which opens once you install it, not in the browser's install prompt, and you can turn it off at any time in **Settings → Browsing**. Turned off, Marked leaves every page at once, open ones included: no marks, no ✓, no **Highlight** button. Everything you saved stays in Marked.
 
 - **Why:** so it can show the **Highlight** button when you select text, bring back your highlights and ✓ on pages you revisit, count related bookmarks while you browse, and keep the text of saved articles you revisit. **Save open tabs** and downloading text for older bookmarks ask for it when you use them.
 - **On every page,** it reads the address, title, description, main headings, and opening paragraphs, and compares them with your library to count related bookmarks. It forgets them when you close the tab.
@@ -206,7 +207,7 @@ Marked can read the pages you visit only if you allow it. It asks the first time
 - **It never reads** what you type into forms, including passwords.
 - **None of it leaves your device.**
 
-Everything else works without it: save the page you're on with **Add to Marked** in the right-click menu or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, highlight with <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, and use the library, search, the reader, and chat. The menu and the shortcuts let Marked read just that tab, at that moment.
+Everything else works without it: save the page you're on with the Marked button, **Add to Marked** in the right-click menu, or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, highlight with <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, and use the library, search, the reader, and chat. The button, the menu, and the shortcuts let Marked read just that tab, at that moment.
 
 ### What Marked contacts
 

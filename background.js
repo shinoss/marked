@@ -6,11 +6,12 @@ import { readPageAbstract, readPageIcon } from './page-abstract.js';
 import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 import { fetchSite, siteOf } from './sites.js';
 import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
-import { hasSiteAccess } from './site-access.js';
+import { hasSiteAccess, SAVE_GUIDE_KEY } from './site-access.js';
 import { suggestTags, chooseTags } from './tagger.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
+const OPEN_MENU = 'open-marked';
 const TWEET_URL = /^https:\/\/x\.com\/\w+\/status\/\d+$/;
 const TWEET_ORIGINS = ['https://x.com/*', 'https://twitter.com/*'];
 const RETRY_NOTICE = 'Marked is ready on this page now. Right-click the tweet again to save it.';
@@ -77,6 +78,8 @@ async function registerMenu() {
     contexts: ['page', 'link', 'image', 'video', 'selection'],
     documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*']
   });
+  // The Marked button saves the page you're on; its own right-click menu opens Marked.
+  browser.contextMenus.create({ id: OPEN_MENU, title: 'Open Marked', contexts: ['action'] });
 }
 registerMenu().catch(console.error);
 
@@ -247,7 +250,11 @@ async function offerSave(tab, offer, rest = async () => ({})) {
   reading.set(tab.id, read);
   let shown = false;
   try {
-    await browser.storage.session.set({ [key]: { ...offer, token, form: await saveForm(offer) } });
+    // A new page's panel says how many saved bookmarks relate to it, as the
+    // Marked button's count did, unless what's saved is a post on the page.
+    const related = offer.id ? null : await relatedTo(tab);
+    const count = related && related.key === pageKey(offer.url) ? related.count : 0;
+    await browser.storage.session.set({ [key]: { ...offer, token, form: { ...await saveForm(offer), ...(count && { related: count }) } } });
     shown = await showPanel(tab, 'save');
   } catch (error) {
     console.warn('Marked’s panel can’t show on this page; opening the editor instead', error);
@@ -321,6 +328,8 @@ async function savePage(tab, message) {
     await browser.storage.local.set({ [SAVE_FOLDER_KEY]: created.parentId });
     markSaved(tab, created.highlights?.[0]);
   }
+  // Someone who has saved a page from its panel knows how: Marked's guide goes.
+  if (!(await browser.storage.local.get(SAVE_GUIDE_KEY))[SAVE_GUIDE_KEY]) await browser.storage.local.set({ [SAVE_GUIDE_KEY]: Date.now() });
   await browser.storage.session.remove(key);
   reading.delete(tab.id);
   return { ok: true };
@@ -472,7 +481,13 @@ async function updateBadges(tabs) {
     const text = saved ? '✓' : related ? String(related.count) : '';
     await browser.action.setBadgeText({ tabId: id, text });
     if (text) await browser.action.setBadgeBackgroundColor({ tabId: id, color: saved ? '#2c5949' : '#5b6474' });
-    await browser.action.setTitle({ tabId: id, title: saved ? 'Open Marked (this page is saved)' : related ? `Open Marked (${related.count === 1 ? 'a saved bookmark relates' : `${related.count} saved bookmarks relate`} to this page)` : 'Open Marked' });
+    // What a click does there: save the page, or edit its bookmark, or, where
+    // there's no web page, open Marked.
+    const title = url && !safeURL(url) ? 'Open Marked'
+      : saved ? 'Edit in Marked (this page is saved)'
+      : related ? `Save to Marked (${related.count === 1 ? 'a saved bookmark relates' : `${related.count} saved bookmarks relate`} to this page)`
+      : 'Save to Marked';
+    await browser.action.setTitle({ tabId: id, title });
   }).map(update => update.catch(() => {})));
 }
 const updateAllBadges = () => browser.tabs.query({}).then(updateBadges).catch(error => console.warn('Could not update the toolbar badge', error));
@@ -496,7 +511,12 @@ browser.tabs.onRemoved?.addListener(tabId => {
   browser.storage.session.remove?.([`related:${tabId}`, offerKey(tabId), noteKey(tabId)])?.catch(() => {});
 });
 browser.runtime.onStartup?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
-browser.runtime.onInstalled?.addListener(() => { updateAllBadges(); syncPageScripts().catch(syncFailed); });
+browser.runtime.onInstalled?.addListener(details => {
+  updateAllBadges();
+  syncPageScripts().catch(syncFailed);
+  // A new install opens Marked, which shows how to save a page.
+  if (details?.reason === 'install') openMarked().catch(error => console.error('Could not open Marked', error));
+});
 // Allowed in Marked's page, or in the browser's own settings; or taken back there.
 browser.permissions?.onAdded?.addListener(() => {
   syncPageScripts({ openTabs: true }).then(() => tellPages(true)).catch(syncFailed);
@@ -674,6 +694,14 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
       dropNote(sender.tab.id, message.token).catch(() => {});
       return;
     }
+    if (message?.type === 'marked:open-marked') {
+      openMarked().catch(error => console.error('Could not open Marked', error));
+      return;
+    }
+    if (message?.type === 'marked:open-related') {
+      openRelated(sender.tab).catch(error => console.error('Could not open Marked', error));
+      return;
+    }
   }
   // highlighter.js asks on every page for the passages saved on it, to mark
   // them, and says what an unsaved page is about, to count related bookmarks.
@@ -688,6 +716,7 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
 
 browser.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === ADD_MENU) return addPage(info, tab).catch(error => console.error('Could not open Add to Marked', error));
+  if (info.menuItemId === OPEN_MENU) return openMarked().catch(error => console.error('Could not open Marked', error));
   if (info.menuItemId === TWEET_MENU) {
     // Firefox leaves content-script sites ungranted after some installs and
     // updates. Ask now, while the click still counts as user input; this
@@ -721,22 +750,34 @@ browser.commands?.onCommand.addListener(async (command, tab) => {
   else highlightSelection(tab).catch(error => console.warn('Could not highlight on this page', error));
 });
 
-browser.action.onClicked.addListener(async tab => {
-  // On a page with related bookmarks, the button shows them.
-  const related = tab?.id != null && (pageRelated.get(tab.id) ?? (await browser.storage.session.get(`related:${tab.id}`))[`related:${tab.id}`]);
-  if (related && related.key === pageKey(tab.url)) {
-    const key = `capture-${crypto.randomUUID()}`;
-    await browser.storage.session.set({ [key]: { ...related.page, createdAt: Date.now() } });
-    await browser.tabs.create({ url: `${browser.runtime.getURL('manager.html')}?related=${key}` });
-    return;
-  }
+// Marked's library: its open tab, brought forward, or a new one.
+async function openMarked() {
   const url = browser.runtime.getURL('manager.html');
-  const tabs = await browser.tabs.query({});
-  const existing = tabs.find(tab => tab.url === url);
+  const existing = (await browser.tabs.query({})).find(tab => tab.url === url);
   if (existing) {
     await browser.tabs.update(existing.id, { active: true });
     await browser.windows.update(existing.windowId, { focused: true });
   } else {
     await browser.tabs.create({ url });
   }
-});
+}
+// The saved bookmarks related to the page in a tab, if it's still that page.
+async function relatedTo(tab) {
+  if (tab?.id == null) return null;
+  const related = pageRelated.get(tab.id) ?? (await browser.storage.session.get(`related:${tab.id}`))[`related:${tab.id}`];
+  return related?.key === pageKey(tab.url) ? related : null;
+}
+// Marked, showing the bookmarks related to the page in a tab.
+async function openRelated(tab) {
+  const related = await relatedTo(tab);
+  if (!related) return openMarked();
+  const key = `capture-${crypto.randomUUID()}`;
+  await browser.storage.session.set({ [key]: { ...related.page, createdAt: Date.now() } });
+  await browser.tabs.create({ url: `${browser.runtime.getURL('manager.html')}?related=${key}` });
+}
+
+// The Marked button saves the page you're on, in its panel, as Add to Marked
+// does, or edits its bookmark once it's saved. Where there's no web page to
+// save, as on a new tab or the browser's own pages, it opens Marked.
+browser.action.onClicked.addListener(tab => (safeURL(tab?.url) ? addPage({}, tab) : openMarked())
+  .catch(error => console.error('Could not save the page', error)));

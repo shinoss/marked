@@ -10,7 +10,7 @@ import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
 import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
-import { ALL_SITES, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
+import { ALL_SITES, SAVE_GUIDE_KEY, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
@@ -504,7 +504,7 @@ function render() {
   $('empty').classList.toggle('welcoming', welcome);
   document.querySelector('.list-toolbar').hidden = welcome;
   $('empty').querySelector('h2').textContent = welcome ? 'Welcome to Marked' : query ? 'No bookmarks found' : special === 'rediscover' ? 'Nothing to rediscover yet' : special === 'duplicates' ? 'No duplicates' : special === 'continue' ? 'Nothing to continue' : special === 'related' ? 'Nothing like it yet' : tag ? 'No bookmarks with this tag' : 'No bookmarks yet';
-  $('empty').querySelector('p').textContent = welcome ? 'Bring in the bookmarks you already have, or save the page you’re reading.' : query ? 'Try other words. Search looks through names, addresses, folders, notes, tags, highlights, and the text of saved pages.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : special === 'continue' ? 'Pages you start reading in Marked wait here until you finish them.' : special === 'related' ? 'As you save more, bookmarks that share its words show up here.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
+  $('empty').querySelector('p').textContent = welcome ? 'Save the page you’re reading with the Marked button in your toolbar, or bring in the bookmarks you already have.' : query ? 'Try other words. Search looks through names, addresses, folders, notes, tags, highlights, and the text of saved pages.' : special === 'rediscover' ? 'Bookmarks you saved a while ago show up here.' : special === 'duplicates' ? 'Every page is saved just once.' : special === 'continue' ? 'Pages you start reading in Marked wait here until you finish them.' : special === 'related' ? 'As you save more, bookmarks that share its words show up here.' : tag ? 'Add it to a bookmark with Edit.' : 'Add a bookmark or import your saved collection.';
   renderSemanticStatus();
   $('list-label').textContent = `${nodes.length.toLocaleString()} ${nodes.length === 1 ? 'item' : 'items'}`;
   renderSelection();
@@ -1163,6 +1163,8 @@ function openEditor(node = null, folder = false) {
   showEditorPreview();
   const isDir = node ? isFolder(node) : folder;
   $('editor-title').textContent = `${node ? 'Edit' : 'New'} ${isDir ? 'folder' : 'bookmark'}`;
+  // A new bookmark typed in by hand: the page you're on saves better from itself.
+  $('editor-hint').hidden = !!node || isDir;
   $('edit-name').value = node?.title || '';
   $('edit-url').value = node?.url || '';
   $('url-field').hidden = isDir;
@@ -1854,10 +1856,35 @@ function showShortcuts() {
 $('palette-open').replaceChildren(keys(MAC ? '⌘K' : 'Ctrl K'));
 $('welcome-tips').replaceChildren(...[
   [[element('b', '', 'Select text')], ' on any page, then choose ', element('b', '', 'Highlight')],
-  [[keys(KEY.alt, KEY.shift, 'M')], ' saves the page you’re on'],
   [[keys('mk', 'space')], ' in the address bar searches your library'],
   [[keys(KEY.mod, 'K')], ' jumps to anything here']
 ].map(([lead, ...rest]) => { const tip = element('li'); tip.append(...lead, ...rest); return tip; }));
+
+// New users learn how to save the page they're on: with the Marked button,
+// pinned first where the browser tucks it away, the right-click menu, or the
+// shortcut. The guide stays until they save a page from its panel, or choose
+// Got it: importing their bookmarks, which empties nothing, doesn't teach it.
+async function renderSaveGuide() {
+  const done = await browser.storage.local.get(SAVE_GUIDE_KEY).then(saved => !!saved[SAVE_GUIDE_KEY], () => false);
+  $('save-guide').hidden = done;
+  if (done) return;
+  // The pin step goes once the browser says the button is on the toolbar.
+  let pinned;
+  try { pinned = (await browser.action?.getUserSettings?.())?.isOnToolbar; } catch {}
+  $('save-guide-pin').hidden = pinned === true;
+}
+$('save-guide-pin-how').textContent = browser.runtime?.getBrowserInfo
+  ? 'click Extensions (the puzzle piece) in the toolbar, then the gear beside Marked, and choose Pin to Toolbar.'
+  : 'click Extensions (the puzzle piece) beside the address bar, then the pin beside Marked.';
+$('save-guide-keys').replaceChildren(keys(KEY.alt, KEY.shift, 'M'));
+$('save-guide-done').addEventListener('click', () => {
+  $('save-guide').hidden = true;
+  browser.storage.local.set({ [SAVE_GUIDE_KEY]: Date.now() }).catch(() => {});
+});
+// Pinned in the browser meanwhile.
+browser.action?.onUserSettingsChanged?.addListener(() => { renderSaveGuide(); });
+document.defaultView.addEventListener('focus', () => { renderSaveGuide(); });
+renderSaveGuide();
 
 // ⌘K or Ctrl+K: jump to any bookmark, folder, or tag, or run a command. Before
 // anything is typed, it lists the newest bookmarks and every command.
@@ -2021,6 +2048,8 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (shots.length && view === 'gallery' && !changes[STORAGE_KEY]) { clearTimeout(previewTimer); previewTimer = setTimeout(render, 200); }
   if (area === 'local' && changes[PAGE_TEXT_SETTINGS_KEY]) textSettings = { keep: true, ...changes[PAGE_TEXT_SETTINGS_KEY].newValue };
   if (area === 'local' && changes[READING_KEY]) { reading = changes[READING_KEY].newValue || {}; clearTimeout(textTimer); textTimer = setTimeout(render, 200); }
+  // A page saved from its panel, or the guide put away in another Marked tab.
+  if (area === 'local' && changes[SAVE_GUIDE_KEY]) renderSaveGuide();
   // Settings and usage changed in another Marked tab.
   if (area === 'local' && changes[JEV_USAGE_KEY]) { jevUsage = changes[JEV_USAGE_KEY].newValue || null; renderSemanticStatus(); }
   // This tab's own saves arrive here too, unchanged, and are skipped.
@@ -2067,6 +2096,7 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   const url = safeURL(params.get('add'));
   if (!url) { toast('This page URL cannot be bookmarked.'); return; }
   openEditor();
+  $('editor-hint').hidden = true;
   $('edit-name').value = params.get('title') || url;
   $('edit-url').value = url;
   // Captures are optional; the bookmark can still be saved without one.

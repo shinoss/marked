@@ -319,6 +319,14 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: default; }
 .site-access button { padding: 0; font-weight: 600; }
 .site-access #site-access-later { font-weight: 400; color: var(--muted); }
 .site-access-setting { display: flex; align-items: baseline; gap: 16px; margin: 8px 0 20px; }
+/* How to save a page, for new users, until they have (manager.js). */
+.save-guide { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 24px; margin-bottom: 20px; padding: 12px 14px; border: 1px solid var(--chip-line); background: var(--banner-bg); }
+.save-guide-text { flex: 1 1 360px; }
+.save-guide p { margin: 0; }
+.save-guide ol { display: grid; gap: 6px; margin: 8px 0 0; padding-left: 20px; }
+.save-guide img { vertical-align: -3px; }
+.save-guide .save-guide-more { margin-top: 8px; color: var(--muted); }
+.save-guide button { padding: 0; font-weight: 600; }
 .table-wrap:not(.gallery) .item-age::before { content: none; }
 .gallery .item-text { padding-top: 4px; }
 .item-location { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

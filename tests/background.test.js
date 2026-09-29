@@ -129,6 +129,7 @@ test('Save in the panel keeps what the user chose, with the page’s icon and te
   assert.deepEqual([saved[`markedText:${bookmark.id}`].text, saved[`markedText:${bookmark.id}`].via], ['Every word of the essay.', 'page']);
   assert.equal(saved[`markedPreview:${bookmark.id}`], undefined, 'there was no preview of a tab in the background to keep');
   assert.deepEqual(Object.keys(session), [], 'Marked forgets the page once it’s saved');
+  assert.ok(saved.markedSaveGuideDone, 'and puts away its guide to saving a page, as the user knows how');
   assert.deepEqual(await askPanel({ type: 'marked:save-page', token, title: 'Again', parentId: 'root' }, tab), { error: 'This panel is out of date. Save the page again.' }, 'and saves it once');
   // The next page starts in the folder the last one went into.
   assert.equal(saved.markedSaveFolder, reading.id);
@@ -242,14 +243,47 @@ test('Marked keeps the page’s own icon for its bookmark, and skips anything th
   assert.equal(session['save:5'].icon, undefined, 'anything but a small image is ignored');
 });
 
-test('toolbar button focuses an open manager tab instead of opening another', async () => {
+test('the Marked button saves the page you’re on; where there’s no web page, it opens Marked', async () => {
+  await useLibrary([{ title: 'Saved', url: 'https://example.com/saved' }]);
+  useSession();
+  const page = usePage();
   opened.length = 0;
+  await onAction({ id: 4, url: 'https://example.com/essay', title: 'The essay' });
+  await onAction({ id: 5, url: 'https://example.com/saved', title: 'Saved' });
+  assert.deepEqual(page.panels.map(panel => [panel.tabId, panel.kind, panel.edit]), [[4, 'save', false], [5, 'save', true]], 'the save panel, or the edit panel on a saved page');
+  assert.equal(opened.length, 0, 'the user stays on the page');
+  // A new tab or one of the browser's pages: Marked, brought forward if it's open.
+  focused.length = 0;
   tabs = [{ id: 1, windowId: 5, url: 'https://example.com/' }, { id: 7, windowId: 3, url: 'moz-extension://marked/manager.html' }];
-  await onAction();
+  await onAction({ id: 2, windowId: 5, url: 'chrome://newtab/' });
   assert.deepEqual(focused, [{ tab: 7, active: true }, { window: 3, focused: true }]);
   assert.equal(opened.length, 0);
   tabs = [];
-  await onAction();
+  await onAction({ id: 7, url: 'moz-extension://marked/manager.html' });
+  await onAction({ id: 8 });
+  assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }, { url: 'moz-extension://marked/manager.html' }], 'Marked’s own pages, or a tab it can’t see, open it too');
+  // The button's own right-click menu opens Marked.
+  const item = menus.find(menu => menu.id === 'open-marked');
+  assert.deepEqual([item.title, item.contexts], ['Open Marked', ['action']]);
+  opened.length = 0;
+  await onClick({ menuItemId: 'open-marked' }, {});
+  assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }]);
+  // So does the panel's Open Marked, and only the panel's.
+  opened.length = 0;
+  onMessage({ type: 'marked:open-marked' }, { tab: { id: 4 }, url: 'https://example.com/essay' }, () => {});
+  onMessage({ type: 'marked:open-marked' }, panelSender(4), () => {});
+  await flush();
+  assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }]);
+});
+
+test('installing Marked opens it, to show how to save a page; an update doesn’t', async () => {
+  opened.length = 0;
+  tabs = [];
+  onInstalled({ reason: 'update' });
+  await flush();
+  assert.deepEqual(opened, []);
+  onInstalled({ reason: 'install' });
+  await flush();
   assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }]);
 });
 
@@ -656,10 +690,18 @@ test('the Marked button counts saved bookmarks related to an unsaved page, and o
   await ask({ type: 'marked:page-highlights', topics }, tab);
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(badges.at(-1), { tabId: 11, text: '2' });
-  assert.equal(titles.at(-1).title, 'Open Marked (2 saved bookmarks relate to this page)');
+  assert.equal(titles.at(-1).title, 'Save to Marked (2 saved bookmarks relate to this page)');
+  // The button saves the page; its panel shows the related bookmarks, a click away.
+  const page = usePage();
   const created = [];
   browser.tabs.create = async details => { created.push(details); return { id: 12 }; };
   await onAction(tab);
+  assert.equal(page.panels[0].related, 2);
+  onMessage({ type: 'marked:open-related' }, { tab, url: tab.url }, () => {});
+  await flush();
+  assert.deepEqual(created, [], 'not for a script in the page');
+  onMessage({ type: 'marked:open-related' }, panelSender(tab), () => {});
+  await flush();
   const key = new URL(created[0].url).searchParams.get('related');
   assert.deepEqual([session[key].url, session[key].title], ['https://blog.test/how-attention-works', 'How attention works in transformers'], 'Marked opens on the page’s related bookmarks');
 

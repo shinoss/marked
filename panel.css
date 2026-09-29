@@ -6,6 +6,10 @@ body { font: 13px/1.4 system-ui, sans-serif; color: #0f1419; }
 #panel { box-sizing: border-box; padding: 12px; }
 #panel[role="status"] { padding: 8px 12px; }
 h1 { margin: 0; font: inherit; font-weight: 600; }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.link { padding: 0; border: 0; background: none; color: #536471; font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link:hover { color: #0f1419; }
+.link.related { display: block; margin-top: 6px; color: #0f1419; text-align: left; }
 .muted { color: #536471; }
 .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .field { display: block; margin-top: 10px; }

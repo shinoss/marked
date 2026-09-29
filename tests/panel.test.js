@@ -49,7 +49,8 @@ test('the save panel shows what Marked read, with the name ready to type, and sa
   const panel = page.panel();
   assert.equal(panel.getAttribute('role'), 'dialog');
   assert.equal(panel.getAttribute('aria-label'), 'Add to Marked');
-  assert.match(panel.textContent, /^Add to Marked\s*example\.com\/essays\/attention/);
+  assert.match(panel.textContent, /^Add to Marked\s*Open Marked\s*example\.com\/essays\/attention/);
+  assert.equal(page.window.document.querySelector('.related'), null, 'no related bookmarks to show');
   const name = page.field('Name');
   assert.equal(name.value, 'On attention');
   assert.equal(page.window.document.activeElement, page.window.document.body, 'nothing takes the keyboard before the panel shows');
@@ -126,6 +127,16 @@ test('a failed save shows why in the panel and can be tried again; an empty name
   await page.click('Cancel');
   assert.deepEqual(page.sent.at(-1), { type: 'marked:cancel-save', token: 'token-1' });
   assert.deepEqual(page.told.at(-1), { marked: 'panel', close: true });
+});
+
+test('Marked, and the saved bookmarks related to the page, are a click away in the save panel', async () => {
+  const page = await open('save', { ...form, related: 3 });
+  await page.click('3 saved bookmarks relate to this page');
+  await page.click('Open Marked');
+  assert.deepEqual(page.sent.slice(1), [{ type: 'marked:open-related' }, { type: 'marked:open-marked' }]);
+  assert.ok(page.panel().querySelector('input'), 'the panel stays, with what was typed');
+  const one = await open('save', { ...form, related: 1 });
+  assert.equal(one.window.document.querySelector('.related').textContent, 'A saved bookmark relates to this page');
 });
 
 test('on a page already in Marked, the panel edits its bookmark', async () => {
