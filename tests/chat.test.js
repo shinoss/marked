@@ -14,6 +14,13 @@ test('opening chat without WebGPU explains incompatibility without downloading a
   assert.equal(document.getElementById('chat-panel').hidden, false);
   assert.equal(document.getElementById('chat-start').disabled, true);
   assert.match(document.getElementById('chat-status').textContent, /WebGPU is unavailable/);
+  // Before the model is ready, the bottom of the panel is the download, not the question box.
+  assert.equal(document.querySelector('.chat-badge').textContent, 'Experimental');
+  assert.equal(document.getElementById('chat-download').hidden, false);
+  assert.equal(document.getElementById('chat-download-title').textContent, 'Download the model to start chatting');
+  assert.match(document.getElementById('chat-download-note').textContent, /one-time 2\.3 GB download/);
+  assert.equal(document.getElementById('chat-form').hidden, true);
+  assert.equal(document.getElementById('chat-model').hidden, true, 'nothing to unload or remove yet');
   document.getElementById('chat-close').click();
   assert.equal(document.getElementById('chat-panel').hidden, true);
   assert.equal(document.getElementById('chat-toggle').getAttribute('aria-expanded'), 'false');

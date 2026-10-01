@@ -33,10 +33,21 @@ function timeLeft(seconds) {
 }
 // The download is running, or about to: nothing to ask for.
 const downloading = () => !model.complete && (model.active || (model.wanted && !model.problem));
+// What the panel's download section says before the model is downloaded (manager.html).
+let downloadNote;
 function controls() {
   const busy = loading || !!engine;
-  $('chat-start').textContent = model.complete ? 'Load model' : downloading() ? 'Downloading…' : model.done ? 'Resume download' : 'Download model';
+  $('chat-start').textContent = loading ? 'Loading…' : model.complete ? 'Load model' : downloading() ? 'Downloading…' : model.done ? 'Resume download' : 'Download model';
   $('chat-start').disabled = busy || asking || removing || downloading() || !!gpuError;
+  // Until the model is loaded, the bottom of the panel is what it takes to
+  // chat: the download, or loading it. Then the question box.
+  $('chat-download').hidden = !!engine;
+  $('chat-form').hidden = !engine;
+  $('chat-download-title').textContent = loading ? 'Loading the model…' : model.complete ? 'Load the model to chat' : downloading() ? 'Downloading the model…' : model.done ? 'Finish the download to chat' : 'Download the model to start chatting';
+  downloadNote ??= $('chat-download-note').textContent;
+  $('chat-download-note').textContent = model.complete ? 'It loads onto your GPU and stays loaded while this tab is open.' : downloadNote;
+  // Unload, Remove download, and Clear chat, once there's a model to act on.
+  $('chat-model').hidden = !busy && !model.complete && !model.done && !model.wanted;
   // While only downloading, Unload pauses the download.
   $('chat-unload').textContent = !busy && downloading() ? 'Pause' : 'Unload';
   $('chat-unload').disabled = removing || (!busy && !downloading());
@@ -51,7 +62,7 @@ function showDownload({ done, total, rate, elsewhere }) {
   progress.hidden = false;
   if (total) progress.value = Math.min(1, done / total); else progress.removeAttribute('value');
   const left = rate > 0 && total ? `, ${timeLeft((total - done) / rate)} left` : '';
-  status(!total ? 'Starting the download…' : `${elsewhere ? 'Downloading in another Marked tab' : 'Downloading'}: ${size(done)} of ${size(total)}${left}. It carries on while Marked is open, and picks up where it stopped if Marked closes.`);
+  status(!total ? 'Starting the download…' : `${elsewhere ? 'In another Marked tab: ' : ''}${size(done)} of ${size(total)}${left}. It keeps going while Marked is open.`);
 }
 function showStopped() {
   $('chat-progress').hidden = true;
@@ -59,7 +70,7 @@ function showStopped() {
   if (model.problem?.reason === 'permission') status(`Marked no longer has access to Hugging Face, which the download needs.${sofar} Choose Resume download to allow it.`);
   else if (model.problem) status(`The download stopped: ${model.problem.message}${sofar} Choose Resume download to try again.`);
   else if (model.done) status(`Download paused.${sofar} Choose Resume download to finish it.`);
-  else status('WebGPU features and runtime limits passed. Download the model to chat.');
+  else status('');
 }
 // Brings the panel up to date with what's on this device. load: load the
 // model if it's all downloaded.
@@ -72,7 +83,7 @@ async function refresh({ load: loadNow = false } = {}) {
   if (loading || engine) return;
   if (model.complete) {
     $('chat-progress').hidden = true;
-    if (loadNow) start(); else status('Model downloaded. Choose Load model to chat.');
+    if (loadNow) start(); else status('');
   } else if (downloading()) {
     showDownload({ ...model, elsewhere: model.active && !model.here });
     // A download asked for earlier, that no Marked tab has carried on yet.
@@ -197,7 +208,7 @@ async function start() {
     });
     if (version !== epoch) return;
     engine = loaded;
-    status('Ready · local WebGPU · uses titles, folders, tags, notes and saved abstracts. No pages are fetched.');
+    status('Ready.');
     $('chat-question').disabled = false; $('chat-question').focus();
   } catch (error) {
     if (version !== epoch) return;
@@ -257,7 +268,7 @@ async function send(event) {
     else history.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
     // Keep only a short recent exchange in context, never an unbounded prompt.
     history = history.slice(-4);
-    status('Ready · connections are suggestions, not verified page analysis.');
+    status('Ready.');
   } catch (error) {
     if (version !== epoch) return;
     response.content.textContent = answer || `Generation failed: ${error.message}`;

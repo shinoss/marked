@@ -70,7 +70,7 @@ test('after the one click, the chat panel resumes, follows and loads the downloa
     // Carried on in another Marked tab, which says how it's going.
     downloading = true;
     fromAnotherTab({ type: 'progress', done: 1_100_000_000, total: 2_200_000_000, rate: 2_000_000 });
-    assert.equal($('chat-status').textContent, 'Downloading in another Marked tab: 1.10 GB of 2.20 GB, about 9 minutes left. It carries on while Marked is open, and picks up where it stopped if Marked closes.');
+    assert.equal($('chat-status').textContent, 'In another Marked tab: 1.10 GB of 2.20 GB, about 9 minutes left. It keeps going while Marked is open.');
     assert.equal($('chat-progress').value, 0.5);
     assert.equal($('chat-start').disabled, true, 'never a second download');
 
