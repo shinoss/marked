@@ -65,9 +65,9 @@
   </main>
   <aside id="chat-panel" class="chat-panel" aria-label="Local bookmark chat" hidden>
     <header class="chat-heading"><h2>Local chat · experimental</h2><button id="chat-close" aria-label="Close chat">Close</button></header>
-    <p class="chat-note">Qwen3 4B · 4-bit · about 2.3 GB download. Requires WebGPU and several GB of free memory; 16 GB Mac recommended. Model data downloads from Hugging Face. Bookmarks and chat stay on this device.</p>
+    <p class="chat-note">Qwen3 4B · 4-bit · a one-time 2.3 GB download from Hugging Face, which picks up where it stopped if it’s interrupted. Requires WebGPU and several GB of free memory; 16 GB Mac recommended. Bookmarks and chat stay on this device.</p>
     <p class="chat-note">Uses a small, relevant sample of titles, domains, folders, tags, your notes and saved abstracts—not full pages or screenshots. Connections may be wrong. Closing this panel keeps the model loaded; Unload releases GPU memory.</p>
-    <div class="chat-controls"><button id="chat-start">Download / load model</button><button id="chat-unload" disabled>Unload</button><button id="chat-delete-model">Remove download</button></div>
+    <div class="chat-controls"><button id="chat-start">Download model</button><button id="chat-unload" disabled>Unload</button><button id="chat-delete-model">Remove download</button></div>
     <progress id="chat-progress" max="1" value="0" aria-label="Model loading progress" hidden></progress>
     <p id="chat-status" role="status">Checking WebGPU…</p>
     <div class="chat-controls"><button id="chat-clear">Clear chat</button></div>

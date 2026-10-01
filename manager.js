@@ -11,6 +11,7 @@ import { suggestTags, chooseTags } from './tagger.js';
 import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
 import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
 import { ALL_SITES, SAVE_GUIDE_KEY, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
+import { resumeDownload } from './model-download.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
@@ -2071,6 +2072,9 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
   const previewsLoaded = loadPreviews().catch(fail);
   // With the texts in, the Marked button and the reader get an up-to-date index.
   loadTexts().then(() => setTimeout(buildRelatedIndexLater, 1000)).catch(fail);
+  // A chat model download cut short (a refresh, a reload of Marked, a closed
+  // tab) carries on here, without asking again.
+  resumeDownload();
   const params = new URLSearchParams(document.location.search);
   if (!['add', 'edit', 'q', 'folder', 'related'].some(key => params.has(key))) return;
   // Consume the request so refreshing the tab does not repeat it.

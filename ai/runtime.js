@@ -1,1 +1,1 @@
-export { CreateWebWorkerMLCEngine, deleteModelAllInfoInCache, hasModelInCache } from '@mlc-ai/web-llm';
+export { CreateWebWorkerMLCEngine } from '@mlc-ai/web-llm';
