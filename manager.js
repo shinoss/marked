@@ -1549,7 +1549,7 @@ $('import-file').addEventListener('change', async () => {
   } finally { $('import').disabled = false; load().catch(fail); }
 });
 // The browser's own bookmarks. Marked asks once, the first time it finds some
-// the library doesn't have; Settings imports them any time after that.
+// the library doesn't have; the Import menu imports them any time after that.
 const BROWSER_IMPORT_KEY = 'markedBrowserImportAsked';
 // "Firefox" or "Chrome", for messages about the browser's bookmarks.
 const browserName = (async () => {
@@ -1557,10 +1557,7 @@ const browserName = (async () => {
   const brand = navigator.userAgentData?.brands?.map(({ brand }) => brand).find(brand => /^(Google Chrome|Microsoft Edge|Brave|Opera)$/.test(brand));
   return brand?.replace(/^(Google|Microsoft) /, '') || 'your browser';
 })();
-browserName.then(name => {
-  $('browser-import-open').textContent = `Import from ${name}…`;
-  $('welcome-import').textContent = `Import from ${name}`;
-});
+browserName.then(name => { $('welcome-import').textContent = `Import from ${name}`; });
 $('welcome-import').addEventListener('click', () => offerBrowserImport({ asked: true }).catch(fail));
 const bookmarkCount = count => `${count.toLocaleString()} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
 async function offerBrowserImport({ asked = false } = {}) {
@@ -1600,11 +1597,7 @@ $('browser-import-accept').addEventListener('click', async () => {
 // Answered either way, so Marked doesn't ask again on its own.
 $('browser-import-dialog').addEventListener('close', () => {
   browser.storage.local.set({ [BROWSER_IMPORT_KEY]: Date.now() }).catch(() => {});
-  if ($('browser-import-dialog').returnValue !== 'imported') toast('You can import them later from Settings.');
-});
-$('browser-import-open').addEventListener('click', () => {
-  $('settings-dialog').close();
-  offerBrowserImport({ asked: true }).catch(fail);
+  if ($('browser-import-dialog').returnValue !== 'imported') toast('You can import them later from the Import menu.');
 });
 $('chat-toggle').addEventListener('click', async () => {
   try {

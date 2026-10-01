@@ -322,18 +322,18 @@ test('first run: asks once to import the browser’s bookmarks, keeping their fo
   assert.deepEqual(sidebar(), [['Bookmarks Toolbar', '1'], ['Other Bookmarks', '1']], 'a folder counts the bookmarks in its subfolders');
   assert.ok((await browser.storage.local.get()).markedBrowserImportAsked, 'answered, so Marked won’t ask on its own again');
 
-  // Later, Settings imports only what's new, and says when nothing is.
+  // Later, the Import menu imports only what's new, and says when nothing is.
   firefox.children[1].children[0].children.push({ id: 'r2', title: 'Soup', url: 'https://food.test/soup', type: 'bookmark' });
-  $('settings').click(); $('browser-import-open').click(); await settle();
-  assert.ok(!$('settings-dialog').open && $('browser-import-dialog').open);
+  $('import-browser').click(); await settle();
+  assert.ok($('browser-import-dialog').open);
   assert.equal($('browser-import-text').textContent, 'Marked found 1 bookmark in your browser that isn’t in Marked yet. Import it, keeping its folder? Nothing changes in your browser.');
   $('browser-import-dialog').close(); await settle();
-  assert.equal($('toast').textContent, 'You can import them later from Settings.');
-  $('settings').click(); $('browser-import-open').click(); await settle();
+  assert.equal($('toast').textContent, 'You can import them later from the Import menu.');
+  $('import-browser').click(); await settle();
   $('browser-import-accept').click(); await settle();
   assert.deepEqual((await saved()).children[1].children[0].children.map(node => node.title), ['Pasta', 'Soup'], 'into the folder it already has');
   assert.deepEqual(sidebar(), [['Bookmarks Toolbar', '1'], ['Other Bookmarks', '2']]);
-  $('settings').click(); $('browser-import-open').click(); await settle();
+  $('import-browser').click(); await settle();
   assert.ok(!$('browser-import-dialog').open);
   assert.equal($('toast').textContent, 'Every bookmark in your browser is already in Marked.');
   dom.window.close();
@@ -490,9 +490,9 @@ test('an empty library welcomes you; the palette jumps anywhere; themes and shor
   const panels = () => [...document.querySelectorAll('.settings-panels [role="tabpanel"]')].filter(panel => !panel.hidden).map(panel => panel.id);
   assert.deepEqual(panels(), ['settings-appearance'], 'Settings opens on its first section');
   page.key({ key: 'ArrowDown' }, $('settings-tab-appearance'));
-  assert.deepEqual(panels(), ['settings-browser'], 'the arrow keys move through the sections');
-  assert.equal(document.activeElement, $('settings-tab-browser'));
-  page.key({ key: 'ArrowUp' }, $('settings-tab-browser'));
+  assert.deepEqual(panels(), ['settings-text'], 'the arrow keys move through the sections');
+  assert.equal(document.activeElement, $('settings-tab-text'));
+  page.key({ key: 'ArrowUp' }, $('settings-tab-text'));
   assert.deepEqual(panels(), ['settings-appearance']);
   document.querySelector('[data-theme-choice="system"]').click();
   assert.equal(document.documentElement.dataset.theme, undefined, 'System follows the computer');

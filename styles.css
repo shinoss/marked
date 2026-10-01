@@ -481,7 +481,6 @@ dialog .key-row input { flex: 1; min-width: 0; margin: 0; }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button:hover { text-decoration: none; background: var(--hover); color: var(--fg); }
 .segmented button[aria-checked="true"] { background: var(--invert-bg); color: var(--invert-fg); }
-#browser-import-open { margin-top: 16px; }
 dialog label.check-field { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
 dialog label.check-field input { width: 12px; margin: 0; }
 .usage { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; padding: 10px 12px; border: 1px solid var(--line); }
