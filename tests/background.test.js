@@ -276,15 +276,18 @@ test('the Marked button saves the page you’re on; where there’s no web page,
   assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }]);
 });
 
-test('installing Marked opens it, to show how to save a page; an update doesn’t', async () => {
+test('installing Marked opens it, to show how to save a page, with the tour over it; an update doesn’t', async () => {
+  const mock = await useLibrary([]);
   opened.length = 0;
   tabs = [];
   onInstalled({ reason: 'update' });
   await flush();
   assert.deepEqual(opened, []);
+  assert.equal((await mock.api.storage.local.get()).markedTour, undefined, 'no tour for an update');
   onInstalled({ reason: 'install' });
   await flush();
   assert.deepEqual(opened, [{ url: 'moz-extension://marked/manager.html' }]);
+  assert.equal((await mock.api.storage.local.get()).markedTour, 'pending', 'Marked shows the tour when it opens');
 });
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));

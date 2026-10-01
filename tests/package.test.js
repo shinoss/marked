@@ -62,7 +62,7 @@ test('the Firefox package drops Chrome-only keys and keeps its gecko settings', 
 });
 
 test('packages take the extension’s own files and nothing from docs, tests, the build, or the checkout', () => {
-  for (const path of ['manifest.json', 'manager.html', 'manager.js', 'styles.css', 'icons/marked-16.png', 'vendor/ai-worker.js', 'vendor/fonts/fonts.css', 'vendor/qwen3-4b.wasm']) {
+  for (const path of ['manifest.json', 'manager.html', 'manager.js', 'styles.css', 'tour/save.webp', 'icons/marked-16.png', 'vendor/ai-worker.js', 'vendor/fonts/fonts.css', 'vendor/qwen3-4b.wasm']) {
     assert.ok(isExtensionFile(path), path);
   }
   for (const path of ['README.md', 'package.json', 'package-lock.json', '.gitignore', '.DS_Store', '.claude/feature-ideas.md', 'docs/images/list.png', 'site/index.html',

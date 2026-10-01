@@ -27,8 +27,9 @@ export function manifestFor(browser, manifest) {
 // An allowlist, so docs, the site, tests, build scripts, the ai/ sources that
 // bundle.js compiles, package files, the README, and anything private lying in
 // the checkout (backups, exports, profiles) never reach a store: the manifest,
-// the pages with their scripts and styles at the top level, icons/, and vendor/.
-const FOLDERS = ['icons', 'vendor'];
+// the pages with their scripts and styles at the top level, icons/, the tour's
+// pictures in tour/, and vendor/.
+const FOLDERS = ['icons', 'tour', 'vendor'];
 export function isExtensionFile(path) {
   const parts = path.split('/');
   if (parts.some(part => part.startsWith('.'))) return false;

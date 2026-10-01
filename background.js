@@ -517,8 +517,12 @@ browser.runtime.onStartup?.addListener(() => { updateAllBadges(); syncPageScript
 browser.runtime.onInstalled?.addListener(details => {
   updateAllBadges();
   syncPageScripts().catch(syncFailed);
-  // A new install opens Marked, which shows how to save a page.
-  if (details?.reason === 'install') openMarked().catch(error => console.error('Could not open Marked', error));
+  // A new install opens Marked, which shows how to save a page, with the tour
+  // over it the first time (manager.js).
+  if (details?.reason === 'install') {
+    browser.storage.local.set({ markedTour: 'pending' }).catch(() => {}).then(openMarked)
+      .catch(error => console.error('Could not open Marked', error));
+  }
 });
 // Allowed in Marked's page, or in the browser's own settings; or taken back there.
 browser.permissions?.onAdded?.addListener(() => {

@@ -1916,6 +1916,104 @@ $('save-guide-done').addEventListener('click', () => {
 });
 // Pinned in the browser meanwhile.
 browser.action?.onUserSettingsChanged?.addListener(() => { renderSaveGuide(); });
+// The tour: what to know to get going, a step at a time, in a card over the
+// page. It shows the first time Marked opens after install (background.js
+// leaves it pending), and from the palette. Skip, Done, ×, or Esc ends it.
+const TOUR_KEY = 'markedTour';
+const bold = text => element('b', '', text);
+// Each step says how to do it with the mouse, as its picture shows, and lists
+// the other ways: menus, the address bar, and shortcuts. shortcut(name) gives
+// the key caps for a command, or null when it has none (another extension had
+// the key, or the user cleared it), and items with null are left out.
+const TOUR = [
+  {
+    image: 'tour/save.webp',
+    alt: 'Clicking the Marked button saves a page from a panel right on it, with its folder, tags, and a note',
+    title: 'Save any page',
+    text: () => ['Click the ', bold('Marked button'), ' in your toolbar on any page you want to keep. Name it, pick a folder, and add tags or a note, right there on the page.'],
+    also: shortcut => [
+      ['Right-click the page and choose ', bold('Add to Marked')],
+      shortcut('add-to-marked') && ['Press ', shortcut('add-to-marked')]
+    ]
+  },
+  {
+    image: 'tour/highlight.webp',
+    alt: 'Selecting a sentence brings up the Highlight button; clicking it keeps the passage in color, with a note',
+    title: 'Highlight what matters',
+    text: () => ['Select text on any page, then click the ', bold('Highlight'), ' button that pops up. Pick a color and add a note if you like. Your highlights are still there when you come back.'],
+    also: shortcut => [
+      shortcut('highlight-selection') && ['Select text and press ', shortcut('highlight-selection')],
+      ['In Marked’s reader, select text and press ', keys('H')]
+    ]
+  },
+  {
+    image: 'tour/search.webp',
+    alt: 'Typing in Marked’s search box finds a word deep inside saved pages, with the passage from each',
+    title: 'Find it again',
+    text: () => ['Type in the search box at the top of Marked to search every word of the pages you’ve saved. Open any of them in a clean copy to read, even after the page is gone.'],
+    also: () => [
+      ['Type ', bold('mk'), ' and a space in your address bar'],
+      ['Press ', keys('/'), ' to search, or ', keys(KEY.mod, 'K'), ' to jump to any bookmark, folder, or tag']
+    ]
+  },
+  {
+    image: 'tour/import.webp',
+    alt: 'Clicking Import at the top of Marked: a bookmarks file, the browser’s bookmarks, or bookmarks from X',
+    title: 'Bring your bookmarks',
+    text: () => ['Click ', bold('Import'), ' at the top of Marked to bring in your browser’s bookmarks, a bookmarks file, or everything you’ve bookmarked on X. ', bold('Export'), ', next to it, makes a backup whenever you want one.'],
+    also: () => [
+      ['Press ', keys(KEY.mod, 'K'), ' and type ', bold('Import'), ' or ', bold('Export')]
+    ]
+  }
+];
+// Key caps for a shortcut as the browser reports it: "Alt+Shift+M", or "⌥⇧M"
+// from Chrome on a Mac, where Firefox's names get the Mac's symbols too.
+const MAC_KEYS = { Alt: '⌥', Shift: '⇧', Ctrl: '⌘', Command: '⌘', MacCtrl: '⌃' };
+function shortcutKeys(shortcut) {
+  const symbols = shortcut.match(/^[⌘⌥⇧⌃]*/)[0];
+  return keys(...(shortcut.includes('+') ? shortcut.split('+').map(name => MAC && MAC_KEYS[name] || name) : [...symbols, shortcut.slice(symbols.length)].filter(Boolean)));
+}
+let tourAt = 0, tourShortcuts = null;
+function showTourStep(index) {
+  tourAt = index;
+  const step = TOUR[index];
+  $('tour-image').src = step.image;
+  $('tour-image').alt = step.alt;
+  $('tour-count').textContent = `${index + 1} of ${TOUR.length}`;
+  $('tour-title').textContent = step.title;
+  const shortcut = name => tourShortcuts[name] ? shortcutKeys(tourShortcuts[name]) : null;
+  $('tour-text').replaceChildren(...step.text());
+  const also = step.also(shortcut).filter(Boolean);
+  $('tour-also').hidden = !also.length;
+  $('tour-also-list').replaceChildren(...also.map(parts => { const item = element('li'); item.append(...parts); return item; }));
+  $('tour-next').textContent = index === TOUR.length - 1 ? 'Done' : 'Next';
+  [...$('tour-dots').children].forEach((dot, i) => { if (i === index) dot.setAttribute('aria-current', 'step'); else dot.removeAttribute('aria-current'); });
+  // The next picture loads while this one is read.
+  if (TOUR[index + 1]) element('img').src = TOUR[index + 1].image;
+}
+async function openTour() {
+  // Shortcuts as the browser has them now; the manifest's when it can't say.
+  tourShortcuts ??= await browser.commands?.getAll?.().then(commands => Object.fromEntries(commands.map(command => [command.name, command.shortcut || ''])), () => null)
+    ?? { 'add-to-marked': 'Alt+Shift+M', 'highlight-selection': 'Alt+Shift+H' };
+  showTourStep(0);
+  $('tour-dialog').showModal();
+  // Enter goes on from the start; the focus ring waits for the keyboard.
+  $('tour-next').focus({ focusVisible: false });
+}
+$('tour-dots').replaceChildren(...TOUR.map(() => element('li')));
+$('tour-next').addEventListener('click', () => { if (tourAt < TOUR.length - 1) showTourStep(tourAt + 1); else $('tour-dialog').close(); });
+for (const id of ['tour-skip', 'tour-close']) $(id).addEventListener('click', () => $('tour-dialog').close());
+$('tour-dialog').addEventListener('keydown', event => {
+  if (event.key === 'ArrowRight' && tourAt < TOUR.length - 1) showTourStep(tourAt + 1);
+  else if (event.key === 'ArrowLeft' && tourAt > 0) showTourStep(tourAt - 1);
+  else return;
+  event.preventDefault();
+});
+// Seen, it doesn't come back on its own; then Marked offers the browser's bookmarks.
+$('tour-dialog').addEventListener('close', () => {
+  browser.storage.local.set({ [TOUR_KEY]: 'done' }).catch(() => {});
+  askFirstImport();
+});
 document.defaultView.addEventListener('focus', () => { renderSaveGuide(); });
 renderSaveGuide();
 
@@ -1945,7 +2043,8 @@ function commands() {
     ['Semantic search settings', 'jev typesafe api key meaning', () => openSettings('semantic')],
     ...[['dark', 'Use the dark theme'], ['light', 'Use the light theme'], ['system', 'Match the system’s theme']]
       .filter(([value]) => value !== theme).map(([value, label]) => [label, 'appearance night day color mode', () => setTheme(value)]),
-    ['Keyboard shortcuts', 'help keys', showShortcuts]
+    ['Keyboard shortcuts', 'help keys', showShortcuts],
+    ['Take the tour', 'welcome introduction help getting started onboarding', () => { openTour().catch(fail); }]
   ].map(([label, keywords, run]) => ({ kind: 'command', label, keywords, run }));
 }
 function paletteResults(query) {
@@ -2100,15 +2199,19 @@ Promise.all([load(), browser.storage.local.get(['markedView', JEV_SETTINGS_KEY, 
 })]).then(async () => {
   // The library's first render is already on screen, unless it chose another view.
   if (shown.context?.view !== view) render();
-  askFirstImport();
+  const params = new URLSearchParams(document.location.search);
+  const requested = ['add', 'edit', 'q', 'folder', 'related'].some(key => params.has(key));
+  // The first time Marked opens after install: the tour, and after it the
+  // browser's bookmarks. A page opened for something else leaves it for later.
+  browser.storage.local.get(TOUR_KEY).then(saved => saved[TOUR_KEY] === 'pending' && !requested).catch(() => false)
+    .then(tour => tour ? openTour() : askFirstImport()).catch(fail);
   const previewsLoaded = loadPreviews().catch(fail);
   // With the texts in, the Marked button and the reader get an up-to-date index.
   loadTexts().then(() => setTimeout(buildRelatedIndexLater, 1000)).catch(fail);
   // A chat model download cut short (a refresh, a reload of Marked, a closed
   // tab) carries on here, without asking again.
   resumeDownload();
-  const params = new URLSearchParams(document.location.search);
-  if (!['add', 'edit', 'q', 'folder', 'related'].some(key => params.has(key))) return;
+  if (!requested) return;
   // Consume the request so refreshing the tab does not repeat it.
   document.defaultView.history.replaceState(null, '', document.location.pathname);
   // A search typed after "mk" in the address bar.

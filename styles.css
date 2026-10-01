@@ -504,6 +504,41 @@ dialog label.check-field input { width: 12px; margin: 0; }
 .menu button span { color: var(--muted); font-size: 12px; }
 .menu button:hover { background: var(--hover); text-decoration: none; }
 /* The palette: a search box near the top of the window, with results under it. */
+/* The tour, the first time Marked opens: a card over the dimmed page, a
+   picture of each thing on the left, what it is and how to use it on the right. */
+dialog.tour { width: min(880px, calc(100vw - 48px)); height: min(540px, calc(100vh - 48px)); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); overflow: hidden; box-shadow: 0 24px 64px rgba(0, 0, 0, .28); }
+dialog.tour[open] { display: grid; grid-template-columns: minmax(0, 10fr) minmax(0, 9fr); }
+dialog.tour::backdrop { background: rgba(10, 10, 12, .5); backdrop-filter: blur(5px); }
+.tour-media { margin: 0; min-height: 0; background: var(--hover); border-right: 1px solid var(--line); }
+.tour-media img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.tour-body { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 40px 36px 28px; overflow-y: auto; }
+.tour-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+dialog.tour h2 { margin: 14px 0 0; font: 600 27px/1.2 Literata, Georgia, serif; letter-spacing: -0.01em; text-wrap: balance; }
+.tour-text { margin-top: 14px; color: var(--note-fg); font-size: 14px; line-height: 1.6; text-wrap: pretty; }
+.tour-text b { color: var(--fg); font-weight: 600; }
+.tour-text .keys, .tour-also .keys { vertical-align: 1px; }
+.tour-also { margin-top: 20px; font-size: 13px; }
+.tour-also p { color: var(--muted); font-size: 12px; }
+.tour-also ul { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; color: var(--note-fg); line-height: 1.5; }
+.tour-also li { position: relative; padding-left: 14px; }
+.tour-also li::before { content: ""; position: absolute; left: 2px; top: .65em; width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
+.tour-also b { color: var(--fg); font-weight: 600; }
+.tour-actions { display: flex; align-items: center; gap: 16px; margin-top: auto; padding-top: 24px; }
+.tour-skip { padding: 8px 0; color: var(--muted); }
+.tour-dots { display: flex; gap: 6px; margin: 0 auto; padding: 0; list-style: none; }
+.tour-dots li { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.tour-dots li[aria-current="step"] { background: var(--fg); }
+.tour-next { min-width: 88px; padding: 9px 18px; border-radius: 8px; background: var(--invert-bg); color: var(--invert-fg); font-weight: 600; text-align: center; }
+.tour-next:hover { text-decoration: none; opacity: .85; }
+.tour-close { position: absolute; top: 14px; right: 14px; border-radius: 8px; }
+.tour-close:hover { background: var(--hover); color: var(--fg); }
+.tour-close::after { display: none; }
+@media (max-width: 640px) {
+  dialog.tour { height: min(640px, calc(100vh - 32px)); width: calc(100vw - 32px); }
+  dialog.tour[open] { grid-template-columns: none; grid-template-rows: minmax(0, 45%) minmax(0, 1fr); }
+  .tour-media { border-right: 0; border-bottom: 1px solid var(--line); }
+  .tour-body { padding: 24px 24px 20px; }
+}
 dialog.palette { width: 600px; max-height: 70vh; margin: 12vh auto auto; padding: 0; overflow: hidden; box-shadow: 0 16px 48px rgba(0, 0, 0, .12); }
 dialog.palette[open] { display: flex; flex-direction: column; }
 dialog.palette::backdrop { background: rgba(0, 0, 0, .06); }

@@ -1129,6 +1129,61 @@ test('new users see how to save a page until they save one from its panel, or pu
   dom.window.close();
 });
 
+// The first time Marked opens after install, the tour shows in a card over the
+// page; after it, Marked offers the browser's bookmarks.
+test('the first time Marked opens after install, the tour shows what to know a step at a time, then the browser’s bookmarks are offered', async () => {
+  const setup = api => {
+    api.commands = { getAll: async () => [{ name: 'add-to-marked', shortcut: 'Alt+Shift+M' }, { name: 'highlight-selection', shortcut: '' }, { name: '_execute_action', shortcut: '' }] };
+    api.bookmarks.getTree = async () => [{ id: 'root________', children: [{ id: 'bar', title: 'Bookmarks bar', children: [{ id: 'essay', title: 'An essay', url: 'https://example.com/essay' }] }] }];
+  };
+  let page = await openManager({ id: 'root', children: [] }, 'tour', { markedTour: 'pending', markedBrowserImportAsked: 0 }, setup);
+  let { dom, $ } = page;
+  await page.settle(50);
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || ''), mod = mac ? '⌘' : 'Ctrl';
+  const step = () => [$('tour-count').textContent, $('tour-title').textContent, $('tour-next').textContent, [...$('tour-also-list').children].map(item => item.textContent)];
+  const press = key => $('tour-dialog').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  assert.ok($('tour-dialog').open, 'a card over the page');
+  assert.ok(!$('browser-import-dialog').open, 'and nothing else yet');
+  assert.match($('tour-text').textContent, /^Click the Marked button in your toolbar on any page/, 'the way the picture shows');
+  assert.deepEqual(step(), ['1 of 4', 'Save any page', 'Next', ['Right-click the page and choose Add to Marked', `Press ${mac ? '⌥⇧M' : 'AltShiftM'}`]], 'and the other ways, with the shortcut the browser has in this computer’s keys');
+  assert.equal($('tour-image').getAttribute('src'), 'tour/save.webp');
+  assert.ok($('tour-image').alt);
+  $('tour-next').click();
+  assert.match($('tour-text').textContent, /^Select text on any page, then click the Highlight button that pops up\./);
+  assert.deepEqual(step(), ['2 of 4', 'Highlight what matters', 'Next', ['In Marked’s reader, select text and press H']], 'no shortcut set: not offered');
+  press('ArrowRight');
+  assert.deepEqual(step(), ['3 of 4', 'Find it again', 'Next', ['Type mk and a space in your address bar', `Press / to search, or ${mod}K to jump to any bookmark, folder, or tag`]]);
+  press('ArrowLeft');
+  assert.equal($('tour-title').textContent, 'Highlight what matters', 'the arrow keys go back and forth');
+  press('ArrowRight');
+  $('tour-next').click();
+  assert.deepEqual(step().slice(0, 3), ['4 of 4', 'Bring your bookmarks', 'Done']);
+  assert.equal([...$('tour-dots').children].findIndex(dot => dot.getAttribute('aria-current') === 'step'), 3);
+  for (const src of ['save', 'highlight', 'search', 'import']) await readFile(new URL(`../tour/${src}.webp`, import.meta.url));
+  $('tour-next').click();
+  await page.settle(50);
+  assert.ok(!$('tour-dialog').open);
+  assert.equal((await browser.storage.local.get()).markedTour, 'done');
+  assert.ok($('browser-import-dialog').open, 'then the browser’s bookmarks');
+  dom.window.close();
+
+  // Seen, it doesn't come back on its own; the palette brings it back, and × closes it.
+  page = await openManager({ id: 'root', children: [] }, 'tour-again', { markedTour: 'done' }, setup);
+  ({ dom, $ } = page);
+  await page.settle(50);
+  assert.ok(!$('tour-dialog').open);
+  page.key({ key: 'k', metaKey: true });
+  page.type('tour');
+  assert.deepEqual(page.labels(), ['Take the tour']);
+  page.key({ key: 'Enter' }, $('palette-input'));
+  await page.settle(20);
+  assert.ok($('tour-dialog').open);
+  assert.equal($('tour-title').textContent, 'Save any page', 'from the start');
+  $('tour-close').click();
+  assert.ok(!$('tour-dialog').open);
+  dom.window.close();
+});
+
 // Saving the TypeSafe key is the user's agreement to what semantic search sends,
 // stated right above it. Firefox also keeps its own consent to that data.
 test('in Firefox, agreeing asks for Firefox’s own data consent too, and a search without it sends nothing', async () => {
