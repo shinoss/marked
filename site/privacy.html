@@ -6,7 +6,7 @@
   <title>Privacy policy · Marked</title>
   <meta name="description" content="How Marked handles your data: your library stays in your browser, and these are the only services it contacts, when, and what it sends.">
   <link rel="canonical" href="https://marked-bookmarks-sand.vercel.app/privacy.html">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#f7f4ec">
   <meta name="color-scheme" content="light">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="Marked">
@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
-  <link rel="stylesheet" href="site.css?v=7">
+  <link rel="stylesheet" href="site.css?v=9">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -35,9 +35,9 @@
       <nav class="site-nav" aria-label="Main">
         <ul>
           <li class="nav-optional"><a href="./#features">Features</a></li>
-          <li><a href="privacy.html" aria-current="page">Privacy</a></li>
+          <li class="nav-optional"><a href="privacy.html" aria-current="page">Privacy</a></li>
           <li class="nav-wide"><a href="https://github.com/shinoss/marked">GitHub</a></li>
-          <li><a class="nav-cta" href="./#get">Install</a></li>
+          <li><a class="btn btn-primary btn-small" href="./#get">Install</a></li>
         </ul>
       </nav>
     </div>
@@ -46,14 +46,14 @@
   <main id="main" class="doc">
     <article class="wrap">
       <h1>Privacy policy</h1>
-      <p class="meta">Effective September 26, 2026 · Applies to the Marked extension for Chrome and Firefox, and to this website.</p>
+      <p class="meta">Effective October 1, 2026 · Applies to the Marked extension for Chrome and Firefox, and to this website.</p>
 
       <div class="summary">
         <p><strong>In short</strong></p>
         <ul>
           <li>Your library stays in your browser. There is no Marked account and no Marked server.</li>
           <li>Marked has no analytics, no tracking, and no ads. It doesn't sell or share your data.</li>
-          <li>It contacts a few outside services, listed below, only for the feature that needs them. Most only happen when you ask: downloading the chat model, semantic search, downloading page text, and importing from X.</li>
+          <li>It contacts a few outside services, listed below, only for the feature that needs them. Most only happen when you ask: downloading the chat model, semantic search, downloading page text, and importing from X, and tagging that import if you choose.</li>
         </ul>
       </div>
 
@@ -110,7 +110,7 @@
         <h3 id="s-x">X</h3>
         <dl>
           <dt>When</dt><dd>In the gallery, to show posts you saved from X as embedded posts. And when you choose <strong>Import&nbsp;→ Bookmarks from X</strong>, which opens your X bookmarks in a tab.</dd>
-          <dt>What's sent</dt><dd>For embeds, the ID of each saved post that's shown, with X's do-not-track option set. For the import, the tab loads X as you normally would, signed in as you; Marked scrolls that page so X loads your bookmarks, reads the posts shown, and saves them in your library. It adds nothing of its own to what X receives.</dd>
+          <dt>What's sent</dt><dd>For embeds, the ID of each saved post that's shown, with X's do-not-track option set. For the import, the tab loads X as you normally would, signed in as you; Marked scrolls that page so X loads your bookmarks, reads the posts shown, and saves them in your library. It adds nothing of its own to what X receives. If you choose to tag the import, the posts also go to TypeSafe, as described below.</dd>
           <dt>Their policy</dt><dd><a href="https://x.com/en/privacy">x.com/en/privacy</a></dd>
         </dl>
       </section>
@@ -125,10 +125,10 @@
       </section>
 
       <section class="service" aria-labelledby="s-typesafe">
-        <h3 id="s-typesafe">TypeSafe (semantic search)</h3>
+        <h3 id="s-typesafe">TypeSafe (semantic search and tagging imports from X)</h3>
         <dl>
-          <dt>When</dt><dd>Only if you add your own TypeSafe Jev API key in Settings, and only when you click <strong>Semantic</strong>.</dd>
-          <dt>What's sent</dt><dd>Your search, and for each bookmark its title and abstract. Its note and up to three highlights go too only if you turn on <strong>Include notes</strong> or <strong>Include highlights</strong> in <strong>Settings&nbsp;→ Semantic search</strong>; both start off. Never addresses, folders, or tags. Your API key goes with the request so TypeSafe can authorize it. <strong>Preview requests without sending them</strong> shows you what would be sent.</dd>
+          <dt>When</dt><dd>Only if you add your own TypeSafe Jev API key in Settings, and only when you click <strong>Semantic</strong>, or import your bookmarks from X with <strong>Tag each post with the tags that fit it</strong> ticked. Tagging starts off.</dd>
+          <dt>What's sent</dt><dd>For a search: your search, and for each bookmark its title and abstract. Its note and up to three highlights go too only if you turn on <strong>Include notes</strong> or <strong>Include highlights</strong> in <strong>Settings&nbsp;→ Semantic search</strong>; both start off. Never addresses, folders, or tags. For a tagged import: the author and text of each post that isn't in your library yet, and the names of your tags, so Jev can choose tags for each post. Nothing else from your library. Your API key goes with each request so TypeSafe can authorize it. <strong>Preview requests without sending them</strong> shows you what would be sent.</dd>
           <dt>Their policy</dt><dd>See TypeSafe's terms and privacy policy at <a href="https://typesafe.ai">typesafe.ai</a>.</dd>
         </dl>
       </section>

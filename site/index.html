@@ -7,7 +7,7 @@
   <meta name="description" content="Save pages, posts from X, and the sentences that mattered, with your own notes and tags, read them in a clean reader, and ask a private, on-device AI how it all connects. Your library stays in your browser.">
   <!-- DOMAIN: the site is at marked-bookmarks-sand.vercel.app (Vercel) until it has its own domain. Change it everywhere (index.html, privacy.html, robots.txt, sitemap.xml). -->
   <link rel="canonical" href="https://marked-bookmarks-sand.vercel.app/">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#f7f4ec">
   <meta name="color-scheme" content="light">
 
   <meta property="og:type" content="website">
@@ -28,10 +28,11 @@
   <link rel="icon" href="marked.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preload" href="fonts/literata-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
-  <link rel="stylesheet" href="site.css?v=7">
+  <link rel="stylesheet" href="site.css?v=9">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -42,9 +43,9 @@
       <nav class="site-nav" aria-label="Main">
         <ul>
           <li class="nav-optional"><a href="#features">Features</a></li>
-          <li><a href="#privacy">Privacy</a></li>
+          <li class="nav-optional"><a href="#privacy">Privacy</a></li>
           <li class="nav-wide"><a href="https://github.com/shinoss/marked">GitHub</a></li>
-          <li><a class="nav-cta" href="#get">Install</a></li>
+          <li><a class="btn btn-primary btn-small" href="#get">Install</a></li>
         </ul>
       </nav>
     </div>
@@ -54,331 +55,191 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap">
         <div class="hero-top">
-        <div class="hero-name">
-          <img class="hero-logo" src="marked.svg" alt="Marked logo" width="64" height="64">
-          <h1 id="hero-title">Marked</h1>
-          <p class="tagline">A local-first bookmark library for Chrome and Firefox.</p>
-          <p class="lede">Save pages, posts from X, and <mark>the sentences that mattered</mark>, with your own notes and tags, read them in a clean reader, and ask a private, on-device AI how it all connects.</p>
-        </div>
-        <div class="hero-install" id="get">
-          <div class="cta store-cta">
-            <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/marked-%E2%80%94-bookmark-manager/locoecjdphkimihnmjkhcaenenkckfmc">Add to Chrome</a>
-            <span class="store-meta">Free, from the Chrome Web Store</span>
+          <div class="hero-name">
+            <img class="hero-logo" src="marked.svg" alt="Marked logo" width="64" height="64">
+            <h1 id="hero-title">Marked</h1>
+            <p class="tagline">A local-first bookmark library for Chrome and Firefox.</p>
+            <p class="lede">Save pages, posts from X, and <mark>the sentences that mattered</mark>, with your own notes and tags, read them in a clean reader, and ask a private, on-device AI how it all connects.</p>
           </div>
-          <p class="install-lead">For Firefox, or to build it yourself, install from source:</p>
-          <!-- One card: the browser switch and copy button, the commands, then one load step. The script at the end of the page runs the switch and the copy button. -->
-          <div class="install-card">
-            <div class="install-bar">
-              <span class="install-title">Install from source</span>
-              <div class="load-tabs" role="tablist" aria-label="Your browser" hidden>
-                <button type="button" role="tab" id="tab-chrome" aria-controls="load-chrome" aria-selected="true">Chrome</button>
-                <button type="button" role="tab" id="tab-firefox" aria-controls="load-firefox" aria-selected="false" tabindex="-1">Firefox</button>
-              </div>
-              <button type="button" class="copy" aria-label="Copy the commands" title="Copy" hidden>
-                <svg class="icon-copy" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="1.5"/><path d="M13 4.5V4a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h.5"/></svg>
-                <svg class="icon-done" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3 3 7-7"/></svg>
-              </button>
+          <div class="hero-install" id="get">
+            <div class="cta store-cta">
+              <a class="btn btn-primary btn-large" href="https://chromewebstore.google.com/detail/marked-%E2%80%94-bookmark-manager/locoecjdphkimihnmjkhcaenenkckfmc">Add to Chrome</a>
+              <span class="store-meta">Free, from the Chrome Web Store</span>
             </div>
+            <p class="install-lead">For Firefox, or to build it yourself, install from source:</p>
+            <!-- One card: the browser switch and copy button, the commands, then one load step. The script at the end of the page runs the switch and the copy button. -->
+            <div class="install-card">
+              <div class="install-bar">
+                <span class="install-title">Install from source</span>
+                <div class="load-tabs" role="tablist" aria-label="Your browser" hidden>
+                  <button type="button" role="tab" id="tab-chrome" aria-controls="load-chrome" aria-selected="true">Chrome</button>
+                  <button type="button" role="tab" id="tab-firefox" aria-controls="load-firefox" aria-selected="false" tabindex="-1">Firefox</button>
+                </div>
+                <button type="button" class="copy" aria-label="Copy the commands" title="Copy" hidden>
+                  <svg class="icon-copy" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="1.5"/><path d="M13 4.5V4a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h.5"/></svg>
+                  <svg class="icon-done" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3 3 7-7"/></svg>
+                </button>
+              </div>
 <pre><code id="install-commands">git clone https://github.com/shinoss/marked.git
 cd marked
 npm ci &amp;&amp; npm run bundle</code></pre>
-            <div class="install-then">
-              <p id="load-chrome" role="tabpanel" aria-labelledby="tab-chrome"><span class="load-name">Chrome: </span><code>chrome://extensions</code> → Developer mode → Load unpacked</p>
-              <p id="load-firefox" role="tabpanel" aria-labelledby="tab-firefox"><span class="load-name">Firefox: </span><code>about:debugging</code> → This Firefox → Load Temporary Add-on → manifest.json</p>
+              <div class="install-then">
+                <p id="load-chrome" role="tabpanel" aria-labelledby="tab-chrome"><span class="load-name">Chrome: </span><code>chrome://extensions</code> → Developer mode → Load unpacked</p>
+                <p id="load-firefox" role="tabpanel" aria-labelledby="tab-firefox"><span class="load-name">Firefox: </span><code>about:debugging</code> → This Firefox → Load Temporary Add-on → manifest.json</p>
+              </div>
             </div>
           </div>
         </div>
-        </div>
 
-
-
-        <div class="hero-stage">
-          <figure class="shot shot-hero">
+        <figure class="stage stage-forest hero-stage">
+          <div class="frame frame-wide">
             <img src="images/list.webp" width="1896" height="1200" fetchpriority="high"
                  alt="The Marked library, with folders, tags, notes, highlights, and bookmarks for a Hacker News story and a GitHub repository">
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <section class="statement" aria-label="Why Marked">
+      <div class="wrap">
+        <p>Browser bookmarks are a pile of titles you never open again. Marked keeps <mark>the why</mark>: your note, the passage you highlighted, a short abstract of the page, and tags. It all stays in your browser.</p>
+      </div>
+    </section>
+
+    <div class="steps" id="features">
+      <div class="wrap">
+        <section class="step" aria-labelledby="save-title">
+          <div class="step-copy">
+            <h2 id="save-title">Save any page</h2>
+            <p>Click the <strong>Marked button</strong> in your toolbar on any page you want to keep. Name it, pick a folder, and add tags or a note, right there on the page.</p>
+            <p class="also">Or right-click the page and choose <strong>Add to Marked</strong>, or press <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>.</p>
+          </div>
+          <figure class="stage stage-sage">
+            <div class="frame">
+              <picture>
+                <source srcset="images/tour/save-still.webp" media="(prefers-reduced-motion: reduce)">
+                <img src="images/tour/save.webp" width="920" height="1078" loading="lazy" decoding="async"
+                     alt="Clicking the Marked button saves a page from a panel right on it, with its folder, tags, and a note">
+              </picture>
+            </div>
           </figure>
-        </div>
-      </div>
-    </section>
+        </section>
 
-    <section class="intro" aria-label="Why Marked">
-      <div class="wrap">
-        <p>Browser bookmarks are a pile of titles you never open again. Marked keeps <em>the why</em>: your note, the passage you highlighted, a short abstract of the page, and tags. It all stays in your browser.</p>
-      </div>
-    </section>
-
-    <nav class="index" aria-labelledby="index-title">
-      <div class="wrap">
-        <h2 id="index-title">What it does</h2>
-        <ol>
-          <li><a href="#organize"><span><strong>Organize and find</strong><span class="sum">Folders, tags, notes, cards, and drag and drop.</span></span></a></li>
-          <li><a href="#page-search"><span><strong>Search and read every page</strong><span class="sum">Find any word. Read the saved copy.</span></span></a></li>
-          <li><a href="#related"><span><strong>Find what's related</strong><span class="sum">Bookmarks that share the telling words.</span></span></a></li>
-          <li><a href="#jump"><span><strong>Jump anywhere</strong><span class="sum">Any bookmark, folder, tag, or command.</span></span></a></li>
-          <li><a href="#fresh"><span><strong>Keep it fresh</strong><span class="sum">Continue reading, Rediscover, Duplicates.</span></span></a></li>
-          <li><a href="#highlight"><span><strong>Highlight any sentence</strong><span class="sum">Five colors, a note, and every highlight in one place.</span></span></a></li>
-          <li><a href="#x"><span><strong>Save posts from X</strong><span class="sum">Right-click a post, or import your X bookmarks.</span></span></a></li>
-          <li><a href="#tabs"><span><strong>Supercharge your browsing</strong><span class="sum">Address bar, badge, shortcut, sessions.</span></span></a></li>
-          <li><a href="#chat"><span><strong>Ask your bookmarks</strong><span class="sum">On-device chat, with citations.</span></span></a></li>
-          <li><a href="#meaning"><span><strong>Search by meaning</strong><span class="sum">Optional, with your own API key.</span></span></a></li>
-          <li><a href="#keep"><span><strong>Yours to keep</strong><span class="sum">Import, export, and back up.</span></span></a></li>
-          <li><a href="#privacy"><span><strong>Private by design</strong><span class="sum">Your library stays in your browser.</span></span></a></li>
-        </ol>
-      </div>
-    </nav>
-
-    <div class="features" id="features">
-      <div class="wrap">
-
-        <section class="feature" id="organize" aria-labelledby="organize-title">
-          <div class="feature-text">
-            <h2 id="organize-title">Organize and find</h2>
-            <p>Folders, tags, notes, and a short abstract of every page you save. Search it all with <kbd>/</kbd>, or browse a gallery of page previews and posts from X.</p>
-            <p>Hacker News and GitHub links get a card instead: points and comments, stars and language, or whether an issue or pull request is open, closed, or merged.</p>
+        <section class="step step-flip" aria-labelledby="highlight-title">
+          <div class="step-copy">
+            <h2 id="highlight-title">Highlight what matters</h2>
+            <p>Select text on any page, then click the <strong>Highlight</strong> button that pops up. Pick one of five colors and add a note if you like. Your highlights are still there when you come back.</p>
+            <p class="also">Or press <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>. Every highlight also waits in one list, to search or filter by color, site, or date.</p>
           </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/gallery.webp" width="1400" height="1373" loading="lazy" decoding="async"
-                   alt="Gallery view with page previews, cards for a Hacker News story and a GitHub repository, and an embedded post from X">
-            </figure>
-            <div class="card">
-              <h3>Drag and drop</h3>
-              <p>Drag bookmarks and folders onto any folder, several at a time, with Undo.</p>
-              <p>In <strong>Saved order</strong>, drag between rows or press <span class="keys"><kbd>Alt</kbd>+<kbd>↑</kbd></span> / <span class="keys"><kbd>Alt</kbd>+<kbd>↓</kbd></span> to arrange a folder by hand.</p>
+          <figure class="stage stage-sage">
+            <div class="frame">
+              <picture>
+                <source srcset="images/tour/highlight-still.webp" media="(prefers-reduced-motion: reduce)">
+                <img src="images/tour/highlight.webp" width="920" height="1078" loading="lazy" decoding="async"
+                     alt="Selecting a sentence brings up the Highlight button; clicking it keeps the passage in color, with a note">
+              </picture>
             </div>
-          </div>
+          </figure>
         </section>
 
-        <section class="feature" id="page-search" aria-labelledby="page-search-title">
-          <div class="feature-text">
-            <h2 id="page-search-title">Search and read every page</h2>
-            <p>Marked keeps the text of every page you save, so search finds any word in it and shows the passage. For Hacker News and GitHub, it keeps the discussion or README.</p>
+        <section class="step" aria-labelledby="search-title">
+          <div class="step-copy">
+            <h2 id="search-title">Find it again</h2>
+            <p>Search every word of the pages you’ve saved, not just their titles, and see the passage that matched. Open any of them in a clean copy to read, even after the page is gone.</p>
+            <p class="also">Or type <code>mk</code> and a space in your address bar, or press <span class="keys"><kbd>⌘</kbd>+<kbd>K</kbd></span> (<span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>) to jump to any bookmark, folder, or tag.</p>
           </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/search-text.webp" width="1400" height="753" loading="lazy" decoding="async"
-                   alt="Searching for “imagination” finds it deep inside three saved pages, with the passage from each">
-            </figure>
-            <div class="feature-sub">
-              <h3>The reader</h3>
-              <p>Open the saved copy from a bookmark's reading time or a search result, even after the page is gone. Pick the font, size, width, and a light, sepia, or dark page; the reader remembers where you stopped.</p>
-              <p>Highlight as you read, in color or with a note (or press <kbd>H</kbd>). Older bookmarks without saved text can download it from the reader, or all at once in <strong>Settings&nbsp;→ Page text</strong>.</p>
+          <figure class="stage stage-sage">
+            <div class="frame">
+              <picture>
+                <source srcset="images/tour/search-still.webp" media="(prefers-reduced-motion: reduce)">
+                <img src="images/tour/search.webp" width="920" height="1077" loading="lazy" decoding="async"
+                     alt="Typing in Marked’s search box finds a word deep inside saved pages, with the passage from each">
+              </picture>
             </div>
-            <figure class="shot">
-              <img src="images/reader.webp" width="1400" height="886" loading="lazy" decoding="async"
-                   alt="The reader in sepia, with reading options open and two highlights in green and purple">
-            </figure>
-          </div>
+          </figure>
         </section>
 
-        <section class="feature" id="related" aria-labelledby="related-title">
-          <div class="feature-text">
-            <h2 id="related-title">Find what's related</h2>
-            <p>Choose <strong>More like…</strong> on any bookmark to see others that share its most telling words, and which words. It's all worked out on your device.</p>
-            <p>On pages you haven't saved, the Marked button counts your related bookmarks, and the panel it opens links to them. Turn this off in <strong>Settings&nbsp;→ Browsing</strong>.</p>
+        <section class="step step-flip" aria-labelledby="import-title">
+          <div class="step-copy">
+            <h2 id="import-title">Bring your bookmarks</h2>
+            <p>Click <strong>Import</strong> to bring in your browser’s bookmarks, a bookmarks file, or everything you’ve bookmarked on X. Nothing in your browser changes.</p>
+            <p class="also">Import again anytime and only what’s new comes in. <strong>Export</strong>, next to it, makes a backup whenever you want one.</p>
           </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/related.webp" width="1400" height="724" loading="lazy" decoding="async"
-                   alt="Bookmarks like the Transformer article, each with the words it shares, such as transformer, encoding and attention">
-            </figure>
-            <figure class="shot shot-strip">
-              <img src="images/related-badge.webp" width="1400" height="118" loading="lazy" decoding="async"
-                   alt="The Marked button in Firefox's toolbar shows 1 on a Wikipedia page related to a saved bookmark">
-            </figure>
-          </div>
-        </section>
-
-        <section class="feature" id="jump" aria-labelledby="jump-title">
-          <div class="feature-text">
-            <h2 id="jump-title">Jump anywhere</h2>
-            <p>Press <span class="keys"><kbd>⌘</kbd>+<kbd>K</kbd></span> (<span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> on Windows and Linux) to jump to any bookmark, folder, or tag, or run a command. Press <kbd>?</kbd> for every shortcut.</p>
-          </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/palette.webp" width="1400" height="886" loading="lazy" decoding="async"
-                   alt="The command palette, matching bookmarks, folders, and commands as you type">
-            </figure>
-          </div>
-        </section>
-
-        <section class="feature" id="fresh" aria-labelledby="fresh-title">
-          <div class="feature-text">
-            <h2 id="fresh-title">Keep it fresh</h2>
-          </div>
-          <div class="feature-media">
-            <div class="card">
-              <h3>Continue reading</h3>
-              <p>Pages you started in the reader, ready where you left off.</p>
+          <figure class="stage stage-sage">
+            <div class="frame">
+              <picture>
+                <source srcset="images/tour/import-still.webp" media="(prefers-reduced-motion: reduce)">
+                <img src="images/tour/import.webp" width="920" height="1076" loading="lazy" decoding="async"
+                     alt="Clicking Import at the top of Marked: a bookmarks file, the browser’s bookmarks, or bookmarks from X">
+              </picture>
             </div>
-            <div class="card">
-              <h3>Rediscover</h3>
-              <p>A few older bookmarks, favoring ones with notes or highlights.</p>
-            </div>
-            <div class="card">
-              <h3>Duplicates</h3>
-              <p>Pages saved more than once, merged with every tag, note, and highlight kept.</p>
-            </div>
-          </div>
+          </figure>
         </section>
-
-        <section class="feature" id="highlight" aria-labelledby="highlight-title">
-          <div class="feature-text">
-            <h2 id="highlight-title">Highlight any sentence</h2>
-            <p>Select text on any page and choose <strong>Highlight</strong> (or press <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>). Pick one of five colors and add a note if you like.</p>
-            <p>Revisit the page and your highlights are back; hover one to see its note.</p>
-          </div>
-          <div class="feature-media">
-            <div class="shots shots-2">
-              <figure class="shot">
-                <img src="images/highlight-button.webp" width="1000" height="652" loading="lazy" decoding="async"
-                     alt="Selecting a sentence shows the Highlight button">
-              </figure>
-              <figure class="shot">
-                <img src="images/highlight-panel.webp" width="1000" height="652" loading="lazy" decoding="async"
-                     alt="The highlight panel on the page, with five colors and a note">
-              </figure>
-            </div>
-            <figure class="shot">
-              <img src="images/highlights-on-page.webp" width="1260" height="830" loading="lazy" decoding="async"
-                   alt="Saved highlights marked again in blue and pink on a revisited page, with a note shown on hover">
-            </figure>
-            <div class="feature-sub">
-              <h3>Highlights</h3>
-              <p>Every highlight in one list, newest first, to search or filter by color, site, or date.</p>
-            </div>
-            <figure class="shot">
-              <img src="images/highlights.webp" width="1400" height="886" loading="lazy" decoding="async"
-                   alt="The Highlights view, with color filters and highlights in four colors; the first shows its colors, Show passage, and delete">
-            </figure>
-          </div>
-        </section>
-
-        <section class="feature" id="x" aria-labelledby="x-title">
-          <div class="feature-text">
-            <h2 id="x-title">Save posts from X</h2>
-            <p>Right-click a post on x.com and choose <strong>Save tweet to Marked</strong>. On a post's own page, the author's thread comes along.</p>
-          </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/save-tweet.webp" width="1400" height="886" loading="lazy" decoding="async"
-                   alt="The editor, prefilled from a post on X">
-            </figure>
-            <div class="feature-sub">
-              <h3>Bookmarks from X</h3>
-              <p>Choose <strong>Import&nbsp;→ Bookmarks from X</strong> while signed in to X, and every post you've bookmarked there lands in an <strong>X bookmarks</strong> folder.</p>
-              <p>Run it again later to add only the new ones.</p>
-            </div>
-            <figure class="shot">
-              <img src="images/x-import.webp" width="1400" height="886" loading="lazy" decoding="async"
-                   alt="The Import menu with Bookmarks from X">
-            </figure>
-          </div>
-        </section>
-
-        <section class="feature" id="tabs" aria-labelledby="tabs-title">
-          <div class="feature-text">
-            <h2 id="tabs-title">Supercharge your browsing</h2>
-            <ul>
-              <li>Type <code>mk</code> and a space in the address bar to search.</li>
-              <li>Click the Marked button, or press <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>, to save the page you're on.</li>
-              <li>The Marked button shows ✓ on saved pages, and a related count elsewhere.</li>
-              <li><strong>Save open tabs</strong> keeps a window as a folder; <strong>Open all</strong> brings it back.</li>
-            </ul>
-          </div>
-          <div class="feature-media">
-            <figure class="shot shot-strip">
-              <img src="images/address-bar.webp" width="1400" height="349" loading="lazy" decoding="async"
-                   alt="Typing mk wiki in Firefox's address bar lists matching bookmarks from Marked">
-            </figure>
-            <figure class="shot shot-strip">
-              <img src="images/saved-badge.webp" width="1400" height="118" loading="lazy" decoding="async"
-                   alt="The Marked button in Firefox's toolbar shows a check on a saved page">
-            </figure>
-            <div class="shots shots-2">
-              <figure class="shot">
-                <img src="images/save-tabs.webp" width="1000" height="625" loading="lazy" decoding="async"
-                     alt="Saving the pages open in the window">
-              </figure>
-              <figure class="shot">
-                <img src="images/tabs-folder.webp" width="1000" height="625" loading="lazy" decoding="async"
-                     alt="The saved session as a folder, with Open all">
-              </figure>
-            </div>
-          </div>
-        </section>
-
-        <section class="feature" id="chat" aria-labelledby="chat-title">
-          <div class="feature-text">
-            <h2 id="chat-title">Ask your bookmarks</h2>
-            <p><strong>Chat</strong> runs Qwen3 4B on your GPU and answers with citations to your bookmarks. Nothing leaves your device.</p>
-            <p>It needs WebGPU and a one-time 2.3 GB download from Hugging Face.</p>
-          </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/chat.webp" width="1400" height="1274" loading="lazy" decoding="async"
-                   alt="Local chat answering a question about the library, with citations">
-            </figure>
-          </div>
-        </section>
-
-        <section class="feature" id="meaning" aria-labelledby="meaning-title">
-          <div class="feature-text">
-            <h2 id="meaning-title">Search by meaning</h2>
-            <p>Add a <a href="https://typesafe.ai">TypeSafe Jev</a> API key in <strong>Settings</strong>, then click <strong>Semantic</strong> to rank bookmarks by meaning.</p>
-          </div>
-          <div class="feature-media">
-            <div class="card">
-              <h3>Optional, and only when you click</h3>
-              <ul>
-                <li>Off until you add your own key.</li>
-                <li>Sends your query with each bookmark's title and abstract; notes and highlights only if you turn them on.</li>
-                <li>Never addresses, folders, or tags.</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <section class="feature" id="keep" aria-labelledby="keep-title">
-          <div class="feature-text">
-            <h2 id="keep-title">Yours to keep</h2>
-            <p>On first run, Marked offers to import your browser's bookmarks, and never changes them.</p>
-            <p><strong>Export</strong> backs up everything, page text included, to restore with <strong>Import</strong> in any browser. It also writes a standard bookmarks file, or your notes and highlights as Markdown.</p>
-          </div>
-          <div class="feature-media">
-            <figure class="shot">
-              <img src="images/browser-import.webp" width="1400" height="700" loading="lazy" decoding="async"
-                   alt="On first run, Marked offers to import the bookmarks it found in Chrome">
-            </figure>
-          </div>
-        </section>
-
       </div>
     </div>
 
-    <section class="band" id="privacy" aria-labelledby="privacy-title">
+    <section class="more" aria-labelledby="more-title">
       <div class="wrap">
-        <div class="section-head">
-          <p class="eyebrow">Privacy</p>
-          <h2 id="privacy-title">Your library stays in your browser.</h2>
-          <p>No account, no server of ours, no analytics. Marked only contacts:</p>
-        </div>
+        <h2 id="more-title">What else it does</h2>
+        <ul class="more-grid">
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.2 5.2 7.8 4.5 4.5 4.5v13c3.3 0 5.7.7 7.5 2 1.8-1.3 4.2-2 7.5-2v-13c-3.3 0-5.7.7-7.5 2zM12 6.5v13"/></svg>A reader for every page</h3>
+            <p>Marked keeps the text of what you save. Read it in a clean copy, in your font and a light, sepia, or dark page, even after the original is gone.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="8.25" cy="9.25" r="1.75"/><path d="M12 8.5h4.5M7 13.75h10M7 16.25h6.5"/></svg>Posts from X</h3>
+            <p>Right-click a post to save it, with the author’s thread, or bring in every post you’ve bookmarked on X.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="12" r="5.25"/><circle cx="15" cy="12" r="5.25"/></svg>What’s related</h3>
+            <p><strong>More like…</strong> shows the bookmarks that share a page’s telling words, and the Marked button counts them as you browse.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9V6.75A2.25 2.25 0 1 0 6.75 9H9zm0 0h6m-6 0v6m6-6V6.75A2.25 2.25 0 1 1 17.25 9H15zm0 0v6m0 0h2.25A2.25 2.25 0 1 1 15 17.25V15zm0 0H9m0 0v2.25A2.25 2.25 0 1 1 6.75 15H9z"/></svg>Jump anywhere</h3>
+            <p>Press <span class="keys"><kbd>⌘</kbd>+<kbd>K</kbd></span> to reach any bookmark, folder, tag, or command, and <kbd>?</kbd> for every shortcut.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19.5c-.4-8.6 4.7-14 14.5-14.5.6 9.6-4.9 14.5-12.5 14.5zM5 19.5l7.5-7.5"/></svg>Keep it fresh</h3>
+            <p><strong>Continue reading</strong> picks up where you stopped, <strong>Rediscover</strong> brings back older finds, and <strong>Duplicates</strong> merges repeats, notes and all.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4.25l2 2.25H19a1.5 1.5 0 0 1 1.5 1.5v8.25A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>Tabs into folders</h3>
+            <p><strong>Save open tabs</strong> keeps a whole window as a folder, and <strong>Open all</strong> brings it back.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-8.5l-5 3.75V16.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/></svg>Ask your bookmarks</h3>
+            <p>On-device chat answers questions about your library, with links to your bookmarks. It runs on your GPU after a one-time download, and nothing leaves your device.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3.5c.6 4.2 2.3 5.9 6.5 6.5-4.2.6-5.9 2.3-6.5 6.5-.6-4.2-2.3-5.9-6.5-6.5 4.2-.6 5.9-2.3 6.5-6.5zM18 14.5c.25 1.9 1.1 2.75 3 3-1.9.25-2.75 1.1-3 3-.25-1.9-1.1-2.75-3-3 1.9-.25 2.75-1.1 3-3z"/></svg>Search by meaning</h3>
+            <p>Optional: with your own <a href="https://typesafe.ai">TypeSafe Jev</a> key, <strong>Semantic</strong> ranks bookmarks by meaning. Nothing is sent until you click it.</p>
+          </li>
+          <li>
+            <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14.5v4A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-4M12 15.5V4M7.5 8.5 12 4l4.5 4.5"/></svg>Yours to keep</h3>
+            <p>Export a full backup, a standard bookmarks file for any browser, or your notes and highlights as Markdown.</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="privacy" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap">
+        <h2 id="privacy-title">Your library stays in your browser.</h2>
+        <p class="privacy-lede">No account, no server of ours, no analytics. Marked only contacts:</p>
         <ul class="contacts">
           <li><strong>Hugging Face</strong><span>When you download the chat model.</span></li>
           <li><strong>X</strong><span>To show posts in the gallery, and to read your X bookmarks when you import them.</span></li>
           <li><strong>Hacker News and GitHub</strong><span>Their public APIs, for a card and the discussion when you save one of their pages or download its text. No cookies.</span></li>
-          <li><strong>TypeSafe</strong><span>When you click <strong>Semantic</strong>: your query and each bookmark's title and abstract, plus notes and highlights only if you turn them on. Never addresses, folders, or tags.</span></li>
+          <li><strong>TypeSafe</strong><span>With your own key. When you click <strong>Semantic</strong>: your query and each bookmark’s title and abstract, plus notes and highlights only if you turn them on; never addresses, folders, or tags. When you choose to tag an import from X: each new post’s text and author, and the names of your tags.</span></li>
           <li><strong>The sites you bookmarked</strong><span>When you download page text for older bookmarks. No cookies.</span></li>
         </ul>
-        <p class="privacy-foot">Marked asks before it reads the pages you visit, in its own page, not in the browser's install prompt. With it, Marked shows the <strong>Highlight</strong> button when you select text, brings back your highlights and ✓ on pages you revisit, and counts related bookmarks; saving pages works without it. It never reads what you type into forms, and nothing it reads leaves your device. <a href="privacy.html#page-access">Read exactly what it reads</a>.</p>
+        <p class="privacy-foot">Marked asks before it reads the pages you visit, in its own page, not in the browser’s install prompt. With it, Marked shows the <strong>Highlight</strong> button when you select text, brings back your highlights and ✓ on pages you revisit, and counts related bookmarks; saving pages works without it. It never reads what you type into forms, and nothing it reads leaves your device. <a href="privacy.html#page-access">Read exactly what it reads</a>.</p>
       </div>
     </section>
 
-    <section class="section" id="faq" aria-labelledby="faq-title">
-      <div class="wrap">
-        <div class="section-head">
-          <h2 id="faq-title">Questions</h2>
-        </div>
+    <section class="faq-section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq-grid">
+        <h2 id="faq-title">Questions</h2>
         <div class="faq">
           <details>
             <summary>What do I need?</summary>
@@ -389,11 +250,11 @@ npm ci &amp;&amp; npm run bundle</code></pre>
           <details>
             <summary>Where is my library stored?</summary>
             <div class="answer">
-              <p>In your browser, in Marked's own storage. Use <strong>Export</strong> and <strong>Import</strong> to back it up or move it.</p>
+              <p>In your browser, in Marked’s own storage. Use <strong>Export</strong> and <strong>Import</strong> to back it up or move it.</p>
             </div>
           </details>
           <details>
-            <summary>Does it change my browser's bookmarks?</summary>
+            <summary>Does it change my browser’s bookmarks?</summary>
             <div class="answer">
               <p>No. Marked can import them once; after that, the two are separate.</p>
             </div>
@@ -402,7 +263,7 @@ npm ci &amp;&amp; npm run bundle</code></pre>
             <summary>Why does Marked ask to read the pages I visit?</summary>
             <div class="answer">
               <p>So it can show the <strong>Highlight</strong> button when you select text, bring back your highlights and ✓ on pages you revisit, count related bookmarks, and keep the text of saved articles you revisit. <strong>Save open tabs</strong> and downloading text for older bookmarks ask for it when you use them. It asks the first time you open it, not at install, and you can turn it off in <strong>Settings&nbsp;→ Browsing</strong>. Turned off, it leaves every page at once; what you saved stays in Marked.</p>
-              <p>On each page it reads the title, description, headings, and opening paragraphs to count related bookmarks, and forgets them when you close the tab. It never reads what you type into forms, including passwords, and nothing it reads leaves your device. Without it, you can still save the page you're on with the Marked button, <strong>Add to Marked</strong> in the right-click menu, or <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>, and highlight with <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>.</p>
+              <p>On each page it reads the title, description, headings, and opening paragraphs to count related bookmarks, and forgets them when you close the tab. It never reads what you type into forms, including passwords, and nothing it reads leaves your device. Without it, you can still save the page you’re on with the Marked button, <strong>Add to Marked</strong> in the right-click menu, or <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>, and highlight with <span class="keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>.</p>
             </div>
           </details>
           <details>
@@ -414,7 +275,7 @@ npm ci &amp;&amp; npm run bundle</code></pre>
           <details>
             <summary>Do I need an API key?</summary>
             <div class="answer">
-              <p>No. A <a href="https://typesafe.ai">TypeSafe Jev</a> key only adds <strong>Semantic</strong> search.</p>
+              <p>No. A <a href="https://typesafe.ai">TypeSafe Jev</a> key only adds <strong>Semantic</strong> search, and tagging the posts you import from X.</p>
             </div>
           </details>
           <details>
