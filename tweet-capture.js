@@ -127,18 +127,69 @@ function progressPanel(api) {
   return panel;
 }
 
-// On X's bookmarks page, collects every bookmarked post for Marked: scrolls
-// down the list, hands new posts to background.js as they appear, and stops at
-// the end, or once it meets posts an earlier import already saved.
-async function collectBookmarks(api, pace) {
+// Whether the tab shows your bookmarks: /i/bookmarks, which X now sends on to
+// the Bookmarks tab of its History page, /i/history. That page's other tab,
+// Likes (/i/history/likes), isn't bookmarks.
+function onBookmarks() { return /^\/i\/(bookmarks(\/|$)|history\/?$)/.test(location.pathname); }
+// What X's bookmarks page shows before its first posts: 'posts', 'empty' (no
+// bookmarks), 'signed-out' (X asks you to sign in), or null while X is still
+// loading, or showing something else. X's markup changes, so these are hints;
+// an import gives up on X only after a long wait. X's sign-in pages pass on
+// where to go next in redirect_after_login; its newest, /i/jf/onboarding, has
+// no login buttons to spot.
+function bookmarksPage() {
+  if (/^\/(login|signup|i\/flow\/(login|signup|single_sign_on)|i\/jf\/onboarding)\b/.test(location.pathname) || new URLSearchParams(location.search).has('redirect_after_login') || document.querySelector('[data-testid="loginButton"], [data-testid="signupButton"]')) return 'signed-out';
+  if (!onBookmarks()) return null;
+  if ([...document.querySelectorAll('article[data-testid="tweet"]')].some(readTweet)) return 'posts';
+  if (document.querySelector('[data-testid="emptyState"]')) return 'empty';
+  return null;
+}
+// X loads more of the page only while its tab is in front, and shows a spinner
+// while it does.
+function hiddenPage() { return document.visibilityState === 'hidden'; }
+function xLoading() { return !!document.querySelector('[data-testid="primaryColumn"] [role="progressbar"]'); }
+// Scrolled as far as the page goes. X draws more posts as you near the bottom.
+function atBottom() { return scrollY + innerHeight >= (document.scrollingElement || document.documentElement).scrollHeight - 4; }
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// On X's bookmarks page, collects every bookmarked post for Marked: waits for X
+// to show them, scrolls down the list, hands new posts to background.js as they
+// appear, and stops at the end, or once it meets posts an earlier import already
+// saved, unless that one stopped before the end (catchUp). Tells background.js
+// how it ended, so the next import knows whether to catch up.
+async function collectBookmarks(api, pace, catchUp) {
   const panel = progressPanel(api);
-  if (!location.pathname.startsWith('/i/bookmarks')) { panel.finish('Sign in to X, open your bookmarks, and try again.'); return; }
+  const end = complete => api.runtime.sendMessage({ type: 'marked:x-import-end', complete }).catch(() => {});
+  panel.say('Marked is waiting for X to show your bookmarks…');
+  // X draws the bookmarks a while after its page loads. Signed out, it waits
+  // for you to sign in here; otherwise for about 45 seconds of the tab in front.
+  let page, waited = 0;
+  while (!panel.stopped && !['posts', 'empty'].includes(page = bookmarksPage())) {
+    if (page === 'signed-out') panel.say('Sign in to X in this tab. Marked carries on once your bookmarks show.');
+    else if (hiddenPage()) panel.say('Waiting for X. Keep this tab in front, where X loads your bookmarks.');
+    else if (++waited >= 50) break;
+    await sleep(pace);
+  }
+  if (panel.stopped) { panel.finish('Stopped.'); end(false); return; }
+  if (page === 'empty') { panel.finish('There are no bookmarks on X to import.'); end(true); return; }
+  if (page !== 'posts') {
+    // As X itself suggests when it can't load them: reload, twice at most.
+    if (await api.runtime.sendMessage({ type: 'marked:x-reload' }).catch(() => false)) { panel.say('X hasn’t shown your bookmarks yet. Reloading to try again…'); return; }
+    panel.finish(onBookmarks() ? 'X didn’t show your bookmarks. If it says something went wrong, wait a few minutes, then import again from Marked.'
+      : 'X didn’t open your bookmarks. Open them on X to check they show, then import again from Marked.');
+    end(false);
+    return;
+  }
   panel.say('Marked is reading your bookmarks…');
   const seen = new Set();
   // tagged: posts Jev gave tags, in an import the user chose to tag;
   // tagError: why it couldn't tag some, the first time it says.
-  let order = 0, added = 0, known = 0, tagged = 0, streak = 0, idle = 0, tagError = '';
+  let order = 0, added = 0, known = 0, tagged = 0, streak = 0, idle = 0, tagError = '', complete = false, left = false;
+  const progress = () => `Saving your X bookmarks to Marked: ${added} new${tagged ? `, ${tagged} tagged` : ''}${known ? `, ${known} already there` : ''}…`;
   while (!panel.stopped) {
+    // Only what X shows as your bookmarks: if the tab goes to Likes, a tab
+    // away, or anywhere else, the import stops, and the next one catches up.
+    if (!onBookmarks()) { left = true; break; }
     const fresh = [...document.querySelectorAll('article[data-testid="tweet"]')].map(article => [readTweet(article), article])
       .filter(([tweet]) => tweet && !seen.has(tweet.url)).map(([tweet, article]) => ({ ...tweet, ...readExtras(article) }));
     for (const tweet of fresh) seen.add(tweet.url);
@@ -146,20 +197,29 @@ async function collectBookmarks(api, pace) {
       idle = 0;
       let reply;
       try { reply = await api.runtime.sendMessage({ type: 'marked:x-bookmarks', tweets: fresh.map(tweet => ({ ...tweet, order: order++ })) }); } catch {}
-      if (!reply || reply.error) { panel.finish(reply?.error || 'Marked stopped answering. Reload Marked and try again.'); return; }
+      if (!reply || reply.error) { panel.finish(reply?.error || 'Marked stopped answering. Reload Marked and try again.'); end(false); return; }
       added += reply.added;
       known += reply.known;
       tagged += reply.tagged || 0;
       tagError ||= typeof reply.tagError === 'string' ? reply.tagError : '';
       streak = reply.added ? 0 : streak + reply.known;
-      panel.say(`Saving your X bookmarks to Marked: ${added} new${tagged ? `, ${tagged} tagged` : ''}${known ? `, ${known} already there` : ''}…`);
-      if (streak >= 40) break;
-    } else if (++idle >= 8) break;
+      panel.say(progress());
+      if (streak >= 40 && !catchUp) { complete = true; break; }
+    } else if (hiddenPage()) {
+      // Not the end: X is waiting for the tab to come back.
+      panel.say(`${progress()} Keep this tab in front, where X loads your bookmarks.`);
+    } else {
+      // Nothing new. A spinner means X is still fetching more, so wait longer;
+      // at the bottom of the page without one, X has nothing left to draw, and
+      // a second look is enough. Ending too soon would leave a gap.
+      idle += xLoading() ? 0.25 : atBottom() ? 4 : 1;
+      if (idle >= 8) { complete = true; break; }
+    }
     scrollBy(0, Math.round(innerHeight * 0.8));
-    await new Promise(resolve => setTimeout(resolve, fresh.length ? pace : pace * 1.6));
+    await sleep(fresh.length ? pace : pace * 1.6);
   }
-  panel.finish(!seen.size ? 'No bookmarks here. Sign in to X, open your bookmarks, and try again.'
-    : `${panel.stopped ? 'Stopped. ' : ''}Saved ${added} new ${added === 1 ? 'post' : 'posts'} from your X bookmarks to Marked${tagged ? `, ${tagged} tagged` : ''}${known ? `; ${known} ${known === 1 ? 'was' : 'were'} already there` : ''}.${tagError ? ` Couldn’t tag ${tagged ? 'the rest' : added === 1 ? 'it' : 'them'}: ${tagError}` : ''}`, added + known > 0);
+  end(complete && !panel.stopped);
+  panel.finish(`${panel.stopped ? 'Stopped. ' : left ? 'Stopped when this tab left your bookmarks. ' : ''}Saved ${added} new ${added === 1 ? 'post' : 'posts'} from your X bookmarks to Marked${tagged ? `, ${tagged} tagged` : ''}${known ? `; ${known} ${known === 1 ? 'was' : 'were'} already there` : ''}.${tagError ? ` Couldn’t tag ${tagged ? 'the rest' : added === 1 ? 'it' : 'them'}: ${tagError}` : ''}`, added + known > 0);
 }
 
 if (!globalThis.markedTweetCapture) {
@@ -183,7 +243,7 @@ if (!globalThis.markedTweetCapture) {
       // Marked opened this tab to import the bookmarks; one collection at a time.
       if (!collecting) {
         collecting = true;
-        collectBookmarks(api, Number(message.pace) || 900).finally(() => { collecting = false; });
+        collectBookmarks(api, Number(message.pace) || 900, message.catchUp === true).finally(() => { collecting = false; });
       }
       reply(true);
     }

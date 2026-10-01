@@ -115,7 +115,7 @@ Right-click a post on x.com and choose **Save tweet to Marked**. On a post's own
   <img src="docs/images/save-tweet.png" width="880" alt="The editor, prefilled from a post on X">
 </p>
 
-To bring in everything you've bookmarked on X, choose **Import → Bookmarks from X** while you're signed in to X. Marked opens your bookmarks on x.com, scrolls through them, and saves each post to an **X bookmarks** folder, newest first. A panel on the page shows the progress and can stop it. Import again later and Marked adds only the new posts.
+To bring in everything you've bookmarked on X, choose **Import → Bookmarks from X** while you're signed in to X. Marked opens your bookmarks on x.com, scrolls through them, and saves each post to an **X bookmarks** folder, newest first. A panel on the page shows the progress and can stop it. Keep that tab in front, since X only loads more posts there; if X asks you to sign in, do it in that tab and the import carries on. Import again later and Marked adds only the new posts, or picks up where an unfinished import stopped.
 
 Tick **Tag each post with the tags that fit it** to have Jev give each new post up to three of your tags, with your own [TypeSafe key](#search-by-meaning). Without a key, Marked asks for one first.
 

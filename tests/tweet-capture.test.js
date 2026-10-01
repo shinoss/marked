@@ -100,7 +100,7 @@ const quoting = `<article data-testid="tweet" role="article">
 </article>`;
 const quotingExtras = { quote: { author: 'Bob @bob', text: 'Quoted words 🌊' }, images: ['A chart of sea levels since 1900'], link: 'nature.com Sea levels are rising faster' };
 
-test('reads the post a tweet quotes, its own image descriptions and its link preview, for tagging', () => {
+test('reads the post a tweet quotes, its own image descriptions and its link preview, for tagging; the import sends them', async () => {
   const page = load(quoting);
   assert.deepEqual(page.extras('article'), quotingExtras, 'not X’s “Image”, nor the quoted post’s photo');
   assert.deepEqual(page.read('article'), { url: 'https://x.com/alice/status/111', author: 'Alice', handle: 'alice', text: 'Look at this' }, 'the post itself, as before');
@@ -109,6 +109,12 @@ test('reads the post a tweet quotes, its own image descriptions and its link pre
     <div data-testid="card.wrapper"><a href="https://t.co/x" role="link"><div><span>arxiv.org</span></div><div><span>Attention Is All You Need</span></div><div><span>The dominant sequence models</span></div></a></div></article>`);
   assert.deepEqual(summary.extras('article'), { link: 'arxiv.org Attention Is All You Need The dominant sequence models' });
   assert.deepEqual(load(signedIn).extras('article'), {}, 'a post with none of them');
+
+  const importing = load(quoting, 'https://x.com/i/history');
+  importing.window.scrollBy = () => {};
+  const sent = await run(importing, [{ added: 1, known: 0 }]);
+  const { tweets } = sent.find(message => message.type === 'marked:x-bookmarks');
+  assert.deepEqual(tweets, [{ url: 'https://x.com/alice/status/111', author: 'Alice', handle: 'alice', text: 'Look at this', ...quotingExtras, order: 0 }]);
 });
 
 test('canonicalizes permalinks to https://x.com/<handle>/status/<id>', () => {
@@ -205,22 +211,31 @@ test('on its own page, a tweet brings the thread its author wrote around it', ()
   assert.deepEqual([...page.ask({ type: 'marked:tweet-under-pointer' }).thread], [], 'a reply by someone else is just itself');
 });
 
-test('on X’s bookmarks page, Marked collects every post as it scrolls, and stops at the end or where it left off', async () => {
-  const post = id => `<article data-testid="tweet"><div data-testid="User-Name"><a href="/ada" role="link"><span>Ada</span></a><a href="/ada/status/${id}"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a></div><div data-testid="tweetText" dir="auto"><span>Post ${id}</span></div></article>`;
-  const run = async (page, replies) => {
-    const sent = [];
-    page.window.chrome.runtime.sendMessage = async message => { sent.push(message); return message.type === 'marked:x-bookmarks' ? replies.shift() ?? { added: 0, known: 0 } : true; };
-    page.ask({ type: 'marked:collect-bookmarks', pace: 10 });
-    for (let i = 0; i < 30; i++) {
-      await new Promise(resolve => setImmediate(resolve));
-      const timer = page.timers.find(item => item.delay >= 10);
-      if (!timer) continue;
-      page.timers.splice(page.timers.indexOf(timer), 1);
-      timer.callback();
-    }
-    return sent;
+// X's bookmarks page, and a run of the import there: each round lets the
+// script's promises settle and then fires its next timer.
+const post = id => `<article data-testid="tweet"><div data-testid="User-Name"><a href="/ada" role="link"><span>Ada</span></a><a href="/ada/status/${id}"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a></div><div data-testid="tweetText" dir="auto"><span>Post ${id}</span></div></article>`;
+async function run(page, replies, { rounds = 30, each = () => {}, reload = true, catchUp } = {}) {
+  const sent = [];
+  page.window.chrome.runtime.sendMessage = async message => {
+    sent.push(JSON.parse(JSON.stringify(message)));
+    if (message.type === 'marked:x-bookmarks') return replies.shift() ?? { added: 0, known: 0 };
+    return message.type === 'marked:x-reload' ? reload : true;
   };
-  const panel = page => page.shadows.find(({ root }) => root.host.localName === 'marked-progress').root;
+  page.ask({ type: 'marked:collect-bookmarks', pace: 10, ...(catchUp !== undefined && { catchUp }) });
+  for (let i = 0; i < rounds; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+    each(i);
+    const timer = page.timers.find(item => item.delay >= 10);
+    if (!timer) continue;
+    page.timers.splice(page.timers.indexOf(timer), 1);
+    timer.callback();
+  }
+  return sent;
+}
+const panel = page => page.shadows.find(({ root }) => root.host.localName === 'marked-progress').root;
+const ends = sent => sent.filter(message => message.type === 'marked:x-import-end').map(message => message.complete);
+
+test('on X’s bookmarks page, Marked collects every post as it scrolls, and stops at the end or where it left off', async () => {
   const page = load(post(3) + post(2), 'https://x.com/i/bookmarks');
   // X shows more posts, one of them again, as the page scrolls down.
   let scrolls = 0;
@@ -249,8 +264,154 @@ test('on X’s bookmarks page, Marked collects every post as it scrolls, and sto
   untagged.window.scrollBy = () => {};
   await run(untagged, [{ added: 1, tagged: 0, known: 0, tagError: 'Add your TypeSafe API key in Marked’s Settings to tag posts.' }]);
   assert.equal(panel(untagged).textContent, 'Saved 1 new post from your X bookmarks to Marked. Couldn’t tag it: Add your TypeSafe API key in Marked’s Settings to tag posts.Open in Marked');
+});
 
-  const signedOut = load('<p>Log in</p>', 'https://x.com/i/flow/login');
-  await run(signedOut, []);
-  assert.equal(panel(signedOut).textContent, 'Sign in to X, open your bookmarks, and try again.Close');
+// X draws the bookmarks a while after its page loads, only while its tab is in
+// front, and sometimes not at all until it's reloaded. None of that is "signed out".
+test('Marked waits for X to show the bookmarks: while it loads, while you sign in, and while the tab is behind; then reloads, twice at most', async () => {
+  // Slower than the eight empty rounds that used to end the import.
+  const slow = load('', 'https://x.com/i/bookmarks');
+  slow.window.scrollBy = () => {};
+  const texts = [];
+  let sent = await run(slow, [{ added: 2, known: 0 }], { rounds: 60, each: round => {
+    texts.push(panel(slow).textContent);
+    if (round === 20) slow.window.document.body.insertAdjacentHTML('beforeend', post(2) + post(1));
+  } });
+  assert.equal(texts[0], 'Marked is waiting for X to show your bookmarks…Stop');
+  assert.equal(panel(slow).textContent, 'Saved 2 new posts from your X bookmarks to Marked.Open in Marked');
+  assert.deepEqual(ends(sent), [true], 'it reached the end');
+
+  // Signed out: as long as it takes to sign in, here.
+  const signIn = load('<p>Log in</p>', 'https://x.com/i/flow/login?redirect_after_login=%2Fi%2Fbookmarks');
+  signIn.window.scrollBy = () => {};
+  sent = await run(signIn, [{ added: 1, known: 0 }], { rounds: 120, each: round => {
+    if (round === 80) {
+      assert.equal(panel(signIn).textContent, 'Sign in to X in this tab. Marked carries on once your bookmarks show.Stop');
+      signIn.window.history.pushState({}, '', '/i/bookmarks');
+      signIn.window.document.body.innerHTML = post(3);
+    }
+  } });
+  assert.equal(panel(signIn).textContent, 'Saved 1 new post from your X bookmarks to Marked.Open in Marked');
+
+  // Behind other tabs, X loads nothing, and that's no reason to stop.
+  const behind = load('', 'https://x.com/i/bookmarks');
+  behind.window.scrollBy = () => {};
+  let state = 'hidden';
+  Object.defineProperty(behind.window.document, 'visibilityState', { get: () => state, configurable: true });
+  sent = await run(behind, [{ added: 1, known: 0 }], { rounds: 100, each: round => {
+    if (round === 70) {
+      assert.equal(panel(behind).textContent, 'Waiting for X. Keep this tab in front, where X loads your bookmarks.Stop');
+      state = 'visible';
+      behind.window.document.body.innerHTML = post(4);
+    }
+  } });
+  assert.equal(panel(behind).textContent, 'Saved 1 new post from your X bookmarks to Marked.Open in Marked');
+
+  // Nothing after about 45 seconds in front: reload, as X suggests; then say so.
+  const stuck = load('', 'https://x.com/i/bookmarks');
+  sent = await run(stuck, [], { rounds: 70 });
+  assert.deepEqual(sent.map(message => message.type), ['marked:x-reload']);
+  assert.equal(panel(stuck).textContent, 'X hasn’t shown your bookmarks yet. Reloading to try again…Stop');
+  const given = load('', 'https://x.com/i/bookmarks');
+  sent = await run(given, [], { rounds: 70, reload: false });
+  assert.equal(panel(given).textContent, 'X didn’t show your bookmarks. If it says something went wrong, wait a few minutes, then import again from Marked.Close');
+  assert.deepEqual(ends(sent), [false]);
+  const elsewhere = load('', 'https://x.com/home');
+  await run(elsewhere, [], { rounds: 70, reload: false });
+  assert.match(panel(elsewhere).textContent, /^X didn’t open your bookmarks\./);
+
+  // No bookmarks at all.
+  const empty = load('<div data-testid="emptyState"><span>Save posts for later</span></div>', 'https://x.com/i/bookmarks');
+  sent = await run(empty, []);
+  assert.equal(panel(empty).textContent, 'There are no bookmarks on X to import.Close');
+  assert.deepEqual(ends(sent), [true]);
+});
+
+// X moved the bookmarks to the Bookmarks tab of its History page, /i/history,
+// and sends /i/bookmarks there. The page's other tab, Likes, isn't bookmarks.
+test('X’s History page: Marked imports its Bookmarks tab, never Likes, and stops if the tab leaves the bookmarks', async () => {
+  const history = load(post(3) + post(2), 'https://x.com/i/history');
+  history.window.scrollBy = () => {};
+  let sent = await run(history, [{ added: 2, known: 0 }]);
+  assert.equal(panel(history).textContent, 'Saved 2 new posts from your X bookmarks to Marked.Open in Marked');
+
+  // X sends /i/bookmarks on to /i/history while the import runs.
+  const moving = load(post(5), 'https://x.com/i/bookmarks');
+  let turns = 0;
+  moving.window.scrollBy = () => { if (++turns === 1) { moving.window.history.replaceState({}, '', '/i/history'); moving.window.document.body.insertAdjacentHTML('beforeend', post(4)); } };
+  await run(moving, [{ added: 1, known: 0 }, { added: 1, known: 0 }]);
+  assert.equal(panel(moving).textContent, 'Saved 2 new posts from your X bookmarks to Marked.Open in Marked');
+
+  // Likes are never read as bookmarks.
+  const likes = load(post(9), 'https://x.com/i/history/likes');
+  sent = await run(likes, [], { rounds: 70, reload: false });
+  assert.deepEqual(sent.filter(message => message.type === 'marked:x-bookmarks'), []);
+  assert.match(panel(likes).textContent, /^X didn’t open your bookmarks\./);
+
+  // Switching to Likes partway stops the import with what it saved; the next one catches up.
+  const switching = load(post(8) + post(7), 'https://x.com/i/history');
+  let clicked = false;
+  switching.window.scrollBy = () => { if (!clicked) { clicked = true; switching.window.history.pushState({}, '', '/i/history/likes'); switching.window.document.body.innerHTML = post(99); } };
+  sent = await run(switching, [{ added: 2, known: 0 }]);
+  assert.deepEqual(sent.filter(message => message.type === 'marked:x-bookmarks').map(message => message.tweets.map(tweet => tweet.url)), [['https://x.com/ada/status/8', 'https://x.com/ada/status/7']], 'nothing from Likes');
+  assert.equal(panel(switching).textContent, 'Stopped when this tab left your bookmarks. Saved 2 new posts from your X bookmarks to Marked.Open in Marked');
+  assert.deepEqual(ends(sent), [false]);
+
+  // Signed out, X now asks you to sign in at /i/jf/onboarding, with no login buttons to spot.
+  const signIn = load('<main><h1>Sign in to X</h1></main>', 'https://x.com/i/jf/onboarding/web?redirect_after_login=%2Fi%2Fbookmarks&mode=login');
+  signIn.window.scrollBy = () => {};
+  await run(signIn, [{ added: 1, known: 0 }], { rounds: 120, each: round => {
+    if (round === 80) {
+      assert.equal(panel(signIn).textContent, 'Sign in to X in this tab. Marked carries on once your bookmarks show.Stop');
+      signIn.window.history.pushState({}, '', '/i/history');
+      signIn.window.document.body.innerHTML = post(6);
+    }
+  } });
+  assert.equal(panel(signIn).textContent, 'Saved 1 new post from your X bookmarks to Marked.Open in Marked');
+});
+
+test('X’s spinner means more is coming; an import that stopped short is caught up by the next, past the posts it saved', async () => {
+  // A spinner while X fetches the next page: longer than eight empty rounds.
+  const spinning = load(`<div data-testid="primaryColumn"><div role="progressbar"></div><section>${post(9)}</section></div>`, 'https://x.com/i/bookmarks');
+  spinning.window.scrollBy = () => {};
+  let sent = await run(spinning, [{ added: 1, known: 0 }, { added: 1, known: 0 }], { rounds: 60, each: round => {
+    if (round === 20) spinning.$('section').insertAdjacentHTML('beforeend', post(8));
+  } });
+  assert.equal(panel(spinning).textContent, 'Saved 2 new posts from your X bookmarks to Marked.Open in Marked');
+
+  // Stopped: the next import must not stop at what this one saved.
+  const stopped = load(post(7), 'https://x.com/i/bookmarks');
+  stopped.window.scrollBy = () => {};
+  // More of the page below, so the import is still going when Stop is pressed.
+  Object.defineProperty(stopped.window.document.documentElement, 'scrollHeight', { value: 100000, configurable: true });
+  sent = await run(stopped, [{ added: 1, known: 0 }], { rounds: 6, each: round => { if (round === 3) panel(stopped).querySelector('button').click(); } });
+  assert.match(panel(stopped).textContent, /^Stopped\. Saved 1 new post/);
+  assert.deepEqual(ends(sent), [false]);
+
+  // Catching up: 45 saved posts in a row, then more below them.
+  const later = load(Array.from({ length: 45 }, (item, index) => post(200 - index)).join(''), 'https://x.com/i/bookmarks');
+  let more = true;
+  later.window.scrollBy = () => { if (more) { more = false; later.window.document.body.insertAdjacentHTML('beforeend', post(100)); } };
+  sent = await run(later, [{ added: 0, known: 45 }, { added: 1, known: 0 }], { rounds: 40, catchUp: true });
+  assert.equal(sent.filter(message => message.type === 'marked:x-bookmarks').length, 2, 'past the saved posts');
+  assert.equal(panel(later).textContent, 'Saved 1 new post from your X bookmarks to Marked; 45 were already there.Open in Marked');
+  assert.deepEqual(ends(sent), [true]);
+});
+
+// X draws more posts as the page nears its bottom. Scrolled to the bottom with
+// no spinner, X has nothing left, so the import ends after a second look;
+// further up, X may still be drawing posts, so it waits as long as before.
+test('the import ends soon after its last post at the bottom of the page, and waits longer further up', async () => {
+  const bottom = load(post(5), 'https://x.com/i/history');
+  bottom.window.scrollBy = () => {};
+  let sent = await run(bottom, [{ added: 1, known: 0 }], { rounds: 3 });
+  assert.equal(panel(bottom).textContent, 'Saved 1 new post from your X bookmarks to Marked.Open in Marked', 'two looks after the last post');
+  assert.deepEqual(ends(sent), [true]);
+
+  const above = load(post(6), 'https://x.com/i/history');
+  above.window.scrollBy = () => {};
+  Object.defineProperty(above.window.document.documentElement, 'scrollHeight', { value: 100000, configurable: true });
+  sent = await run(above, [{ added: 1, known: 0 }], { rounds: 6 });
+  assert.equal(panel(above).textContent, 'Saving your X bookmarks to Marked: 1 new…Stop', 'more page below');
+  assert.deepEqual(ends(sent), []);
 });

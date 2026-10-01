@@ -497,9 +497,10 @@ browser.action.setBadgeBackgroundColor({ color: '#2c5949' });
 browser.action.setBadgeTextColor?.({ color: '#ffffff' });
 browser.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.url || change.status === 'complete') updateBadges([tab]).catch(() => {});
+  if (change.status === 'loading') xTabLoading(tabId).catch(() => {});
   if (change.status === 'complete') {
     fillText(tab).catch(error => console.warn('Page text unavailable', error));
-    startXImport(tabId).catch(error => console.warn('Could not start importing from X', error));
+    startXImport(tab).catch(error => console.warn('Could not start importing from X', error));
   }
 });
 // Saving, editing, or deleting in Marked updates every open tab.
@@ -558,26 +559,74 @@ browser.omnibox?.onInputEntered.addListener((text, disposition) => {
 // lives in session storage, so it outlasts a sleeping service worker, and only
 // that tab may send posts.
 const X_IMPORT = 'markedXImport';
+const X_PAGE = /^https:\/\/(x|twitter)\.com\//;
+// Whether the last import that saved posts went on to the end of the bookmarks,
+// or to posts saved by an import that did. If it stopped short, the next import
+// catches up: it doesn't stop at saved posts, and fills in the ones below them.
+const X_COMPLETE_KEY = 'markedXImportComplete';
 async function importFromX({ tag = false } = {}) {
+  const catchUp = (await browser.storage.local.get(X_COMPLETE_KEY))[X_COMPLETE_KEY] !== true;
   const tab = await browser.tabs.create({ url: 'https://x.com/i/bookmarks', active: true });
-  await browser.storage.session.set({ [X_IMPORT]: { tabId: tab.id, startedAt: Date.now(), tag } });
+  await browser.storage.session.set({ [X_IMPORT]: { tabId: tab.id, startedAt: Date.now(), tag, catchUp } });
+  // X may have finished loading before the job was stored.
+  const loaded = await browser.tabs.get?.(tab.id).catch(() => null);
+  if (loaded?.status === 'complete') await startXImport(loaded);
 }
-// One at a time: a page can report finishing its load twice in a row.
-let xStarting = Promise.resolve();
-function startXImport(tabId) {
-  xStarting = xStarting.catch(() => {}).then(() => askToCollect(tabId));
-  return xStarting;
+// The job is read and changed one step at a time, so the tab's loads and the
+// batches it saves can't undo each other's changes. step(job) returns the
+// changes to store, if any.
+let xJobs = Promise.resolve();
+function withXJob(step) {
+  const run = xJobs.catch(() => {}).then(async () => {
+    const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
+    const changes = await step(job);
+    if (job && changes) await browser.storage.session.set({ [X_IMPORT]: { ...job, ...changes } });
+  });
+  xJobs = run;
+  return run;
 }
-async function askToCollect(tabId) {
-  const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
-  if (job?.tabId !== tabId || job.asked) return;
-  await browser.storage.session.set({ [X_IMPORT]: { ...job, asked: true } });
-  const ask = () => browser.tabs.sendMessage(tabId, { type: 'marked:collect-bookmarks', pace: 900 }, { frameId: 0 });
+// Asked once per page: a page can report finishing its load twice in a row,
+// and a new page in the tab (a reload, or X sending you on once you sign in)
+// is asked again, until the import ends.
+function xTabLoading(tabId) {
+  return withXJob(job => job?.tabId === tabId && job.asked && !job.finished ? { asked: false } : null);
+}
+async function startXImport(tab) {
+  let catchUp = null;
+  await withXJob(job => {
+    // Firefox reports a new tab's about:blank loaded before X starts loading.
+    if (job?.tabId !== tab.id || job.asked || job.finished || (tab.url && !X_PAGE.test(tab.url))) return null;
+    // A page asked after posts were saved must not stop at them.
+    catchUp = !!(job.catchUp || job.saved);
+    return { asked: true };
+  });
+  if (catchUp === null) return;
+  const ask = () => browser.tabs.sendMessage(tab.id, { type: 'marked:collect-bookmarks', pace: 900, catchUp }, { frameId: 0 });
   try { await ask(); }
   catch {
-    await browser.scripting.executeScript({ target: { tabId }, files: ['tweet-capture.js'] });
+    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['tweet-capture.js'] });
     await ask();
   }
+}
+// When X hasn't shown the bookmarks after a long wait, the page asks to be
+// reloaded, as X itself suggests when it can't load them: twice at most.
+async function reloadXImport(tab) {
+  let reload = false;
+  await withXJob(job => {
+    if (job?.tabId !== tab.id || job.finished || (job.reloads || 0) >= 2) return null;
+    reload = true;
+    return { reloads: (job.reloads || 0) + 1, asked: false };
+  });
+  return reload;
+}
+async function endXImport(tab, complete) {
+  let ended = false;
+  await withXJob(job => {
+    if (job?.tabId !== tab.id) return null;
+    ended = true;
+    return { finished: true };
+  });
+  if (ended && complete) await browser.storage.local.set({ [X_COMPLETE_KEY]: true });
 }
 async function saveXBookmarks(tab, message) {
   const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
@@ -590,9 +639,14 @@ async function saveXBookmarks(tab, message) {
   const store = createLibraryStore(browser);
   const { chosen, error } = job.tag ? await tagTweets(store, tweets) : { chosen: {} };
   const { added, tagged, known, folderId } = await store.importTweets(tweets, 'X bookmarks', chosen);
-  // Once tagging fails, the rest of the import isn't tagged, rather than trying
-  // TypeSafe again for every batch the page sends.
-  if (folderId || error) await browser.storage.session.set({ [X_IMPORT]: { ...job, ...(folderId && { folderId }), ...(error && { tag: false }) } });
+  await withXJob(async current => {
+    if (current?.tabId !== tab.id) return null;
+    // Until this import reaches the end, there may be a gap below what it saved.
+    if (added && !current.saved) await browser.storage.local.set({ [X_COMPLETE_KEY]: false });
+    // Once tagging fails, the rest of the import isn't tagged, rather than
+    // trying TypeSafe again for every batch the page sends.
+    return { ...(folderId && { folderId }), ...(error && { tag: false }), ...(added && { saved: true }) };
+  });
   return { added, tagged, known, ...(error && { tagError: error }) };
 }
 // What a post shows besides its text, as tweet-capture.js read it from X's page:
@@ -709,6 +763,17 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type === 'marked:x-bookmarks') {
     saveXBookmarks(sender.tab, message).then(reply, error => reply({ error: error.message }));
     return true;
+  }
+  if (message?.type === 'marked:x-reload') {
+    reloadXImport(sender.tab).then(reload => {
+      reply(reload);
+      if (reload) browser.tabs.reload(sender.tab.id).catch(error => console.warn('Could not reload X', error));
+    }, () => reply(false));
+    return true;
+  }
+  if (message?.type === 'marked:x-import-end') {
+    endXImport(sender.tab, message.complete === true).catch(error => console.warn('Could not finish importing from X', error));
+    return;
   }
   if (message?.type === 'marked:open-x-bookmarks') {
     openXBookmarks().catch(error => console.error('Could not open Marked', error));

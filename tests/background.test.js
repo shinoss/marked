@@ -668,6 +668,68 @@ test('importing from X opens its bookmarks page, collects there, and saves only 
   assert.equal(new URL(created.at(-1).url).searchParams.get('folder'), folder.id, 'Open in Marked shows the folder');
 });
 
+// X's page is asked to collect once per page load in the import's tab, never
+// for Firefox's about:blank; it may ask to be reloaded twice; and an import
+// that stops short leaves the next one to catch up past what it saved.
+test('the X import asks each page of its tab once, reloads it twice at most, and catches up after one that stopped short', async () => {
+  const mock = await useLibrary([]);
+  const session = {};
+  browser.storage.session.get = async key => ({ [key]: session[key] });
+  browser.storage.session.set = async value => Object.assign(session, value);
+  const sent = [], reloaded = [];
+  let status = 'loading';
+  browser.tabs.create = async () => ({ id: 42 });
+  browser.tabs.get = async id => ({ id, status, url: 'https://x.com/i/bookmarks' });
+  browser.tabs.reload = async id => { reloaded.push(id); };
+  browser.tabs.sendMessage = async (tabId, message) => { sent.push(message); return true; };
+  const manager = { id: 9, url: 'moz-extension://marked/manager.html' };
+  const start = () => new Promise(resolve => { onMessage({ type: 'marked:import-x' }, { tab: manager, url: manager.url }, resolve); });
+  const x = { id: 42, url: 'https://x.com/i/bookmarks' };
+  const load = async () => { onTabUpdated(42, { status: 'loading' }, x); onTabUpdated(42, { status: 'complete' }, x); await flush(); };
+  const collect = catchUp => ({ type: 'marked:collect-bookmarks', pace: 900, catchUp });
+  try {
+    await start();
+    onTabUpdated(42, { status: 'complete' }, { id: 42, url: 'about:blank' });
+    await flush();
+    assert.deepEqual(sent, [], 'not Firefox’s about:blank');
+    await load();
+    assert.deepEqual(sent, [collect(true)], 'no import has reached the end yet');
+    assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets: [{ url: 'https://x.com/ada/status/1', author: 'Ada', handle: 'ada', text: 'One', order: 0 }] }, x), { added: 1, tagged: 0, known: 0 });
+    assert.equal((await mock.api.storage.local.get()).markedXImportComplete, false, 'there may be a gap below it');
+
+    // X shows nothing: reloaded, and the new page is asked again, past what was saved.
+    assert.equal(await ask({ type: 'marked:x-reload' }, x), true);
+    await flush();
+    assert.deepEqual(reloaded, [42]);
+    await load();
+    assert.deepEqual(sent, [collect(true), collect(true)]);
+    assert.equal(await ask({ type: 'marked:x-reload' }, x), true);
+    assert.equal(await ask({ type: 'marked:x-reload' }, x), false, 'twice at most');
+    assert.equal(await ask({ type: 'marked:x-reload' }, { id: 7, url: x.url }), false, 'only its own tab');
+
+    // It reaches the end: the tab is left alone, and the next import stops at saved posts.
+    onMessage({ type: 'marked:x-import-end', complete: true }, { tab: x }, () => {});
+    await flush();
+    assert.equal((await mock.api.storage.local.get()).markedXImportComplete, true);
+    await load();
+    assert.equal(sent.length, 2, 'not once it ended');
+    await start();
+    await load();
+    assert.deepEqual(sent.at(-1), collect(false));
+
+    // Stopped short this time: the next one catches up. X may load before the job is stored.
+    onMessage({ type: 'marked:x-import-end', complete: false }, { tab: x }, () => {});
+    await ask({ type: 'marked:x-bookmarks', tweets: [] }, x);
+    status = 'complete';
+    await start();
+    await flush();
+    assert.deepEqual(sent.at(-1), collect(false), 'nothing new was saved, so nothing was missed');
+  } finally {
+    delete browser.tabs.get;
+    delete browser.tabs.reload;
+  }
+});
+
 // An import the user chose to tag: Jev, with their own TypeSafe key, gives each
 // new post the tags from the user's tag list that fit it best.
 async function useTaggedImport(library, settings = { apiKey: 'sk-test' }) {
