@@ -96,7 +96,7 @@ test('Add to Marked shows Marked’s panel on the page, for the page and not the
   assert.deepEqual({ ...panel, token: typeof panel.token }, {
     tabId: 4, kind: 'save', token: 'string', edit: false, url, title: 'AI & world models',
     folders: [{ id: 'root', label: 'Library (top level)' }, { id: reading.id, label: '　Reading' }], folder: 'root',
-    tags: ['Technology', 'AI', 'History', 'Fiction'], chosen: ['AI'], note: '', abstract: 'A post about world models.', highlight: '', preview: false
+    tags: ['Technology', 'AI', 'History', 'Fiction', 'Science', 'Business', 'Politics', 'Sports', 'Entertainment', 'Health', 'Culture'], chosen: ['AI'], note: '', abstract: 'A post about world models.', highlight: '', preview: false
   }, 'the tags its title suggests are chosen, as in the editor');
   assert.deepEqual(Object.keys(session), ['save:4']);
   await onClick({ menuItemId: 'other' }, {});
@@ -658,7 +658,7 @@ test('importing from X opens its bookmarks page, collects there, and saves only 
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(sent, [[42, 'marked:collect-bookmarks']], 'once the page loads, and once only');
   const tweets = [{ url: 'https://x.com/ada/status/3', author: 'Ada', handle: 'ada', text: 'Newest', order: 0 }, { url: 'https://x.com/ada/status/2', author: 'Ada', handle: 'ada', text: 'Older', order: 1 }, { url: 'javascript:alert(1)', order: 2 }];
-  assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets }, { id: 42, url: 'https://x.com/i/bookmarks' }), { added: 2, known: 0 });
+  assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets }, { id: 42, url: 'https://x.com/i/bookmarks' }), { added: 2, tagged: 0, known: 0 });
   assert.deepEqual(await ask({ type: 'marked:x-bookmarks', tweets }, { id: 7, url: 'https://x.com/i/bookmarks' }), { error: 'Start the import from Marked’s Import menu.' }, 'no other tab');
   const folder = (await mock.api.storage.local.get()).markedLibraryV1.root.children.find(node => node.title === 'X bookmarks');
   assert.deepEqual(folder.children.map(node => node.title), ['Ada (@ada) on X: “Newest”', 'Ada (@ada) on X: “Older”']);
@@ -666,6 +666,147 @@ test('importing from X opens its bookmarks page, collects there, and saves only 
   onMessage({ type: 'marked:open-x-bookmarks' }, { tab: { id: 42 } }, () => {});
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(new URL(created.at(-1).url).searchParams.get('folder'), folder.id, 'Open in Marked shows the folder');
+});
+
+// An import the user chose to tag: Jev, with their own TypeSafe key, gives each
+// new post the tags from the user's tag list that fit it best.
+async function useTaggedImport(library, settings = { apiKey: 'sk-test' }) {
+  const mock = await useLibrary(library);
+  if (settings) await mock.api.storage.local.set({ markedJev: settings });
+  const session = {};
+  browser.storage.session.get = async key => ({ [key]: session[key] });
+  browser.storage.session.set = async value => Object.assign(session, value);
+  browser.tabs.create = async () => ({ id: 42 });
+  browser.tabs.sendMessage = async () => true;
+  const manager = { id: 9, url: 'moz-extension://marked/manager.html' };
+  assert.deepEqual(await new Promise(resolve => { onMessage({ type: 'marked:import-x', tag: true }, { tab: manager, url: manager.url }, resolve); }), { ok: true });
+  return mock;
+}
+const xPost = (id, text) => ({ url: `https://x.com/ada/status/${id}`, author: 'Ada', handle: 'ada', text, order: 10 - id });
+const saveX = tweets => ask({ type: 'marked:x-bookmarks', tweets }, { id: 42, url: 'https://x.com/i/bookmarks' });
+// TypeSafe, saying a tag fits a post when the post names it.
+function useJev({ status = 200 } = {}) {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    requests.push({ url, body, authorization: init.headers.Authorization });
+    if (status !== 200) return new Response(JSON.stringify({ error: { message: 'No.' } }), { status });
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+      const [, tag, post] = question.instructions.match(/“(.+)” fit the post in `posts\[(\d+)\]`/);
+      return [id, { type: 'noul', noul: new RegExp(`\\b${tag}\\b`, 'i').test(JSON.stringify(body.state.posts[post])) ? 0.9 : 0.1 }];
+    }));
+    return new Response(JSON.stringify({ answers, usage: { input_tokens: 120, output_tokens: 0 } }));
+  };
+  return requests;
+}
+const xFolder = async mock => (await mock.api.storage.local.get()).markedLibraryV1.root.children.find(node => node.title === 'X bookmarks');
+const tagsOf = async mock => (await mock.api.storage.local.get()).markedLibraryV1.tags;
+
+test('a tagged X import gives each new post the user’s tags that fit it, with their key; nothing else of the library goes', async () => {
+  const mock = await useTaggedImport([{ title: 'Known', url: 'https://x.com/ada/status/9', tags: ['Cooking'] }]);
+  const requests = useJev();
+  assert.deepEqual(await saveX([xPost(3, 'Match day: Sports with AI cameras'), xPost(2, 'Something else entirely'), xPost(9, 'Saved before')]), { added: 2, tagged: 1, known: 1 });
+  assert.equal(requests.length, 1, 'one request for the batch');
+  assert.deepEqual([requests[0].url, requests[0].authorization, requests[0].body.model], ['https://api.typesafe.ai/v1/systemone', 'Bearer sk-test', 'jev-latest']);
+  assert.deepEqual(requests[0].body.state.posts, [{ author: 'Ada @ada', text: 'Match day: Sports with AI cameras' }, { author: 'Ada @ada', text: 'Something else entirely' }], 'the new posts, and nothing else from the library');
+  assert.equal(Object.keys(requests[0].body.questions).length, 2 * 12, 'every post, every tag');
+  assert.equal(requests[0].body.questions.p1t7.instructions, 'Does the tag “Sports” fit the post in `posts[1]`?');
+  assert.equal(requests[0].body.questions.p0t11.instructions, 'Does the tag “Cooking” fit the post in `posts[0]`?', 'the user’s own tags too');
+  assert.deepEqual((await xFolder(mock)).children.map(node => [node.url, node.tags]), [['https://x.com/ada/status/3', ['AI', 'Sports']], ['https://x.com/ada/status/2', undefined]], 'all in X bookmarks');
+  assert.deepEqual(await tagsOf(mock), ['Technology', 'AI', 'History', 'Fiction', 'Science', 'Business', 'Politics', 'Sports', 'Entertainment', 'Health', 'Culture', 'Cooking'], 'the user’s list, as it was');
+  await flush();
+  assert.equal((await mock.api.storage.local.get()).markedJevUsage.calls, 1, 'what it costs is counted with the searches');
+  delete globalThis.fetch;
+});
+
+test('a tagged X import picks from Marked’s default tags, and puts them back in a list the user emptied', async () => {
+  const mock = await useTaggedImport([]);
+  const requests = useJev();
+  assert.deepEqual(await saveX([xPost(5, 'Science: a new telescope'), xPost(4, 'Cats being cats')]), { added: 2, tagged: 1, known: 0 });
+  assert.equal(Object.keys(requests[0].body.questions).length, 2 * 11, 'the default tags');
+  assert.deepEqual((await xFolder(mock)).children.map(node => node.tags), [['Science'], undefined]);
+
+  // Jev needs tags to choose from, so an emptied list gets the defaults back.
+  const { createLibraryStore } = await import('../store.js');
+  const store = createLibraryStore(mock.api, mock.locks);
+  for (const tag of await store.getTags()) await store.removeTag(tag);
+  assert.deepEqual(await saveX([xPost(6, 'Health: sleep and the heart')]), { added: 1, tagged: 1, known: 0 });
+  assert.deepEqual(await tagsOf(mock), ['Technology', 'AI', 'History', 'Fiction', 'Science', 'Business', 'Politics', 'Sports', 'Entertainment', 'Health', 'Culture']);
+  delete globalThis.fetch;
+});
+
+// What a post quotes, shows, or links to often says more than its own words.
+test('a tagged X import gives Jev the post each one quotes, its image descriptions and its link preview, and saves none of them', async () => {
+  const mock = await useTaggedImport([]);
+  const requests = useJev();
+  const huge = { ...xPost(7, 'This is huge'), quote: { author: 'NASA Webb @NASAWebb', text: 'A new image of the Crab   Nebula' }, images: ['Gold hexagonal mirrors', 7], link: 'science.nasa.gov Webb maps the Crab Nebula' };
+  const lunch = { ...xPost(8, 'Lunch'), quote: 'not a post', images: 'not a list', link: { not: 'text' } };
+  assert.deepEqual(await saveX([huge, lunch]), { added: 2, tagged: 1, known: 0 });
+  assert.deepEqual(requests[0].body.state.posts, [
+    { author: 'Ada @ada', text: 'This is huge', quoted_post: { author: 'NASA Webb @NASAWebb', text: 'A new image of the Crab Nebula' }, image_descriptions: ['Gold hexagonal mirrors'], link_preview: 'science.nasa.gov Webb maps the Crab Nebula' },
+    { author: 'Ada @ada', text: 'Lunch' }
+  ], 'what each post has, as text');
+  assert.match(requests[0].body.state.about, /quoted_post.*image_descriptions.*link_preview.*part of what the post is about/);
+  const [saved] = (await xFolder(mock)).children;
+  assert.deepEqual([saved.abstract, saved.tags], ['This is huge', ['Science']], 'tagged by what it links to');
+  assert.ok(!JSON.stringify(await mock.api.storage.local.get()).includes('Nebula'), 'the bookmark keeps only the post');
+  delete globalThis.fetch;
+});
+
+test('without a key, a rejected key, or Firefox’s consent, a tagged X import still saves every post, and says why it didn’t tag', async () => {
+  let requests = useJev();
+  await useTaggedImport([], null);
+  assert.deepEqual(await saveX([xPost(1, 'Sports news')]), { added: 1, tagged: 0, known: 0, tagError: 'Add your TypeSafe API key in Marked’s Settings to tag posts.' });
+  assert.equal(requests.length, 0);
+
+  await useTaggedImport([], { apiKey: 'sk-bad' });
+  requests = useJev({ status: 401 });
+  assert.deepEqual(await saveX([xPost(2, 'Sports news')]), { added: 1, tagged: 0, known: 0, tagError: 'TypeSafe rejected the API key. Check it in Settings.' });
+  assert.deepEqual(await saveX([xPost(4, 'More sports news')]), { added: 1, tagged: 0, known: 0 }, 'the rest of the import isn’t tagged');
+  assert.equal(requests.length, 1, 'nor sent again');
+
+  const mock = await useTaggedImport([]);
+  requests = useJev();
+  const permissions = browser.permissions;
+  browser.permissions = { ...permissions, getAll: async () => ({ origins: [], permissions: [], data_collection: ['searchTerms'] }) };
+  try {
+    assert.match((await saveX([xPost(3, 'Sports news')])).tagError, /^Firefox isn’t letting Marked send posts to TypeSafe/);
+    assert.equal(requests.length, 0, 'withdrawn in Firefox’s settings, nothing goes to TypeSafe');
+    assert.equal((await xFolder(mock)).children.length, 1);
+  } finally { browser.permissions = permissions; }
+  delete globalThis.fetch;
+});
+
+// Previews, in Settings, stand in for TypeSafe: a tagged import needs no key,
+// and each request it would send goes to the console instead, every batch.
+test('with previews on, a tagged X import needs no key and sends nothing; the console shows every request it would send', async () => {
+  const mock = await useTaggedImport([], { apiKey: '', preview: true });
+  const requests = useJev();
+  const log = console.log;
+  const logged = [];
+  console.log = (...args) => { logged.push(args); };
+  try {
+    assert.deepEqual(await saveX([xPost(6, 'Science news'), xPost(5, 'Sports news')]), { added: 2, tagged: 0, known: 0 });
+    assert.deepEqual(await saveX([xPost(4, 'Health news')]), { added: 1, tagged: 0, known: 0 }, 'the rest of the import is previewed too');
+    assert.deepEqual(await saveX([xPost(6, 'Science news')]), { added: 0, tagged: 0, known: 1 }, 'posts already saved wouldn’t be sent');
+  } finally { console.log = log; }
+  assert.equal(requests.length, 0, 'nothing goes to TypeSafe');
+  assert.equal(logged.length, 2, 'one request for each batch');
+  const { estimateJevTokens, jevCost, formatCost } = await import('../jev.js');
+  for (const [label, { body }] of logged) {
+    const tokens = estimateJevTokens(body);
+    assert.equal(label, `Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone · about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free)`, 'with what it would cost');
+  }
+  const [{ headers, body }] = logged[0].slice(1);
+  assert.deepEqual(headers, { Authorization: 'Bearer <your API key>', 'Content-Type': 'application/json' });
+  assert.deepEqual(body.state.posts, [{ author: 'Ada @ada', text: 'Science news' }, { author: 'Ada @ada', text: 'Sports news' }], 'each post’s author and text, as they would be sent');
+  assert.equal(Object.keys(body.questions).length, 2 * 11, 'with the default tags');
+  assert.deepEqual(logged[1][1].body.state.posts, [{ author: 'Ada @ada', text: 'Health news' }]);
+  assert.equal(await tagsOf(mock), undefined, 'which the tag list already has');
+  assert.deepEqual((await xFolder(mock)).children.map(node => node.tags), [undefined, undefined, undefined], 'every post is saved, with no tags');
+  await flush();
+  assert.equal((await mock.api.storage.local.get()).markedJevUsage, undefined, 'and nothing is counted');
+  delete globalThis.fetch;
 });
 
 test('the Marked button counts saved bookmarks related to an unsaved page, and opens them', async () => {

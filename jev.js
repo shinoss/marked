@@ -3,9 +3,11 @@
 // the user's own API key, and only when the user turns a Jev feature on.
 export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_ORIGINS = ['https://api.typesafe.ai/*'];
-// What a semantic search sends, in Firefox's built-in data consent: the query,
-// and each bookmark's title and abstract (and notes and highlights if allowed).
-// Bookmark information is already declared, for the X posts in the gallery.
+// What Jev gets, in Firefox's built-in data consent: a semantic search's query,
+// and each bookmark's title and abstract (and notes and highlights if allowed);
+// a tagged X import's posts, as X shows them: their text, any post they quote,
+// and their image descriptions and link previews. Bookmark information, such as the tag names
+// a tagged import sends, is already declared, for the X posts in the gallery.
 export const JEV_DATA_COLLECTION = ['searchTerms', 'websiteContent'];
 export const JEV_MODEL = 'jev-latest';
 // TypeSafe's published prices (September 2026). Output is free.
@@ -13,6 +15,15 @@ export const JEV_PRICE_PER_MILLION_INPUT_TOKENS = 0.042;
 export const JEV_PRICE_PER_MILLION_OUTPUT_TOKENS = 0;
 export const JEV_SETTINGS_KEY = 'markedJev';
 export const JEV_USAGE_KEY = 'markedJevUsage';
+
+// Firefox keeps its own record of the consent given when the key was saved; if
+// the user withdraws it in Firefox's settings, nothing goes to TypeSafe.
+// Browsers without built-in data consent (Chrome) rely on Marked's Agree step.
+export async function jevConsent(api, types = JEV_DATA_COLLECTION) {
+  const granted = await api.permissions?.getAll?.().catch(() => null);
+  if (!Array.isArray(granted?.data_collection)) return true;
+  return types.every(type => granted.data_collection.includes(type));
+}
 
 export class JevError extends Error {
   constructor(message, status) {
@@ -41,11 +52,14 @@ const wait = (ms, signal) => new Promise((resolve, reject) => {
 export async function askJev({ apiKey, state, questions, signal, onUsage, preview = false, fetchImpl = globalThis.fetch, retries = 2, retryDelay = 500 }) {
   const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
   const body = { model: JEV_MODEL, state, questions };
+  const tokens = estimateJevTokens({ state, questions });
+  const cost = `about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free)`;
   for (let attempt = 0; ; attempt++) {
-    // Every request as sent, retries included. The key is cut to its last four
+    // Every request as sent, retries included, with what it costs at TypeSafe's
+    // prices, estimated before it goes. The key is cut to its last four
     // characters so the console is safe to screenshot or share.
     const label = preview ? ' (preview, not sent)' : attempt ? ` (retry ${attempt})` : '';
-    console.log(`Jev request${label}: POST ${JEV_ENDPOINT}`, { headers: { ...headers, Authorization: apiKey ? `Bearer …${String(apiKey).slice(-4)}` : 'Bearer <your API key>' }, body });
+    console.log(`Jev request${label}: POST ${JEV_ENDPOINT} · ${cost}`, { headers: { ...headers, Authorization: apiKey ? `Bearer …${String(apiKey).slice(-4)}` : 'Bearer <your API key>' }, body });
     if (preview) return { answers: {} };
     let response;
     try {

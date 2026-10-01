@@ -28,7 +28,9 @@ test('one manifest runs in both Chrome and Firefox', async () => {
 // the sites' APIs only when a page is saved or its text downloaded, never while
 // browsing. Semantic search, which sends the query and each bookmark's title,
 // abstract, and (if allowed) notes and highlights to TypeSafe, is opt-in, so
-// its types are optional.
+// its types are optional. So is tagging an X import, which sends each post's
+// text (website content) with the names of the tags (bookmarks information,
+// required anyway).
 test('Firefox is told what data leaves the device', () => {
   const data = manifest.browser_specific_settings.gecko.data_collection_permissions;
   assert.deepEqual(data, { required: ['bookmarksInfo'], optional: ['searchTerms', 'websiteContent'] });

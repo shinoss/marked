@@ -8,7 +8,7 @@ import { cleanCard, fetchSite, siteOf } from './sites.js';
 import { indexBuilder, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { relativeAge } from './time.js';
 import { suggestTags, chooseTags } from './tagger.js';
-import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
+import { askJev, recordJevUsage, jevConsent, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
 import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
 import { ALL_SITES, SAVE_GUIDE_KEY, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
 import { resumeDownload } from './model-download.js';
@@ -939,14 +939,6 @@ function clearSemantic() {
   semantic.controller?.abort();
   Object.assign(semantic, { query: '', result: null, status: '' });
 }
-// Firefox keeps its own record of the consent given when the key was saved; if
-// the user withdraws it in Firefox's settings, nothing goes to TypeSafe. Browsers
-// without built-in data consent (Chrome) rely on Marked's Agree step.
-async function jevConsent() {
-  const granted = await browser.permissions?.getAll?.().catch(() => null);
-  if (!Array.isArray(granted?.data_collection)) return true;
-  return JEV_DATA_COLLECTION.every(type => granted.data_collection.includes(type));
-}
 // One line per bookmark, as Jev reads them; bookmarks with nothing to read are left out.
 const searchEntries = (options = jev) => [...state.nodes.values()].filter(node => node.url)
   .map(node => ({ id: node.id, line: bookmarkLine(node, options) })).filter(entry => entry.line);
@@ -959,7 +951,7 @@ async function runSemantic(query) {
     recordJevUsage(browser.storage.local, usage).then(total => { jevUsage = total; renderSemanticStatus(); }, () => {});
   };
   try {
-    if (!jev.preview && !await jevConsent()) throw new Error('Firefox isn’t letting Marked send search terms and page content to TypeSafe. Save your key in Settings again to allow it.');
+    if (!jev.preview && !await jevConsent(browser)) throw new Error('Firefox isn’t letting Marked send search terms and page content to TypeSafe. Save your key in Settings again to allow it.');
     const result = await semanticSearch(query, searchEntries(), request => {
       estimated += estimateJevTokens(request);
       return askJev({ ...request, apiKey: jev.apiKey, preview: jev.preview, signal: controller.signal, onUsage });
@@ -1479,16 +1471,56 @@ for (const [menu, owner] of [['export-menu', 'export'], ['import-menu', 'import'
 // Import: a bookmarks file or backup, the browser's bookmarks, or X's.
 $('import-file-open').addEventListener('click', () => { $('import-menu').hidePopover?.(); $('import-file').click(); });
 $('import-browser').addEventListener('click', () => { $('import-menu').hidePopover?.(); offerBrowserImport({ asked: true }).catch(fail); });
-$('import-x').addEventListener('click', () => { $('import-menu').hidePopover?.(); importFromX().catch(fail); });
-// Marked opens X's bookmarks page in a new tab and saves every post there into
-// an "X bookmarks" folder, as the page shows them; it needs you signed in to X.
-async function importFromX() {
-  // Firefox asks for access to X while the click still counts as user input.
-  const access = browser.permissions?.request?.({ origins: ['https://x.com/*', 'https://twitter.com/*'] }).catch(() => true);
-  if (await access === false) { toast('Marked needs access to x.com to read your bookmarks there.'); return; }
-  const reply = await browser.runtime.sendMessage({ type: 'marked:import-x' });
+$('import-x').addEventListener('click', () => openXImport().catch(fail));
+// Marked opens X's bookmarks page in a new tab and saves every post there, as
+// the page shows them; it needs you signed in to X. Each post goes into an "X
+// bookmarks" folder and, if the user chooses, gets the tags Jev says fit it,
+// with their own TypeSafe key (background.js tags them).
+const X_ORIGINS = ['https://x.com/*', 'https://twitter.com/*'];
+// Whether the user last chose to tag an import; off until they do.
+const X_TAG_KEY = 'markedXImportTag';
+async function openXImport() {
+  $('import-menu').hidePopover?.();
+  $('x-import-tag').checked = await browser.storage.local.get(X_TAG_KEY).then(saved => saved[X_TAG_KEY] === true, () => false);
+  $('x-import-error').textContent = '';
+  renderXImport();
+  $('x-import-dialog').showModal();
+}
+// Tagging without a key asks for one first; with previews on, it says nothing is sent.
+const renderXImport = () => {
+  $('x-import-key').hidden = !$('x-import-tag').checked || semanticReady();
+  $('x-import-preview').hidden = !$('x-import-tag').checked || !jev.preview;
+};
+$('x-import-tag').addEventListener('change', () => {
+  renderXImport();
+  browser.storage.local.set({ [X_TAG_KEY]: $('x-import-tag').checked }).catch(() => {});
+});
+$('x-import-form').addEventListener('submit', event => {
+  event.preventDefault();
+  // Firefox asks for access to X while the click still counts as user input,
+  // even when the key is asked for first.
+  const access = browser.permissions?.request?.({ origins: X_ORIGINS }).catch(() => true);
+  startXImport($('x-import-tag').checked, access).catch(fail);
+});
+async function startXImport(tag, access) {
+  $('x-import-error').textContent = '';
+  if (await access === false) { $('x-import-error').textContent = 'Marked needs access to x.com to read your bookmarks there.'; return; }
+  if (tag && !semanticReady()) {
+    $('x-import-dialog').close();
+    openSettings('semantic', { message: 'Add your TypeSafe API key to tag your X bookmarks. The import starts once it’s saved.', after: () => importFromX(true).catch(fail) });
+    return;
+  }
+  if (tag && !jev.preview && !await jevConsent(browser, ['websiteContent'])) {
+    $('x-import-error').textContent = 'Firefox isn’t letting Marked send posts to TypeSafe. Save your key in Settings again to allow it, or import without tags.';
+    return;
+  }
+  $('x-import-dialog').close();
+  await importFromX(tag);
+}
+async function importFromX(tag) {
+  const reply = await browser.runtime.sendMessage({ type: 'marked:import-x', tag });
   if (reply?.error) throw new Error(reply.error);
-  toast('Collecting your bookmarks on X. Keep that tab open until it says it’s done.');
+  toast(`Collecting your bookmarks on X${tag ? jev.preview ? ' and previewing the requests to tag them' : ' and tagging them' : ''}. Keep that tab open until it says it’s done.`);
 }
 
 $('import-file').addEventListener('change', async () => {
@@ -1902,7 +1934,7 @@ function commands() {
     ['Find duplicates', 'merge copies dedupe', () => showSpecial('duplicates')],
     [view === 'list' ? 'Show the gallery' : 'Show the list', 'view layout cards previews', () => setView(view === 'list' ? 'gallery' : 'list')],
     ['Import a bookmarks file', 'html json backup restore', () => $('import-file').click()],
-    ['Import bookmarks from X', 'twitter tweets posts saved', () => importFromX().catch(fail)],
+    ['Import bookmarks from X', 'twitter tweets posts saved tags tagging', () => openXImport().catch(fail)],
     ['Import from this browser', 'chrome firefox bookmarks', () => offerBrowserImport({ asked: true }).catch(fail)],
     ['Export bookmarks', 'html download file', exportBookmarks],
     ['Export notes and highlights', 'markdown obsidian notion download', exportNotes],

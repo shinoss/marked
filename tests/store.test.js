@@ -213,6 +213,8 @@ test('stores cleaned abstracts on bookmarks and lets edits change or clear them'
 test('keeps a tag list, saves tags and notes on bookmarks, and removes tags everywhere', async () => {
   const mock = fixture(tree()); const store = createLibraryStore(mock.api, mock.locks);
   const saved = async id => (await store.getTree())[0].children[0].children.find(n => n.id === id);
+  // A library starts with tags for the usual subjects.
+  assert.deepEqual(DEFAULT_TAGS, ['Technology', 'AI', 'History', 'Fiction', 'Science', 'Business', 'Politics', 'Sports', 'Entertainment', 'Health', 'Culture']);
   assert.deepEqual(await store.getTags(), DEFAULT_TAGS);
   const node = await store.create({ parentId: 'home', title: 'Paper', url: 'https://example.test/', tags: ['ai', 'Robotics', 'robotics'], note: '  For the  reading group ' });
   assert.deepEqual(node.tags, ['ai', 'Robotics']);
@@ -228,7 +230,7 @@ test('keeps a tag list, saves tags and notes on bookmarks, and removes tags ever
   await store.update(node.id, { title: 'Paper', url: node.url, tags: ['History', 'AI'] });
   assert.equal(await store.removeTag('ai'), 1);
   assert.deepEqual((await saved(node.id)).tags, ['History']);
-  assert.deepEqual(await store.getTags(), ['Technology', 'History', 'Fiction', 'Robotics']);
+  assert.deepEqual(await store.getTags(), [...DEFAULT_TAGS.filter(tag => tag !== 'AI'), 'Robotics']);
   assert.equal(await store.addTag('  Cooking '), 'Cooking');
   await assert.rejects(store.addTag('cooking'), /already a tag/);
   await assert.rejects(store.addTag('   '), /Enter a tag name/);
@@ -400,4 +402,29 @@ test('posts from X go into one folder, newest first, skipping ones already anywh
   const [root] = await store.getTree();
   const folder = root.children.find(node => node.title === 'X bookmarks');
   assert.deepEqual(folder.children.map(node => [node.title, node.dateAdded, node.abstract]), [['Post 3', 300, 'Text 3'], ['Post 2', 299, 'Text 2'], ['Post 1', 298, 'Text 1']]);
+});
+
+test('a tagged import gives each post its tags, which join the tag list', async () => {
+  const mock = fixture({ id: 'root', children: [
+    { id: 'old', parentId: 'root', title: 'Saved before', url: 'https://x.com/jack/status/20', type: 'bookmark' }
+  ] });
+  const store = createLibraryStore(mock.api, mock.locks);
+  const post = id => ({ url: `https://x.com/ada/status/${id}`, title: `Post ${id}`, abstract: `Text ${id}`, dateAdded: id });
+  const posts = [post(3), post(2), { url: 'https://x.com/jack/status/20', title: 'Known' }];
+  assert.deepEqual((await store.newTweets(posts)).map(tweet => tweet.url), ['https://x.com/ada/status/3', 'https://x.com/ada/status/2'], 'only new posts are worth tagging');
+
+  // Names join the tag list once each, whatever their case.
+  assert.deepEqual(await store.addTags(['Robotics', 'ai']), [...DEFAULT_TAGS, 'Robotics']);
+
+  const imported = await store.importTweets(posts, 'X bookmarks', { 'https://x.com/ada/status/3': ['AI', 'Space'], 'https://x.com/jack/status/20': ['Sports'] });
+  assert.deepEqual({ ...imported, folderId: !!imported.folderId }, { added: 2, tagged: 1, known: 1, folderId: true });
+  const [root] = await store.getTree();
+  const folder = root.children.find(node => node.id === imported.folderId);
+  assert.deepEqual(folder.children.map(node => [node.title, node.tags]), [['Post 3', ['AI', 'Space']], ['Post 2', undefined]], 'all in X bookmarks');
+  assert.deepEqual((await store.getTags()).slice(-1), ['Space'], 'a tag Jev chose joins the list');
+
+  // A list the user emptied stays empty.
+  for (const tag of await store.getTags()) await store.removeTag(tag);
+  assert.deepEqual(await store.getTags(), []);
+  assert.deepEqual(await store.importTweets([post(1)]), { added: 1, tagged: 0, known: 0, folderId: imported.folderId });
 });

@@ -117,6 +117,8 @@ Right-click a post on x.com and choose **Save tweet to Marked**. On a post's own
 
 To bring in everything you've bookmarked on X, choose **Import → Bookmarks from X** while you're signed in to X. Marked opens your bookmarks on x.com, scrolls through them, and saves each post to an **X bookmarks** folder, newest first. A panel on the page shows the progress and can stop it. Import again later and Marked adds only the new posts.
 
+Tick **Tag each post with the tags that fit it** to have Jev give each new post up to three of your tags, with your own [TypeSafe key](#search-by-meaning). Without a key, Marked asks for one first.
+
 <p align="center">
   <img src="docs/images/x-import.png" width="880" alt="The Import menu with Bookmarks from X">
 </p>
@@ -162,7 +164,7 @@ Marked follows your system's theme, or pick one in **Settings**.
 
 ### Search by meaning
 
-Add a [TypeSafe Jev](https://typesafe.ai) API key in **Settings**, then click **Semantic** to rank bookmarks by meaning instead of keywords.
+Add a [TypeSafe Jev](https://typesafe.ai) API key in **Settings**, then click **Semantic** to rank bookmarks by meaning instead of keywords. The same key can tag the posts you import from X.
 
 ### Yours to keep
 
@@ -214,7 +216,7 @@ Everything else works without it: save the page you're on with the Marked button
 - **Hugging Face**, when you download the chat model.
 - **X**, to show embedded posts in the gallery, and to read your bookmarks page on x.com when you import your X bookmarks.
 - **Hacker News and GitHub**, through their public APIs, for a card and the discussion or README when you save one of their pages or download its text. No cookies go with these requests.
-- **TypeSafe**, when you click **Semantic**: your query and each bookmark's title and abstract (plus notes and highlights, if you allow them). Never addresses, folders, or tags.
+- **TypeSafe**, with your own key: when you click **Semantic**, your query and each bookmark's title and abstract (plus notes and highlights, if you allow them), never addresses, folders, or tags; and when you choose to tag an import from X, each new post's text and author, plus any post it quotes, image descriptions and link preview, and the names of your tags.
 - **The sites you bookmarked**, when you download text in Settings or the reader, to read pages saved before Marked kept their text. No cookies go with these requests.
 
 ## Develop

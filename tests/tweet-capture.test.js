@@ -18,6 +18,7 @@ function load(body, url = 'https://x.com/home') {
   // Objects from the page's realm are copied so deepEqual compares plain objects.
   const copy = value => value && typeof value === 'object' ? { ...value } : value;
   page.read = target => copy(window.readTweet(typeof target === 'string' ? page.$(target) : target));
+  page.extras = selector => JSON.parse(JSON.stringify(window.readExtras(page.$(selector))));
   page.ask = message => { let response; page.listener(message, {}, value => { response = value; }); return copy(response); };
   page.rightClick = selector => page.$(selector).dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   page.notices = () => page.shadows.filter(({ root }) => root.host.isConnected).map(({ root }) => root.querySelector('[role="status"]').textContent);
@@ -81,6 +82,33 @@ test('a quote tweet is saved as the quoting tweet, never with the quoted text or
     <div><a href="/bob/status/222/photo/1"><img alt="" src="photo.jpg"></a></div>
     <a href="/alice/status/111" role="link"><time>3:14 PM · Mar 21, 2026</time></a></article>`);
   assert.equal(unmarked.read('img').url, alice.url);
+});
+
+// For a tagged import: what a post quotes, shows and links to, read apart from
+// the post itself, which stays as it was.
+const quoting = `<article data-testid="tweet" role="article">
+  <div data-testid="User-Name"><a href="/alice" role="link"><span>Alice</span></a><a href="/alice" role="link" tabindex="-1"><span>@alice</span></a><a href="/alice/status/111" role="link"><time>2h</time></a></div>
+  <div data-testid="tweetText"><span>Look at this</span></div>
+  <a href="/alice/status/111/photo/1" role="link"><div data-testid="tweetPhoto"><img alt="A chart of  sea levels since 1900" src="p1.jpg"></div></a>
+  <a href="/alice/status/111/photo/2" role="link"><div data-testid="tweetPhoto"><img alt="Image" src="p2.jpg"></div></a>
+  <div data-testid="card.wrapper"><a href="https://t.co/abc" role="link" aria-label="nature.com Sea levels are rising faster"><img alt="" src="card.jpg"><span>From nature.com</span></a></div>
+  <div role="link" tabindex="0">
+    <div data-testid="User-Name"><div><span><span>Bob</span></span></div><div><span>@bob</span><span>·</span><time>5h</time></div></div>
+    <div data-testid="tweetText"><span>Quoted words </span><img alt="🌊" src="wave.svg"></div>
+    <a href="/bob/status/222/photo/1" role="link"><div data-testid="tweetPhoto"><img alt="Bob’s photo of the tide" src="q.jpg"></div></a>
+  </div>
+</article>`;
+const quotingExtras = { quote: { author: 'Bob @bob', text: 'Quoted words 🌊' }, images: ['A chart of sea levels since 1900'], link: 'nature.com Sea levels are rising faster' };
+
+test('reads the post a tweet quotes, its own image descriptions and its link preview, for tagging', () => {
+  const page = load(quoting);
+  assert.deepEqual(page.extras('article'), quotingExtras, 'not X’s “Image”, nor the quoted post’s photo');
+  assert.deepEqual(page.read('article'), { url: 'https://x.com/alice/status/111', author: 'Alice', handle: 'alice', text: 'Look at this' }, 'the post itself, as before');
+  // A summary card shows the site, title and description, each in its own span.
+  const summary = load(`<article data-testid="tweet"><div data-testid="User-Name"><a href="/ada" role="link"><span>Ada</span></a><a href="/ada/status/3" role="link"><time>1h</time></a></div>
+    <div data-testid="card.wrapper"><a href="https://t.co/x" role="link"><div><span>arxiv.org</span></div><div><span>Attention Is All You Need</span></div><div><span>The dominant sequence models</span></div></a></div></article>`);
+  assert.deepEqual(summary.extras('article'), { link: 'arxiv.org Attention Is All You Need The dominant sequence models' });
+  assert.deepEqual(load(signedIn).extras('article'), {}, 'a post with none of them');
 });
 
 test('canonicalizes permalinks to https://x.com/<handle>/status/<id>', () => {
@@ -210,6 +238,17 @@ test('on X’s bookmarks page, Marked collects every post as it scrolls, and sto
   const repeat = await run(again, [{ added: 0, known: 45 }]);
   assert.equal(repeat.filter(message => message.type === 'marked:x-bookmarks').length, 1);
   assert.match(panel(again).textContent, /^Saved 0 new posts from your X bookmarks to Marked; 45 were already there\./);
+
+  // An import the user chose to tag says how many posts got tags, and why it stopped tagging.
+  const tagging = load(post(7) + post(6), 'https://x.com/i/bookmarks');
+  let turns = 0;
+  tagging.window.scrollBy = () => { if (++turns === 1) tagging.window.document.body.insertAdjacentHTML('beforeend', post(5)); };
+  await run(tagging, [{ added: 2, tagged: 2, known: 0 }, { added: 1, tagged: 0, known: 0, tagError: 'TypeSafe is busy. Try again in a minute.' }]);
+  assert.equal(panel(tagging).textContent, 'Saved 3 new posts from your X bookmarks to Marked, 2 tagged. Couldn’t tag the rest: TypeSafe is busy. Try again in a minute.Open in Marked');
+  const untagged = load(post(8), 'https://x.com/i/bookmarks');
+  untagged.window.scrollBy = () => {};
+  await run(untagged, [{ added: 1, tagged: 0, known: 0, tagError: 'Add your TypeSafe API key in Marked’s Settings to tag posts.' }]);
+  assert.equal(panel(untagged).textContent, 'Saved 1 new post from your X bookmarks to Marked. Couldn’t tag it: Add your TypeSafe API key in Marked’s Settings to tag posts.Open in Marked');
 
   const signedOut = load('<p>Log in</p>', 'https://x.com/i/flow/login');
   await run(signedOut, []);

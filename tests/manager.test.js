@@ -272,10 +272,10 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
   await search('attention');
   assert.equal(requests.length, sent, 'nothing is sent');
   const [label, { headers, body }] = log.mock.calls.at(-1).arguments;
-  assert.equal(label, 'Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone');
+  const tokens = estimateJevTokens(body);
+  assert.equal(label, `Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone · about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free)`, 'with the same estimate as the status');
   assert.equal(headers.Authorization, 'Bearer <your API key>');
   assert.equal(body.state, 'B000| Weeknight pasta\nB001| On attention; Deciding what deserves your attention.');
-  const tokens = estimateJevTokens(body);
   assert.equal($('semantic-status').textContent, `Preview only: nothing was sent to TypeSafe. This search would cost about ${formatCost(jevCost(tokens))} (≈${tokens} input tokens; output is free). The request is in the browser console. Showing keyword matches.`);
   assert.deepEqual(titles(), ['On attention'], 'keyword matches show');
   delete globalThis.fetch;
@@ -836,9 +836,99 @@ test('Import offers a bookmarks file, the browser’s bookmarks, or X’s', asyn
   $('import-file-open').click();
   assert.ok(picked, 'a file to import');
   $('import-x').click(); await page.settle();
+  assert.ok($('x-import-dialog').open, 'X’s asks first whether to tag the posts');
+  assert.ok(!$('x-import-tag').checked && $('x-import-key').hidden, 'which is off until chosen');
+  assert.deepEqual(sent, []);
+  $('x-import-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('x-import-start') })); await page.settle();
   assert.deepEqual(requested, [{ origins: ['https://x.com/*', 'https://twitter.com/*'] }], 'Firefox asks for access to X first');
-  assert.deepEqual(sent, [{ type: 'marked:import-x' }]);
+  assert.deepEqual(sent, [{ type: 'marked:import-x', tag: false }]);
+  assert.ok(!$('x-import-dialog').open);
   assert.match($('toast').textContent, /^Collecting your bookmarks on X\./);
+  dom.window.close();
+});
+
+// Tagging an import sends each post, with the names of the tags, to TypeSafe with
+// the user's own key, so it's off until they choose it, and asks for the key first.
+test('an X import tagged by Jev asks for the TypeSafe key first and starts once it’s saved, and remembers the choice', async () => {
+  let consent = null;
+  const requested = [], sent = [], checked = [];
+  const setup = api => {
+    api.permissions = {
+      request: async request => { requested.push(request); return true; },
+      getAll: async () => consent ? { origins: [], permissions: [], data_collection: consent } : { origins: [], permissions: [] }
+    };
+    api.runtime = { sendMessage: async message => { sent.push(message); return { ok: true }; } };
+  };
+  globalThis.fetch = async (url, init) => {
+    checked.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ answers: { check: { type: 'noul', noul: 0.8 } }, usage: { input_tokens: 40, output_tokens: 5 } }));
+  };
+  const page = await openManager({ id: 'root', children: [] }, 'x-tag', {}, setup);
+  const { dom, $ } = page;
+  const start = () => $('x-import-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('x-import-start') }));
+  const choose = on => { $('x-import-tag').checked = on; $('x-import-tag').dispatchEvent(new dom.window.Event('change')); };
+  $('import-x').click(); await page.settle();
+  assert.match($('x-import-dialog').textContent, /each post’s text and author, plus any post it quotes, image descriptions and link preview, and the names of your tags go to TypeSafe/);
+  choose(true);
+  assert.equal($('x-import-key').hidden, false, 'no key yet: it says one comes first');
+  start(); await page.settle();
+  assert.ok(!$('x-import-dialog').open && $('settings-dialog').open, 'Settings, to add the key');
+  assert.equal($('settings-tab-semantic').getAttribute('aria-selected'), 'true');
+  assert.match($('settings-status').textContent, /^Add your TypeSafe API key to tag your X bookmarks\. The import starts once it’s saved\.$/);
+  assert.deepEqual(sent, [], 'not yet');
+  assert.deepEqual(requested, [{ origins: ['https://x.com/*', 'https://twitter.com/*'] }], 'access to X, while the click counts');
+
+  $('jev-key').value = 'sk-test';
+  $('settings-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('settings-form').querySelector('[type=submit]') }));
+  await page.settle(50);
+  assert.equal(checked.length, 1, 'the key is checked, and no posts go with it');
+  assert.ok(!$('settings-dialog').open);
+  assert.deepEqual(sent, [{ type: 'marked:import-x', tag: true }]);
+  assert.match($('toast').textContent, /^Collecting your bookmarks on X and tagging them\./);
+
+  $('import-x').click(); await page.settle();
+  assert.ok($('x-import-tag').checked, 'the choice is remembered');
+  assert.equal($('x-import-key').hidden, true, 'and the key is there now');
+  start(); await page.settle();
+  assert.deepEqual(sent.at(-1), { type: 'marked:import-x', tag: true });
+  assert.ok(!$('settings-dialog').open, 'straight to X');
+
+  // Firefox's consent to sending page content, withdrawn in its settings.
+  consent = ['searchTerms'];
+  $('import-x').click(); await page.settle();
+  start(); await page.settle();
+  assert.ok($('x-import-dialog').open);
+  assert.match($('x-import-error').textContent, /^Firefox isn’t letting Marked send posts to TypeSafe/);
+  assert.equal(sent.length, 2, 'nothing more is sent');
+  choose(false);
+  start(); await page.settle();
+  assert.deepEqual(sent.at(-1), { type: 'marked:import-x', tag: false }, 'importing without tags still works');
+  assert.equal((await browser.storage.local.get()).markedXImportTag, false);
+  delete globalThis.fetch;
+  dom.window.close();
+});
+
+// With previews on in Settings, tagging an import sends nothing, so it needs
+// neither a key nor Firefox's consent, and says so before it starts.
+test('with previews on, a tagged X import starts without a key, and says nothing goes to TypeSafe', async () => {
+  const sent = [];
+  const setup = api => {
+    api.permissions = { request: async () => true, getAll: async () => ({ origins: [], permissions: [], data_collection: [] }) };
+    api.runtime = { sendMessage: async message => { sent.push(message); return { ok: true }; } };
+  };
+  const page = await openManager({ id: 'root', children: [] }, 'x-preview', { markedJev: { apiKey: '', notes: false, highlights: false, preview: true } }, setup);
+  const { dom, $ } = page;
+  $('import-x').click(); await page.settle();
+  assert.equal($('x-import-preview').hidden, true, 'only once tagging is chosen');
+  $('x-import-tag').checked = true; $('x-import-tag').dispatchEvent(new dom.window.Event('change'));
+  assert.equal($('x-import-key').hidden, true, 'no key needed');
+  assert.equal($('x-import-preview').hidden, false);
+  assert.match($('x-import-preview').textContent, /nothing goes to TypeSafe and no post gets tags: Marked’s background console shows each request instead\./);
+  $('x-import-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('x-import-start') })); await page.settle();
+  assert.ok(!$('settings-dialog').open && !$('x-import-dialog').open, 'straight to X');
+  assert.equal($('x-import-error').textContent, '');
+  assert.deepEqual(sent, [{ type: 'marked:import-x', tag: true }]);
+  assert.match($('toast').textContent, /^Collecting your bookmarks on X and previewing the requests to tag them\./);
   dom.window.close();
 });
 

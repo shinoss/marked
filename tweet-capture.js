@@ -24,6 +24,40 @@ function readTweet(target) {
   return { url: `https://x.com/${handle}/status/${id}`, author: author ?? '', handle, text: body ? textOf(body).trim() : '' };
 }
 
+// For a tagged import, what a post shows besides its own text, for Jev to read
+// with it: the post it quotes, the descriptions of its images (when the author
+// wrote one; X's own says only "Image"), and the preview of a page it links to.
+// Jev reads text only, so images go as their descriptions or not at all.
+// Returns { quote: { author, text }, images: [description], link }, with only
+// what the post has.
+function readExtras(article) {
+  // A quoted post is a card, or its own article, inside the post. The post's
+  // own photos are links too, so only a card that is a <div> counts.
+  const quoted = element => element.parentElement.closest('article, div[role="link"]') !== article;
+  const extras = {};
+  const name = [...article.querySelectorAll('[data-testid="User-Name"]')].find(quoted);
+  if (name) {
+    const card = name.parentElement.closest('article, div[role="link"]');
+    const parts = [...name.querySelectorAll('span')].map(span => textOf(span).replace(/\s+/g, ' ').trim());
+    const handle = parts.find(part => /^@\w+$/.test(part));
+    const author = parts.find(part => part && part !== '·' && !part.startsWith('@'));
+    const text = card.querySelector('[data-testid="tweetText"]');
+    extras.quote = { author: [author, handle].filter(Boolean).join(' '), text: text ? textOf(text).trim() : '' };
+  }
+  const images = [...article.querySelectorAll('[data-testid="tweetPhoto"] img, a[href*="/photo/"] img')]
+    .filter(image => !quoted(image)).map(image => image.alt.replace(/\s+/g, ' ').trim()).filter(alt => alt && alt !== 'Image');
+  if (images.length) extras.images = [...new Set(images)];
+  // A link card shows the site, and often the page's title and description,
+  // each in its own span; a large card's link label holds the site and title.
+  const card = [...article.querySelectorAll('[data-testid="card.wrapper"]')].find(element => !quoted(element));
+  if (card) {
+    const shown = [...card.querySelectorAll('span')].filter(span => !span.querySelector('span')).map(span => textOf(span).replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+    const label = (card.querySelector('a[aria-label]')?.getAttribute('aria-label') ?? '').replace(/\s+/g, ' ').trim();
+    if (shown || label) extras.link = label.length > shown.length ? label : shown;
+  }
+  return extras;
+}
+
 // On a tweet's own page, the posts its author wrote just before and after it:
 // the thread, unrolled. Just the tweet when it isn't part of one.
 function readThread(tweet) {
@@ -101,9 +135,12 @@ async function collectBookmarks(api, pace) {
   if (!location.pathname.startsWith('/i/bookmarks')) { panel.finish('Sign in to X, open your bookmarks, and try again.'); return; }
   panel.say('Marked is reading your bookmarks…');
   const seen = new Set();
-  let order = 0, added = 0, known = 0, streak = 0, idle = 0;
+  // tagged: posts Jev gave tags, in an import the user chose to tag;
+  // tagError: why it couldn't tag some, the first time it says.
+  let order = 0, added = 0, known = 0, tagged = 0, streak = 0, idle = 0, tagError = '';
   while (!panel.stopped) {
-    const fresh = [...document.querySelectorAll('article[data-testid="tweet"]')].map(readTweet).filter(tweet => tweet && !seen.has(tweet.url));
+    const fresh = [...document.querySelectorAll('article[data-testid="tweet"]')].map(article => [readTweet(article), article])
+      .filter(([tweet]) => tweet && !seen.has(tweet.url)).map(([tweet, article]) => ({ ...tweet, ...readExtras(article) }));
     for (const tweet of fresh) seen.add(tweet.url);
     if (fresh.length) {
       idle = 0;
@@ -112,15 +149,17 @@ async function collectBookmarks(api, pace) {
       if (!reply || reply.error) { panel.finish(reply?.error || 'Marked stopped answering. Reload Marked and try again.'); return; }
       added += reply.added;
       known += reply.known;
+      tagged += reply.tagged || 0;
+      tagError ||= typeof reply.tagError === 'string' ? reply.tagError : '';
       streak = reply.added ? 0 : streak + reply.known;
-      panel.say(`Saving your X bookmarks to Marked: ${added} new${known ? `, ${known} already there` : ''}…`);
+      panel.say(`Saving your X bookmarks to Marked: ${added} new${tagged ? `, ${tagged} tagged` : ''}${known ? `, ${known} already there` : ''}…`);
       if (streak >= 40) break;
     } else if (++idle >= 8) break;
     scrollBy(0, Math.round(innerHeight * 0.8));
     await new Promise(resolve => setTimeout(resolve, fresh.length ? pace : pace * 1.6));
   }
   panel.finish(!seen.size ? 'No bookmarks here. Sign in to X, open your bookmarks, and try again.'
-    : `${panel.stopped ? 'Stopped. ' : ''}Saved ${added} new ${added === 1 ? 'post' : 'posts'} from your X bookmarks to Marked${known ? `; ${known} ${known === 1 ? 'was' : 'were'} already there` : ''}.`, added + known > 0);
+    : `${panel.stopped ? 'Stopped. ' : ''}Saved ${added} new ${added === 1 ? 'post' : 'posts'} from your X bookmarks to Marked${tagged ? `, ${tagged} tagged` : ''}${known ? `; ${known} ${known === 1 ? 'was' : 'were'} already there` : ''}.${tagError ? ` Couldn’t tag ${tagged ? 'the rest' : added === 1 ? 'it' : 'them'}: ${tagError}` : ''}`, added + known > 0);
 }
 
 if (!globalThis.markedTweetCapture) {

@@ -21,9 +21,10 @@ export const previewKey = id => `${PREVIEW_PREFIX}${id}`;
 export const validPreview = value => typeof value === 'string' && value.startsWith('data:image/jpeg;base64,') && value.length < 500000;
 const nodeIds = node => [node.id, ...(node.children || []).flatMap(nodeIds)];
 const LOCK = 'marked-library-write';
-// The tag list lives beside the tree; libraries saved before tags start with these.
-export const DEFAULT_TAGS = ['Technology', 'AI', 'History', 'Fiction'];
-const TAG_LIST_LIMIT = 100;
+// The tag list lives beside the tree. Until it changes, a library has these:
+// the usual subjects, to tag pages and posts with from the start.
+export const DEFAULT_TAGS = ['Technology', 'AI', 'History', 'Fiction', 'Science', 'Business', 'Politics', 'Sports', 'Entertainment', 'Health', 'Culture'];
+export const TAG_LIST_LIMIT = 100;
 const tagList = library => Array.isArray(library.tags) ? cleanTags(library.tags, TAG_LIST_LIMIT) : [...DEFAULT_TAGS];
 function remember(library, tags) {
   if (tags?.length) library.tags = cleanTags([...tagList(library), ...tags], TAG_LIST_LIMIT);
@@ -41,6 +42,16 @@ export function indexLibrary(root) {
   return { version: 1, pages };
 }
 const withIndex = library => ({ [STORAGE_KEY]: library, [INDEX_KEY]: indexLibrary(library.root) });
+// The ids of the posts from X in the library.
+function tweetIds(root) {
+  const ids = new Set();
+  (function walk(node) {
+    const id = node.url && tweetId(node.url);
+    if (id) ids.add(id);
+    node.children?.forEach(walk);
+  })(root);
+  return ids;
+}
 // Moves the previews kept on nodes into entries of their own ({ key: preview })
 // and says whether there were any. Nodes carry one only on their way in (add)
 // and in libraries saved before previews had keys.
@@ -438,26 +449,38 @@ export function createLibraryStore(api, locks = navigator.locks) {
       });
     },
     // Posts from X, newest first, into the folder named title at the top of the
-    // library (made if needed). Posts already anywhere in Marked are skipped.
-    // Returns how many were added and already known, and the folder.
-    importTweets(tweets, title = 'X bookmarks') {
-      return mutate(root => {
-        const known = new Set();
-        (function walk(node) {
-          const id = node.url && tweetId(node.url);
-          if (id) known.add(id);
-          node.children?.forEach(walk);
-        })(root);
-        const folder = root.children.find(child => Array.isArray(child.children) && !child.url && child.title === title) || add(root, { parentId: root.id, title, type: 'folder' });
-        let added = 0, skipped = 0;
+    // library, made when a post first needs it, each with the tags given for its
+    // address (a tagged import), which join the tag list. Posts already anywhere
+    // in Marked are skipped. Returns how many were added, tagged, and already
+    // known, and the folder.
+    importTweets(tweets, title = 'X bookmarks', tags = {}) {
+      return mutate((root, library) => {
+        const known = tweetIds(root);
+        let folder = root.children.find(child => Array.isArray(child.children) && !child.url && child.title === title);
+        let added = 0, tagged = 0, skipped = 0;
         for (const tweet of tweets) {
           const id = tweetId(tweet.url);
           if (!id || known.has(id)) { skipped++; continue; }
           known.add(id);
-          add(root, { title: tweet.title, url: tweet.url, abstract: tweet.abstract, dateAdded: tweet.dateAdded, type: 'bookmark' }, folder);
+          folder ??= add(root, { parentId: root.id, title, type: 'folder' });
+          const node = add(root, { title: tweet.title, url: tweet.url, abstract: tweet.abstract, dateAdded: tweet.dateAdded, tags: Object.hasOwn(tags, tweet.url) ? tags[tweet.url] : undefined, type: 'bookmark' }, folder);
+          remember(library, node.tags);
           added++;
+          if (node.tags) tagged++;
         }
-        return { added, known: skipped, folderId: folder.id };
+        return { added, tagged, known: skipped, folderId: folder?.id ?? null };
+      });
+    },
+    // The posts from X that aren't in Marked yet, by their post ids.
+    async newTweets(tweets) {
+      const known = tweetIds((await initialize()).root);
+      return tweets.filter(tweet => { const id = tweetId(tweet.url); return !!id && !known.has(id); });
+    },
+    // Adds names to the tag list; returns the list.
+    addTags(names) {
+      return mutate((root, library) => {
+        remember(library, cleanTags(names, TAG_LIST_LIMIT));
+        return tagList(library);
       });
     },
     // Sets the cards of several bookmarks at once: { id: card }.

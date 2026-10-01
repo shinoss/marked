@@ -28,7 +28,9 @@ test('logs each request as sent, retries included, with the key cut to its last 
   const sent = [];
   const statuses = [429, 200];
   await askJev({ apiKey: 'sk-secret-1234', state: 'Some text', questions, retryDelay: 1, fetchImpl: async (url, init) => { sent.push(init); return reply(statuses.shift(), { answers: {} }); } });
-  assert.deepEqual(log.mock.calls.map(call => call.arguments[0]), [`Jev request: POST ${JEV_ENDPOINT}`, `Jev request (retry 1): POST ${JEV_ENDPOINT}`]);
+  // With what each costs at TypeSafe's prices: about 271 input tokens here.
+  const cost = 'about $0.000011 (≈271 input tokens; output is free)';
+  assert.deepEqual(log.mock.calls.map(call => call.arguments[0]), [`Jev request: POST ${JEV_ENDPOINT} · ${cost}`, `Jev request (retry 1): POST ${JEV_ENDPOINT} · ${cost}`]);
   for (const [i, call] of log.mock.calls.entries()) {
     const { headers, body } = call.arguments[1];
     assert.deepEqual(body, JSON.parse(sent[i].body));
@@ -44,7 +46,7 @@ test('preview logs the request it would send, sends nothing, and needs no key', 
   assert.deepEqual(data, { answers: {} });
   assert.ok(!fetched && !counted);
   assert.deepEqual(log.mock.calls.map(call => call.arguments), [[
-    `Jev request (preview, not sent): POST ${JEV_ENDPOINT}`,
+    `Jev request (preview, not sent): POST ${JEV_ENDPOINT} · about $0.000011 (≈271 input tokens; output is free)`,
     { headers: { Authorization: 'Bearer <your API key>', 'Content-Type': 'application/json' }, body: { model: 'jev-latest', state: 'Some text', questions } }
   ]]);
 });

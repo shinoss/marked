@@ -1,13 +1,15 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
 import './browser-api.js';
 import { cleanAbstract, cleanHighlightText, safeURL, searchPages, tweetId, validIcon } from './bookmarks.js';
-import { INDEX_KEY, createLibraryStore } from './store.js';
+import { DEFAULT_TAGS, INDEX_KEY, createLibraryStore } from './store.js';
 import { readPageAbstract, readPageIcon } from './page-abstract.js';
 import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
 import { fetchSite, siteOf } from './sites.js';
 import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
 import { hasSiteAccess, SAVE_GUIDE_KEY } from './site-access.js';
 import { suggestTags, chooseTags } from './tagger.js';
+import { askJev, jevConsent, recordJevUsage, JEV_SETTINGS_KEY } from './jev.js';
+import { tagAnswers, tagBatch, tagRequest } from './x-tags.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';
@@ -552,12 +554,13 @@ browser.omnibox?.onInputEntered.addListener((text, disposition) => {
 
 // Importing the bookmarks from X: Marked opens X's bookmarks page, and once it
 // loads, asks the content script there to collect them; each batch comes back
-// here to be saved. The job lives in session storage, so it outlasts a
-// sleeping service worker, and only that tab may send posts.
+// here to be saved, tagged by Jev if the user chose that. The job
+// lives in session storage, so it outlasts a sleeping service worker, and only
+// that tab may send posts.
 const X_IMPORT = 'markedXImport';
-async function importFromX() {
+async function importFromX({ tag = false } = {}) {
   const tab = await browser.tabs.create({ url: 'https://x.com/i/bookmarks', active: true });
-  await browser.storage.session.set({ [X_IMPORT]: { tabId: tab.id, startedAt: Date.now() } });
+  await browser.storage.session.set({ [X_IMPORT]: { tabId: tab.id, startedAt: Date.now(), tag } });
 }
 // One at a time: a page can report finishing its load twice in a row.
 let xStarting = Promise.resolve();
@@ -581,12 +584,55 @@ async function saveXBookmarks(tab, message) {
   if (job?.tabId !== tab.id) throw new Error('Start the import from Marked’s Import menu.');
   // X lists the newest bookmark first; dates count down from the import's start to keep that order.
   const tweets = (Array.isArray(message.tweets) ? message.tweets : []).slice(0, 200).filter(tweet => TWEET_URL.test(tweet?.url)).map(tweet => {
-    const text = cleanAbstract(tweet.text);
-    return { url: tweet.url, title: tweetTitle(String(tweet.author || ''), String(tweet.handle || ''), text), abstract: text, dateAdded: job.startedAt - Math.max(0, Number(tweet.order) || 0) };
+    const text = cleanAbstract(tweet.text), author = String(tweet.author || ''), handle = String(tweet.handle || '');
+    return { url: tweet.url, title: tweetTitle(author, handle, text), abstract: text, by: [author, handle && `@${handle}`].filter(Boolean).join(' '), context: tweetContext(tweet), dateAdded: job.startedAt - Math.max(0, Number(tweet.order) || 0) };
   });
-  const { added, known, folderId } = await createLibraryStore(browser).importTweets(tweets);
-  await browser.storage.session.set({ [X_IMPORT]: { ...job, folderId } });
-  return { added, known };
+  const store = createLibraryStore(browser);
+  const { chosen, error } = job.tag ? await tagTweets(store, tweets) : { chosen: {} };
+  const { added, tagged, known, folderId } = await store.importTweets(tweets, 'X bookmarks', chosen);
+  // Once tagging fails, the rest of the import isn't tagged, rather than trying
+  // TypeSafe again for every batch the page sends.
+  if (folderId || error) await browser.storage.session.set({ [X_IMPORT]: { ...job, ...(folderId && { folderId }), ...(error && { tag: false }) } });
+  return { added, tagged, known, ...(error && { tagError: error }) };
+}
+// What a post shows besides its text, as tweet-capture.js read it from X's page:
+// the post it quotes, its image descriptions, and its link preview. Only Jev
+// reads it, to tag the post; the bookmark doesn't keep it.
+function tweetContext(tweet) {
+  const plain = value => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 1000) : '';
+  const quote = { author: plain(tweet.quote?.author), text: plain(tweet.quote?.text) };
+  const images = (Array.isArray(tweet.images) ? tweet.images : []).map(plain).filter(Boolean).slice(0, 4);
+  const link = plain(tweet.link);
+  return { ...((quote.author || quote.text) && { quote }), ...(images.length && { images }), ...(link && { link }) };
+}
+// The new posts among tweets, each with the tags from the user's tag list that
+// Jev says fit it best, with the user's own TypeSafe key: { chosen: { url: [tag] } },
+// and why it stopped, if it couldn't tag them all. A tag list the user emptied
+// gets DEFAULT_TAGS back first, for Jev to choose from. Posts no tag fits get
+// none. With previews on in Settings, it needs no key and sends nothing: each
+// request goes to this console instead, for every batch of the import, and no
+// post gets tags.
+async function tagTweets(store, tweets) {
+  const chosen = {};
+  try {
+    const posts = (await store.newTweets(tweets)).map(tweet => ({ url: tweet.url, author: tweet.by, text: tweet.abstract, ...tweet.context }));
+    if (!posts.length) return { chosen };
+    const jev = (await browser.storage.local.get(JEV_SETTINGS_KEY))[JEV_SETTINGS_KEY] || {};
+    if (!jev.apiKey && !jev.preview) throw new Error('Add your TypeSafe API key in Marked’s Settings to tag posts.');
+    if (!jev.preview && !await jevConsent(browser, ['websiteContent'])) throw new Error('Firefox isn’t letting Marked send posts to TypeSafe. Save your key in Marked’s Settings again to allow it.');
+    let tags = await store.getTags();
+    if (!tags.length) tags = await store.addTags(DEFAULT_TAGS);
+    const size = tagBatch(tags);
+    for (let at = 0; at < posts.length; at += size) {
+      const batch = posts.slice(at, at + size);
+      const { answers } = await askJev({ apiKey: jev.apiKey, preview: jev.preview, ...tagRequest(tags, batch), onUsage: usage => { recordJevUsage(browser.storage.local, usage).catch(() => {}); } });
+      Object.assign(chosen, tagAnswers(tags, batch, answers));
+    }
+    return { chosen };
+  } catch (error) {
+    console.warn('Could not tag the posts from X', error);
+    return { chosen, error: error.message };
+  }
 }
 async function openXBookmarks() {
   const job = (await browser.storage.session.get(X_IMPORT))[X_IMPORT];
@@ -656,7 +702,7 @@ browser.runtime.onMessage.addListener((message, sender, reply) => {
   if (!sender.tab) return;
   // From Marked's own pages.
   if (message?.type === 'marked:import-x' && sender.url?.startsWith(browser.runtime.getURL(''))) {
-    importFromX().then(() => reply({ ok: true }), error => reply({ error: error.message }));
+    importFromX({ tag: message.tag === true }).then(() => reply({ ok: true }), error => reply({ error: error.message }));
     return true;
   }
   // From X's bookmarks page, while Marked imports them.
