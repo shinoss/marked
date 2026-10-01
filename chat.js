@@ -98,9 +98,14 @@ function onDownload(event) {
     if (!loading && !engine) { $('chat-progress').hidden = true; status('Downloaded model removed.'); }
   }
 }
+// Settles once this tab has let go of the GPU: the browser frees the lock a
+// moment after unload() releases it, so Remove download or loading again
+// right after would otherwise find it taken.
+let gpuFree = Promise.resolve();
 async function claimGPU() {
+  await gpuFree;
   await new Promise((resolve, reject) => {
-    navigator.locks.request('marked-ai-gpu', { ifAvailable: true }, async lock => {
+    gpuFree = navigator.locks.request('marked-ai-gpu', { ifAvailable: true }, async lock => {
       if (!lock) { reject(new Error('Local AI is already running in another Marked tab. Unload it there first.')); return; }
       await new Promise(release => { releaseLock = release; resolve(); });
     }).catch(reject);
