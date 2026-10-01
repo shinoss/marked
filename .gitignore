@@ -26,6 +26,8 @@ exports/
 screenshots/
 *.xpi
 *.zip
+# Store listing drafts and images, kept local
+store/
 
 # Editor and OS files
 .DS_Store
