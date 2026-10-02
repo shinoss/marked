@@ -225,7 +225,7 @@ Everything else works without it: save the page you're on with the Marked button
 npm ci
 npm run bundle           # once: WebLLM, Readability, and fonts into vendor/
 npm test                 # unit and DOM tests
-npm run lint:extension   # web-ext lint of the Firefox package
+npm run lint:extension   # Mozilla’s add-on linter on the Firefox package
 npm run build            # bundle, then a ZIP per store in web-ext-artifacts/
 npm run build:source     # source ZIP for Firefox review
 ```
