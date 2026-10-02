@@ -673,7 +673,7 @@ function tweetContext(tweet) {
 async function tagTweets(store, tweets) {
   const chosen = {};
   try {
-    const posts = (await store.newTweets(tweets)).map(tweet => ({ url: tweet.url, author: tweet.by, text: tweet.abstract, ...tweet.context }));
+    const posts = (await store.newTweets(tweets)).map(tweet => ({ url: tweet.url, text: tweet.abstract, ...tweet.context }));
     if (!posts.length) return { chosen };
     const jev = (await browser.storage.local.get(JEV_SETTINGS_KEY))[JEV_SETTINGS_KEY] || {};
     if (!jev.apiKey && !jev.preview) throw new Error('Add your TypeSafe API key in Marked’s Settings to tag posts.');

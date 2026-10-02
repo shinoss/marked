@@ -21,14 +21,14 @@ const CRITERIA = {
 // What the parts of each post are, said once in the state rather than in every question.
 const ABOUT_POSTS = 'Each post is from X. A post may quote another post (quoted_post), describe its images (image_descriptions), or preview a page it links to (link_preview); all of it is part of what the post is about.';
 
-// One request for posts ([{ url, author, text, quote, images, link }], the
-// last three when the post has them) and tags: { state, questions }. Each
+// One request for posts ([{ url, text, quote, images, link }], the last three
+// when the post has them) and tags: { state, questions }. Who posted it says
+// nothing of what it's about, so no names go, the quoted post's either. Each
 // question names its post's place in the state, so Jev reads that post alone.
 export function tagRequest(tags, posts) {
   const state = { about: ABOUT_POSTS, posts: posts.map(post => ({
-    author: clean(post.author, 100),
     text: clean(post.text, 500),
-    ...(post.quote && { quoted_post: { author: clean(post.quote.author, 100), text: clean(post.quote.text, 300) } }),
+    ...(clean(post.quote?.text) && { quoted_post: clean(post.quote.text, 300) }),
     ...(post.images?.length && { image_descriptions: post.images.slice(0, 4).map(image => clean(image, 200)) }),
     ...(post.link && { link_preview: clean(post.link, 300) })
   })) };

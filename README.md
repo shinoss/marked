@@ -216,7 +216,7 @@ Everything else works without it: save the page you're on with the Marked button
 - **Hugging Face**, when you download the chat model.
 - **X**, to show embedded posts in the gallery, and to read your bookmarks page on x.com when you import your X bookmarks.
 - **Hacker News and GitHub**, through their public APIs, for a card and the discussion or README when you save one of their pages or download its text. No cookies go with these requests.
-- **TypeSafe**, with your own key: when you click **Semantic**, your query and each bookmark's title and abstract (plus notes and highlights, if you allow them), never addresses, folders, or tags; and when you choose to tag an import from X, each new post's text and author, plus any post it quotes, image descriptions and link preview, and the names of your tags.
+- **TypeSafe**, with your own key: when you click **Semantic**, your query and each bookmark's title and abstract (plus notes and highlights, if you allow them), never addresses, folders, or tags; and when you choose to tag an import from X, each new post's text (not who posted it), plus any post it quotes, image descriptions and link preview, and the names of your tags.
 - **The sites you bookmarked**, when you download text in Settings or the reader, to read pages saved before Marked kept their text. No cookies go with these requests.
 
 ## Develop

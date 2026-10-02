@@ -6,7 +6,7 @@ import { DEFAULT_TAGS } from '../store.js';
 test('one request holds the posts, and asks of each whether each tag fits it', () => {
   const posts = [{ url: 'https://x.com/a/status/1', author: 'Ada @ada', text: 'A new\nmodel   for proofs' }, { url: 'https://x.com/b/status/2', author: 'Bo', text: 'goal! '.repeat(200) }];
   const { state, questions } = tagRequest(['AI', 'Sports'], posts);
-  assert.deepEqual(state.posts[0], { author: 'Ada @ada', text: 'A new model for proofs' });
+  assert.deepEqual(state.posts[0], { text: 'A new model for proofs' }, 'not who posted it');
   assert.ok(state.posts[1].text.length <= 500, 'long posts are cut');
   assert.deepEqual(Object.keys(questions), ['p0t0', 'p0t1', 'p1t0', 'p1t1']);
   assert.equal(questions.p1t0.type, 'noul');
@@ -18,8 +18,9 @@ test('a post goes with the post it quotes, its image descriptions and its link p
   const post = { url: 'https://x.com/a/status/1', author: 'Ada @ada', text: 'Look', quote: { author: 'Bo @bo', text: 'q'.repeat(400) }, images: ['A chart', 'b'.repeat(300), 'c', 'd', 'e'], link: `arxiv.org ${'t'.repeat(400)}` };
   const { state } = tagRequest(['AI'], [post]);
   const [sent] = state.posts;
-  assert.deepEqual(Object.keys(sent), ['author', 'text', 'quoted_post', 'image_descriptions', 'link_preview']);
-  assert.deepEqual([sent.quoted_post.author, sent.quoted_post.text.length], ['Bo @bo', 300]);
+  assert.deepEqual(Object.keys(sent), ['text', 'quoted_post', 'image_descriptions', 'link_preview']);
+  assert.equal(sent.quoted_post, 'q'.repeat(300), 'the quoted post’s text, not who posted it');
+  assert.ok(!('quoted_post' in tagRequest(['AI'], [{ ...post, quote: { author: 'Bo @bo', text: ' ' } }]).state.posts[0]), 'a quote with no text adds nothing');
   assert.deepEqual(sent.image_descriptions.map(description => description.length), [7, 200, 1, 1], 'four at most');
   assert.equal(sent.link_preview.length, 300);
   // Said once for the request, not in every question.

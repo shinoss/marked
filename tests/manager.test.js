@@ -868,7 +868,7 @@ test('an X import tagged by Jev asks for the TypeSafe key first and starts once 
   const start = () => $('x-import-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('x-import-start') }));
   const choose = on => { $('x-import-tag').checked = on; $('x-import-tag').dispatchEvent(new dom.window.Event('change')); };
   $('import-x').click(); await page.settle();
-  assert.match($('x-import-dialog').textContent, /each post’s text and author, plus any post it quotes, image descriptions and link preview, and the names of your tags go to TypeSafe/);
+  assert.match($('x-import-dialog').textContent, /each post’s text, plus any post it quotes, image descriptions and link preview, and the names of your tags go to TypeSafe/);
   choose(true);
   assert.equal($('x-import-key').hidden, false, 'no key yet: it says one comes first');
   start(); await page.settle();

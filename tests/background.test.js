@@ -773,7 +773,7 @@ test('a tagged X import gives each new post the user’s tags that fit it, with 
   assert.deepEqual(await saveX([xPost(3, 'Match day: Sports with AI cameras'), xPost(2, 'Something else entirely'), xPost(9, 'Saved before')]), { added: 2, tagged: 1, known: 1 });
   assert.equal(requests.length, 1, 'one request for the batch');
   assert.deepEqual([requests[0].url, requests[0].authorization, requests[0].body.model], ['https://api.typesafe.ai/v1/systemone', 'Bearer sk-test', 'jev-latest']);
-  assert.deepEqual(requests[0].body.state.posts, [{ author: 'Ada @ada', text: 'Match day: Sports with AI cameras' }, { author: 'Ada @ada', text: 'Something else entirely' }], 'the new posts, and nothing else from the library');
+  assert.deepEqual(requests[0].body.state.posts, [{ text: 'Match day: Sports with AI cameras' }, { text: 'Something else entirely' }], 'the new posts, and nothing else from the library');
   assert.equal(Object.keys(requests[0].body.questions).length, 2 * 12, 'every post, every tag');
   assert.equal(requests[0].body.questions.p1t7.instructions, 'Does the tag “Sports” fit the post in `posts[1]`?');
   assert.equal(requests[0].body.questions.p0t11.instructions, 'Does the tag “Cooking” fit the post in `posts[0]`?', 'the user’s own tags too');
@@ -808,8 +808,8 @@ test('a tagged X import gives Jev the post each one quotes, its image descriptio
   const lunch = { ...xPost(8, 'Lunch'), quote: 'not a post', images: 'not a list', link: { not: 'text' } };
   assert.deepEqual(await saveX([huge, lunch]), { added: 2, tagged: 1, known: 0 });
   assert.deepEqual(requests[0].body.state.posts, [
-    { author: 'Ada @ada', text: 'This is huge', quoted_post: { author: 'NASA Webb @NASAWebb', text: 'A new image of the Crab Nebula' }, image_descriptions: ['Gold hexagonal mirrors'], link_preview: 'science.nasa.gov Webb maps the Crab Nebula' },
-    { author: 'Ada @ada', text: 'Lunch' }
+    { text: 'This is huge', quoted_post: 'A new image of the Crab Nebula', image_descriptions: ['Gold hexagonal mirrors'], link_preview: 'science.nasa.gov Webb maps the Crab Nebula' },
+    { text: 'Lunch' }
   ], 'what each post has, as text');
   assert.match(requests[0].body.state.about, /quoted_post.*image_descriptions.*link_preview.*part of what the post is about/);
   const [saved] = (await xFolder(mock)).children;
@@ -864,9 +864,9 @@ test('with previews on, a tagged X import needs no key and sends nothing; the co
   }
   const [{ headers, body }] = logged[0].slice(1);
   assert.deepEqual(headers, { Authorization: 'Bearer <your API key>', 'Content-Type': 'application/json' });
-  assert.deepEqual(body.state.posts, [{ author: 'Ada @ada', text: 'Science news' }, { author: 'Ada @ada', text: 'Sports news' }], 'each post’s author and text, as they would be sent');
+  assert.deepEqual(body.state.posts, [{ text: 'Science news' }, { text: 'Sports news' }], 'each post’s text, as it would be sent');
   assert.equal(Object.keys(body.questions).length, 2 * 11, 'with the default tags');
-  assert.deepEqual(logged[1][1].body.state.posts, [{ author: 'Ada @ada', text: 'Health news' }]);
+  assert.deepEqual(logged[1][1].body.state.posts, [{ text: 'Health news' }]);
   assert.equal(await tagsOf(mock), undefined, 'which the tag list already has');
   assert.deepEqual((await xFolder(mock)).children.map(node => node.tags), [undefined, undefined, undefined], 'every post is saved, with no tags');
   await flush();
