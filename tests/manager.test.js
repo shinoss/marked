@@ -1148,13 +1148,20 @@ test('the first time Marked opens after install, the tour shows what to know a s
   assert.deepEqual(step(), ['1 of 4', 'Save any page', 'Next', ['Right-click the page and choose Add to Marked', `Press ${mac ? '⌥⇧M' : 'AltShiftM'}`]], 'and the other ways, with the shortcut the browser has in this computer’s keys');
   assert.equal($('tour-image').getAttribute('src'), 'tour/save.webp');
   assert.ok($('tour-image').alt);
+  assert.ok($('tour-back').disabled, 'nothing to go back to yet');
   $('tour-next').click();
+  assert.ok(!$('tour-back').disabled);
   assert.match($('tour-text').textContent, /^Select text on any page, then click the Highlight button that pops up\./);
   assert.deepEqual(step(), ['2 of 4', 'Highlight what matters', 'Next', ['In Marked’s reader, select text and press H']], 'no shortcut set: not offered');
   press('ArrowRight');
   assert.deepEqual(step(), ['3 of 4', 'Find it again', 'Next', ['Type mk and a space in your address bar', `Press / to search, or ${mod}K to jump to any bookmark, folder, or tag`]]);
   press('ArrowLeft');
   assert.equal($('tour-title').textContent, 'Highlight what matters', 'the arrow keys go back and forth');
+  $('tour-back').click();
+  assert.deepEqual(step().slice(0, 2), ['1 of 4', 'Save any page'], 'and so does Back');
+  assert.ok($('tour-back').disabled);
+  assert.equal(dom.window.document.activeElement, $('tour-next'), 'the focus moves on to Next');
+  $('tour-next').click();
   press('ArrowRight');
   $('tour-next').click();
   assert.deepEqual(step().slice(0, 3), ['4 of 4', 'Bring your bookmarks', 'Done']);
@@ -1167,10 +1174,16 @@ test('the first time Marked opens after install, the tour shows what to know a s
   assert.ok($('browser-import-dialog').open, 'then the browser’s bookmarks');
   dom.window.close();
 
-  // Seen, it doesn't come back on its own; the palette brings it back, and × closes it.
+  // Seen, it doesn't come back on its own; the info button and the palette bring it back, and × closes it.
   page = await openManager({ id: 'root', children: [] }, 'tour-again', { markedTour: 'done' }, setup);
   ({ dom, $ } = page);
   await page.settle(50);
+  assert.ok(!$('tour-dialog').open);
+  $('tour-open').click();
+  await page.settle(20);
+  assert.ok($('tour-dialog').open, 'from the info button at the top');
+  $('tour-next').click();
+  $('tour-close').click();
   assert.ok(!$('tour-dialog').open);
   page.key({ key: 'k', metaKey: true });
   page.type('tour');

@@ -527,6 +527,11 @@ dialog.tour h2 { margin: 14px 0 0; font: 600 27px/1.2 Literata, Georgia, serif; 
 .tour-dots { display: flex; gap: 6px; margin: 0 auto; padding: 0; list-style: none; }
 .tour-dots li { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
 .tour-dots li[aria-current="step"] { background: var(--fg); }
+.tour-back { padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--note-fg); }
+.tour-back:hover { text-decoration: none; background: var(--hover); color: var(--fg); }
+/* Hidden on the first step, it still holds its place, so the dots stay put. */
+.tour-back:disabled { visibility: hidden; }
+.tour-back + .tour-next { margin-left: -8px; }
 .tour-next { min-width: 88px; padding: 9px 18px; border-radius: 8px; background: var(--invert-bg); color: var(--invert-fg); font-weight: 600; text-align: center; }
 .tour-next:hover { text-decoration: none; opacity: .85; }
 .tour-close { position: absolute; top: 14px; right: 14px; border-radius: 8px; }

@@ -1911,7 +1911,8 @@ $('save-guide-done').addEventListener('click', () => {
 browser.action?.onUserSettingsChanged?.addListener(() => { renderSaveGuide(); });
 // The tour: what to know to get going, a step at a time, in a card over the
 // page. It shows the first time Marked opens after install (background.js
-// leaves it pending), and from the palette. Skip, Done, ×, or Esc ends it.
+// leaves it pending), and from the info button and the palette. Back and Next
+// (or the arrow keys) step through it; Skip, Done, ×, or Esc ends it.
 const TOUR_KEY = 'markedTour';
 const bold = text => element('b', '', text);
 // Each step says how to do it with the mouse, as its picture shows, and lists
@@ -1980,6 +1981,7 @@ function showTourStep(index) {
   $('tour-also').hidden = !also.length;
   $('tour-also-list').replaceChildren(...also.map(parts => { const item = element('li'); item.append(...parts); return item; }));
   $('tour-next').textContent = index === TOUR.length - 1 ? 'Done' : 'Next';
+  $('tour-back').disabled = index === 0;
   [...$('tour-dots').children].forEach((dot, i) => { if (i === index) dot.setAttribute('aria-current', 'step'); else dot.removeAttribute('aria-current'); });
   // The next picture loads while this one is read.
   if (TOUR[index + 1]) element('img').src = TOUR[index + 1].image;
@@ -1995,6 +1997,12 @@ async function openTour() {
 }
 $('tour-dots').replaceChildren(...TOUR.map(() => element('li')));
 $('tour-next').addEventListener('click', () => { if (tourAt < TOUR.length - 1) showTourStep(tourAt + 1); else $('tour-dialog').close(); });
+// Back is off on the first step, so the focus it had goes to Next.
+$('tour-back').addEventListener('click', () => {
+  if (tourAt > 0) showTourStep(tourAt - 1);
+  if (tourAt === 0) $('tour-next').focus({ focusVisible: false });
+});
+$('tour-open').addEventListener('click', () => { openTour().catch(fail); });
 for (const id of ['tour-skip', 'tour-close']) $(id).addEventListener('click', () => $('tour-dialog').close());
 $('tour-dialog').addEventListener('keydown', event => {
   if (event.key === 'ArrowRight' && tourAt < TOUR.length - 1) showTourStep(tourAt + 1);

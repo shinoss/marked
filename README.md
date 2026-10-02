@@ -192,7 +192,7 @@ npm ci && npm run bundle
 
 Local chat needs WebGPU and downloads the model (about 2.3 GB) from Hugging Face once. The download keeps going while any Marked tab is open, and if it's cut short (a refresh, a reload of the extension, a closed tab, a dropped connection) it picks up where it stopped the next time Marked opens. On a Mac, use Chrome and 16 GB of memory or more.
 
-Once it's installed, Marked opens with a short tour of the main things it does (Command palette → **Take the tour** shows it again), and shows how to save a page: pin the Marked button to the toolbar if the browser tucked it away, then click it on any page. It also asks to read the pages you visit. See [Access to the pages you visit](#access-to-the-pages-you-visit).
+Once it's installed, Marked opens with a short tour of the main things it does (the ⓘ button at the top, or **Take the tour** in the command palette, shows it again), and shows how to save a page: pin the Marked button to the toolbar if the browser tucked it away, then click it on any page. It also asks to read the pages you visit. See [Access to the pages you visit](#access-to-the-pages-you-visit).
 
 ## Privacy
 
