@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Marked — Bookmark Manager",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Save pages with notes, tags and highlights, read them in a clean reader, and search every word you saved. Stored in your browser.",
   "permissions": ["bookmarks", "storage", "unlimitedStorage", "contextMenus", "activeTab", "scripting"],
   "optional_host_permissions": ["<all_urls>"],
