@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icons/marked.svg" width="96" height="96" alt="Marked logo">
+  <img src="src/icons/marked.svg" width="96" height="96" alt="Marked logo">
 </p>
 
 <h1 align="center">Marked</h1>
