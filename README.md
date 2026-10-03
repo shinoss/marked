@@ -176,7 +176,9 @@ On first run, Marked offers to import your browser's bookmarks, folders and all,
 
 ## Install
 
-Load it from source. You need desktop Chrome 123+ or Firefox 142+, and Node.js 22+.
+Add Marked from the [Chrome Web Store](https://chromewebstore.google.com/detail/marked-%E2%80%94-bookmark-manager/locoecjdphkimihnmjkhcaenenkckfmc) or [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/marked-bookmark-manager/). It needs desktop Chrome 123+ or Firefox 142+.
+
+Or load it from source, with Node.js 22+:
 
 ```sh
 git clone https://github.com/shinoss/marked.git
