@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenize, documentTerms, buildIndex, indexBuilder, similar, weigh, compactIndex, expandIndex } from '../related.js';
+import { tokenize, documentTerms, buildIndex, indexBuilder, similar, weigh, compactIndex, expandIndex } from '../src/lib/related.js';
 
 const library = [
   ['transformer', { title: 'Transformer (deep learning architecture)', tags: ['AI'], text: 'A transformer relates tokens with multi-head attention. It trains on GPUs.' }],

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestTags, chooseTags } from '../tagger.js';
+import { suggestTags, chooseTags } from '../src/lib/tagger.js';
 
 const tags = ['Technology', 'AI', 'History', 'Fiction'];
 const suggest = async page => chooseTags(await suggestTags(page, tags));

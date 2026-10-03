@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { fixture } from './storage-fixture.js';
-import { STORAGE_KEY } from '../store.js';
-import { estimateJevTokens, jevCost, formatCost } from '../jev.js';
+import { STORAGE_KEY } from '../src/lib/store.js';
+import { estimateJevTokens, jevCost, formatCost } from '../src/lib/jev.js';
 import { Readability } from '@mozilla/readability';
 
 test('manager renders, searches, creates, and moves bookmarks through the API', async () => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -18,7 +18,7 @@ test('manager renders, searches, creates, and moves bookmarks through the API', 
   const mock = fixture(root);
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js');
+  await import('../src/manager.js');
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
   await settle();
   assert.equal($('items').children.length, 1);
@@ -55,7 +55,7 @@ test('manager renders, searches, creates, and moves bookmarks through the API', 
 
 test('Add to Marked suggests tags and saves the abstract, note, and tags; X posts embed only in the gallery', async () => {
   const pageURL = 'https://example.com/post';
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html?add=${encodeURIComponent(pageURL)}&title=${encodeURIComponent('Machine learning notes')}&capture=capture-1` });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html?add=${encodeURIComponent(pageURL)}&title=${encodeURIComponent('Machine learning notes')}&capture=capture-1` });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -66,7 +66,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
   mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js?add');
+  await import('../src/manager.js?add');
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
   const submit = () => $('editor-form').dispatchEvent(new dom.window.SubmitEvent('submit', { cancelable: true, submitter: $('editor-form').querySelector('[type=submit]') }));
   const chips = () => [...document.querySelectorAll('#edit-tags .tag-option')];
@@ -142,7 +142,7 @@ test('Add to Marked suggests tags and saves the abstract, note, and tags; X post
 });
 
 test('a highlights label opens the list of highlights, where each can be deleted', async () => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -154,7 +154,7 @@ test('a highlights label opens the list of highlights, where each can be deleted
   ] }] });
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js?highlights');
+  await import('../src/manager.js?highlights');
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
   await settle();
   const chip = () => document.querySelector('#items .highlight-chip');
@@ -177,7 +177,7 @@ test('a highlights label opens the list of highlights, where each can be deleted
 
 test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse repeats, keep a running cost, and preview without a key', async t => {
   const log = t.mock.method(console, 'log', () => {}); // Jev requests are logged; keep the output quiet.
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -203,7 +203,7 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
     const probabilities = Object.fromEntries(lines.map(([id, text]) => [id, text.includes('attention') ? 0.9 : 0.1 / (lines.length - 1)]));
     return new Response(JSON.stringify({ answers: { where: { type: 'choice', probabilities }, exists: { type: 'noul', noul: 0.93 } }, usage: { input_tokens: 2000, output_tokens: 30 } }));
   };
-  await import('../manager.js?semantic');
+  await import('../src/manager.js?semantic');
   const settle = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
   const type = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await settle(550); };
   const search = async query => { await type(query); $('semantic-toggle').click(); await settle(50); };
@@ -283,7 +283,7 @@ test('semantic search: add a key, ask Jev only when Semantic is chosen, reuse re
 });
 
 test('first run: asks once to import the browser’s bookmarks, keeping their folders; Settings imports later ones', async () => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -299,7 +299,7 @@ test('first run: asks once to import the browser’s bookmarks, keeping their fo
   const mock = fixture(null, firefox);
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js?first-run');
+  await import('../src/manager.js?first-run');
   const settle = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
   await settle();
   const saved = async () => (await browser.storage.local.get())[STORAGE_KEY].root;
@@ -345,7 +345,7 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
     { id: 'pasta', parentId: 'reading', title: 'Weeknight pasta', url: 'https://food.test/pasta', type: 'bookmark' }
   ] }] });
   async function open(search, name) {
-    const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html${search}` });
+    const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: `https://extension.local/manager.html${search}` });
     globalThis.document = dom.window.document;
     globalThis.DOMParser = dom.window.DOMParser;
     dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
@@ -353,7 +353,7 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
     const mock = fixture(library());
     globalThis.browser = mock.api;
     Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-    await import(`../manager.js?${name}`);
+    await import(`../src/manager.js?${name}`);
     await new Promise(resolve => setTimeout(resolve, 30));
     return { dom, mock, $: id => document.getElementById(id) };
   }
@@ -415,7 +415,7 @@ test('links from the address bar search, a saved page opens its bookmark, and ta
 });
 
 async function openManager(library, name, stored = {}, setup) {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
@@ -425,7 +425,7 @@ async function openManager(library, name, stored = {}, setup) {
   setup?.(mock.api);
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import(`../manager.js?${name}`);
+  await import(`../src/manager.js?${name}`);
   await new Promise(resolve => setTimeout(resolve, 30));
   const $ = id => document.getElementById(id);
   const key = (init, target = document) => target.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
@@ -953,7 +953,7 @@ test('More like this shows the bookmarks that share a bookmark’s telling words
   dom.window.close();
 
   // The Marked button, on a page about attention, asks for its related bookmarks.
-  const asked = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html?related=capture-page' });
+  const asked = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html?related=capture-page' });
   globalThis.document = asked.window.document;
   asked.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   asked.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new asked.window.Event('close')); };
@@ -963,7 +963,7 @@ test('More like this shows the bookmarks that share a bookmark’s telling words
   mock.api.storage.session = { get: async key => ({ [key]: session[key] }), remove: async key => { delete session[key]; } };
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js?related-page');
+  await import('../src/manager.js?related-page');
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(asked.window.document.getElementById('page-title').textContent, 'Like “How attention works”');
   assert.equal([...asked.window.document.querySelectorAll('#items .item-title')][0].textContent, 'Attention (machine learning)');
@@ -971,7 +971,7 @@ test('More like this shows the bookmarks that share a bookmark’s telling words
 });
 
 test('long lists build their rows as they near the window; Select all still takes every one, and renders keep unchanged rows', async () => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -987,7 +987,7 @@ test('long lists build their rows as they near the window; Select all still take
   await mock.api.storage.local.set({ markedBrowserImportAsked: 1 });
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  await import('../manager.js?rows');
+  await import('../src/manager.js?rows');
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
   const search = async query => { $('search').value = query; $('search').dispatchEvent(new dom.window.Event('input')); await new Promise(resolve => setTimeout(resolve, 150)); };
   const rows = () => [...$('items').rows];
@@ -1166,7 +1166,7 @@ test('the first time Marked opens after install, the tour shows what to know a s
   $('tour-next').click();
   assert.deepEqual(step().slice(0, 3), ['4 of 4', 'Bring your bookmarks', 'Done']);
   assert.equal([...$('tour-dots').children].findIndex(dot => dot.getAttribute('aria-current') === 'step'), 3);
-  for (const src of ['save', 'highlight', 'search', 'import']) await readFile(new URL(`../tour/${src}.webp`, import.meta.url));
+  for (const src of ['save', 'highlight', 'search', 'import']) await readFile(new URL(`../src/tour/${src}.webp`, import.meta.url));
   $('tour-next').click();
   await page.settle(50);
   assert.ok(!$('tour-dialog').open);

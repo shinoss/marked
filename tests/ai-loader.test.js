@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { waitForWorker } from '../ai-loader.js';
+import { waitForWorker } from '../src/ai/loader.js';
 
 test('waits for worker readiness rather than sending commands during module imports', async () => {
   const worker = new EventTarget();

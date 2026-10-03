@@ -1,17 +1,17 @@
-import './browser-api.js';
-import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram, HIGHLIGHT_COLORS } from './bookmarks.js';
-import { exportBackup, parseBackup } from './backup.js';
-import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX, PREVIEW_PREFIX } from './store.js';
-import { captureTabText, cleanPageText, fetchPageText, passageAround, readingStatus, searchTerms, PAGE_TEXT_SETTINGS_KEY, READING_KEY } from './page-text.js';
+import './lib/browser-api.js';
+import { safeURL, cleanAbstract, cleanNote, cleanTag, cleanTags, cleanHighlightText, exportHTML, exportMarkdown, parseHTML, parseJSON, planBrowserImport, pageIdentity, tweetId, validIcon, monogram, HIGHLIGHT_COLORS } from './lib/bookmarks.js';
+import { exportBackup, parseBackup } from './lib/backup.js';
+import { createLibraryStore, STORAGE_KEY, TEXT_PREFIX, PREVIEW_PREFIX } from './lib/store.js';
+import { captureTabText, cleanPageText, fetchPageText, passageAround, readingStatus, searchTerms, PAGE_TEXT_SETTINGS_KEY, READING_KEY } from './lib/page-text.js';
 import { markText, loadReadability, renderCard, cardStats } from './text-view.js';
-import { cleanCard, fetchSite, siteOf } from './sites.js';
-import { indexBuilder, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
-import { relativeAge } from './time.js';
-import { suggestTags, chooseTags } from './tagger.js';
-import { askJev, recordJevUsage, jevConsent, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './jev.js';
-import { bookmarkLine, semanticSearch, semanticMatches } from './semantic-search.js';
-import { ALL_SITES, SAVE_GUIDE_KEY, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './site-access.js';
-import { resumeDownload } from './model-download.js';
+import { cleanCard, fetchSite, siteOf } from './lib/sites.js';
+import { indexBuilder, compactIndex, documentTerms, similar, weigh, BROWSING_KEY, RELATED_KEY } from './lib/related.js';
+import { relativeAge } from './lib/time.js';
+import { suggestTags, chooseTags } from './lib/tagger.js';
+import { askJev, recordJevUsage, jevConsent, jevCost, estimateJevTokens, formatCost, JEV_DATA_COLLECTION, JEV_ORIGINS, JEV_SETTINGS_KEY, JEV_USAGE_KEY } from './lib/jev.js';
+import { bookmarkLine, semanticSearch, semanticMatches } from './lib/semantic-search.js';
+import { ALL_SITES, SAVE_GUIDE_KEY, SITE_ACCESS_ASKED_KEY, hasSiteAccess } from './lib/site-access.js';
+import { resumeDownload } from './ai/model-download.js';
 const library = createLibraryStore(browser);
 
 const $ = id => document.getElementById(id);
@@ -1601,7 +1601,7 @@ $('browser-import-dialog').addEventListener('close', () => {
 });
 $('chat-toggle').addEventListener('click', async () => {
   try {
-    const { openChat } = await import('./chat.js');
+    const { openChat } = await import('./ai/chat.js');
     await openChat(() => state.root);
   } catch (error) { fail(error); }
 });

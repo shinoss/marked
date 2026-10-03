@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-const html = await readFile(new URL('../panel.html', import.meta.url), 'utf8');
+const html = await readFile(new URL('../src/panel.html', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 
 // What background.js keeps for a save, and for a highlight's note (panelData there).
@@ -27,7 +27,7 @@ async function open(kind, data, replies = {}) {
   } } };
   // What the panel tells save-panel.js, through the page: in JSDOM a window is its own parent.
   window.addEventListener('message', event => page.told.push(event.data));
-  const { ready } = await import(`../panel.js?${++opened}`);
+  const { ready } = await import(`../src/panel.js?${++opened}`);
   await ready;
   await tick();
   const document = window.document;

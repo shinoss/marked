@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { fixture } from './storage-fixture.js';
 
-const html = await readFile(new URL('../reader.html', import.meta.url), 'utf8');
+const html = await readFile(new URL('../src/reader.html', import.meta.url), 'utf8');
 const text = [
   'Attention is the currency of a working life.',
   'Why it matters',
@@ -38,7 +38,7 @@ async function open(search, { stored = {}, name = search, root = library() } = {
   mock.api.runtime = { onMessage: { addListener: listener => listeners.push(listener) } };
   globalThis.browser = mock.api;
   Object.defineProperty(globalThis.navigator, 'locks', { value: mock.locks, configurable: true });
-  const { ready } = await import(`../reader.js?${name}`);
+  const { ready } = await import(`../src/reader.js?${name}`);
   await ready;
   await new Promise(resolve => setTimeout(resolve, 10));
   const $ = id => window.document.getElementById(id);
@@ -181,7 +181,7 @@ test('without its text, the reader downloads it; a bookmark that is gone says so
 });
 
 test('at the end, the reader lists related bookmarks from the stored index', async () => {
-  const { buildIndex, compactIndex, documentTerms } = await import('../related.js');
+  const { buildIndex, compactIndex, documentTerms } = await import('../src/lib/related.js');
   const root = library();
   root.children[0].children.push({ id: 'focus', parentId: 'reading', title: 'Deep work and attention', url: 'https://focus.test/', type: 'bookmark' });
   const index = buildIndex([

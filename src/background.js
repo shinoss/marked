@@ -1,15 +1,15 @@
 // Runs as Chrome's module service worker and as Firefox's module event page.
-import './browser-api.js';
-import { cleanAbstract, cleanHighlightText, safeURL, searchPages, tweetId, validIcon } from './bookmarks.js';
-import { DEFAULT_TAGS, INDEX_KEY, createLibraryStore } from './store.js';
-import { readPageAbstract, readPageIcon } from './page-abstract.js';
-import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './page-text.js';
-import { fetchSite, siteOf } from './sites.js';
-import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './related.js';
-import { hasSiteAccess, SAVE_GUIDE_KEY } from './site-access.js';
-import { suggestTags, chooseTags } from './tagger.js';
-import { askJev, jevConsent, recordJevUsage, JEV_SETTINGS_KEY } from './jev.js';
-import { tagAnswers, tagBatch, tagRequest } from './x-tags.js';
+import './lib/browser-api.js';
+import { cleanAbstract, cleanHighlightText, safeURL, searchPages, tweetId, validIcon } from './lib/bookmarks.js';
+import { DEFAULT_TAGS, INDEX_KEY, createLibraryStore } from './lib/store.js';
+import { readPageAbstract, readPageIcon } from './lib/page-abstract.js';
+import { captureTabText, PAGE_TEXT_SETTINGS_KEY } from './lib/page-text.js';
+import { fetchSite, siteOf } from './lib/sites.js';
+import { documentTerms, expandIndex, similar, weigh, BROWSING_KEY, RELATED_KEY } from './lib/related.js';
+import { hasSiteAccess, SAVE_GUIDE_KEY } from './lib/site-access.js';
+import { suggestTags, chooseTags } from './lib/tagger.js';
+import { askJev, jevConsent, recordJevUsage, JEV_SETTINGS_KEY } from './lib/jev.js';
+import { tagAnswers, tagBatch, tagRequest } from './lib/x-tags.js';
 
 const ADD_MENU = 'add-to-marked';
 const TWEET_MENU = 'save-tweet-to-marked';

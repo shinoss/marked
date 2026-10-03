@@ -1,4 +1,4 @@
-import { MODEL_URL } from '../ai-config.js';
+import { MODEL_URL } from '../src/ai/config.js';
 
 // IndexedDB as model-download.js uses it: WebLLM's databases of { url, data },
 // and pieces keyed by [url, start, end]. Values are copied, as IndexedDB does.

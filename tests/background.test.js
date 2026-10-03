@@ -37,11 +37,11 @@ globalThis.browser = {
   },
   commands: { onCommand: { addListener: listener => { onCommand = listener; } } }
 };
-await import('../background.js');
+await import('../src/background.js');
 // A saved library, with its index, as the store writes it.
 async function useLibrary(children) {
   const { fixture } = await import('./storage-fixture.js');
-  const { createLibraryStore } = await import('../store.js');
+  const { createLibraryStore } = await import('../src/lib/store.js');
   const mock = fixture({ id: 'root', children: [] });
   browser.storage.local = mock.api.storage.local;
   Object.defineProperty(navigator, 'locks', { value: mock.locks, configurable: true });
@@ -290,7 +290,7 @@ test('installing Marked opens it, to show how to save a page, with the tour over
   assert.equal((await mock.api.storage.local.get()).markedTour, 'pending', 'Marked shows the tour when it opens');
 });
 
-const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+const manifest = JSON.parse(await readFile(new URL('../src/manifest.json', import.meta.url), 'utf8'));
 const jack = { url: 'https://x.com/jack/status/20', author: 'jack', handle: 'jack', text: ' just setting up\nmy  twttr ' };
 const saveTweet = tab => onClick({ menuItemId: 'save-tweet-to-marked', pageUrl: 'https://x.com/home' }, tab);
 
@@ -792,7 +792,7 @@ test('a tagged X import picks from Marked’s default tags, and puts them back i
   assert.deepEqual((await xFolder(mock)).children.map(node => node.tags), [['Science'], undefined]);
 
   // Jev needs tags to choose from, so an emptied list gets the defaults back.
-  const { createLibraryStore } = await import('../store.js');
+  const { createLibraryStore } = await import('../src/lib/store.js');
   const store = createLibraryStore(mock.api, mock.locks);
   for (const tag of await store.getTags()) await store.removeTag(tag);
   assert.deepEqual(await saveX([xPost(6, 'Health: sleep and the heart')]), { added: 1, tagged: 1, known: 0 });
@@ -857,7 +857,7 @@ test('with previews on, a tagged X import needs no key and sends nothing; the co
   } finally { console.log = log; }
   assert.equal(requests.length, 0, 'nothing goes to TypeSafe');
   assert.equal(logged.length, 2, 'one request for each batch');
-  const { estimateJevTokens, jevCost, formatCost } = await import('../jev.js');
+  const { estimateJevTokens, jevCost, formatCost } = await import('../src/lib/jev.js');
   for (const [label, { body }] of logged) {
     const tokens = estimateJevTokens(body);
     assert.equal(label, `Jev request (preview, not sent): POST https://api.typesafe.ai/v1/systemone · about ${formatCost(jevCost(tokens))} (≈${tokens.toLocaleString()} input tokens; output is free)`, 'with what it would cost');
@@ -875,7 +875,7 @@ test('with previews on, a tagged X import needs no key and sends nothing; the co
 });
 
 test('the Marked button counts saved bookmarks related to an unsaved page, and opens them', async () => {
-  const { buildIndex, compactIndex, documentTerms } = await import('../related.js');
+  const { buildIndex, compactIndex, documentTerms } = await import('../src/lib/related.js');
   const mock = await useLibrary([{ title: 'Saved essay', url: 'https://example.com/essay' }]);
   const index = buildIndex([
     { id: 'attention', terms: documentTerms({ title: 'Attention (machine learning)', tags: ['AI'], text: 'Attention lets a transformer weigh tokens.' }) },

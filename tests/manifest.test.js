@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
 
-const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
-const exists = path => access(new URL(`../${path}`, import.meta.url));
+const manifest = JSON.parse(await readFile(new URL('../src/manifest.json', import.meta.url), 'utf8'));
+const exists = path => access(new URL(`../src/${path}`, import.meta.url));
 
 test('one manifest runs in both Chrome and Firefox', async () => {
   // Chrome 121+ ignores background.scripts; Firefox 121+ ignores service_worker.

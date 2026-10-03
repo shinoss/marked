@@ -1,6 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JevError, JEV_ENDPOINT, JEV_USAGE_KEY } from '../jev.js';
+import { askJev, recordJevUsage, jevCost, estimateJevTokens, formatCost, JevError, JEV_ENDPOINT, JEV_USAGE_KEY } from '../src/lib/jev.js';
 import { fixture } from './storage-fixture.js';
 
 const reply = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });

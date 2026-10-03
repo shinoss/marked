@@ -1,8 +1,8 @@
-import { MODEL_ID, MODEL_ORIGINS, modelConfig } from './ai-config.js';
-import { buildChatContext, visibleAnswer } from './ai-context.js';
-import { safeURL } from './bookmarks.js';
-import { waitForWorker } from './ai-loader.js';
-import { validateAdapter } from './ai-capabilities.js';
+import { MODEL_ID, MODEL_ORIGINS, modelConfig } from './config.js';
+import { buildChatContext, visibleAnswer } from './context.js';
+import { safeURL } from '../lib/bookmarks.js';
+import { waitForWorker } from './loader.js';
+import { validateAdapter } from './capabilities.js';
 import { modelStatus, pauseDownload, removeModel, resumeDownload, startDownload, watchDownload } from './model-download.js';
 
 const $ = id => document.getElementById(id);
@@ -185,7 +185,7 @@ async function start() {
     await claimGPU();
     if (version !== epoch) { releaseLock?.(); releaseLock = null; return; }
     loadingStatus('Loading the bundled inference runtime…');
-    const { CreateWebWorkerMLCEngine } = await import('./vendor/ai-runtime.js');
+    const { CreateWebWorkerMLCEngine } = await import('../vendor/ai-runtime.js');
     if (version !== epoch) return;
     worker = new Worker(browser.runtime.getURL('vendor/ai-worker.js'), { type: 'module' });
     const ready = waitForWorker(worker);

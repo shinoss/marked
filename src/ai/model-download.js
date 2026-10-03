@@ -1,5 +1,5 @@
-import './browser-api.js';
-import { MODEL_ORIGINS, MODEL_URL } from './ai-config.js';
+import '../lib/browser-api.js';
+import { MODEL_ORIGINS, MODEL_URL } from './config.js';
 
 // Marked downloads the chat model itself, rather than leaving it to WebLLM, so
 // that it takes one click, ever. What arrives is kept as it comes: a download

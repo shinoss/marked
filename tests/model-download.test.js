@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MODEL_URL } from '../ai-config.js';
-import { downloadModel, modelStatus, MODEL_DOWNLOAD_KEY } from '../model-download.js';
+import { MODEL_URL } from '../src/ai/config.js';
+import { downloadModel, modelStatus, MODEL_DOWNLOAD_KEY } from '../src/ai/model-download.js';
 import { memory, fakeModel, huggingFace } from './model-fixture.js';
 
 const url = name => MODEL_URL + name;
@@ -206,7 +206,7 @@ test('one click: the download carries on by itself, pauses and resumes in every 
   const hf = huggingFace(files, name => name === 'params_shard_0.bin' && stall ? { hangAfter: 40_000 } : null);
   globalThis.fetch = hf.fetch;
   try {
-    const tab = await import('../model-download.js?tab');
+    const tab = await import('../src/ai/model-download.js?tab');
     Object.assign(tab.modelStorage, memory());
     const events = [];
     tab.watchDownload(event => events.push(event));

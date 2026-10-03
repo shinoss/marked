@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { Readability, isProbablyReaderable } from '@mozilla/readability';
-import { readPageText, cleanPageText, captureTabText, fetchPageText, searchTerms, passageAround, readingMinutes, PAGE_TEXT_LIMIT } from '../page-text.js';
+import { readPageText, cleanPageText, captureTabText, fetchPageText, searchTerms, passageAround, readingMinutes, PAGE_TEXT_LIMIT } from '../src/lib/page-text.js';
 
 globalThis.Readability = Readability;
 globalThis.isProbablyReaderable = isProbablyReaderable;

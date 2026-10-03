@@ -1,4 +1,4 @@
-import { STORAGE_KEY } from '../store.js';
+import { STORAGE_KEY } from '../src/lib/store.js';
 
 // root: the saved Marked library, or null before Marked's first run.
 // browserTree: the browser's own bookmarks, as bookmarks.getTree() returns them.

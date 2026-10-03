@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { safeURL, parseHTML, parseJSON, exportHTML, cleanTags, cleanNote, tweetId } from '../bookmarks.js';
+import { safeURL, parseHTML, parseJSON, exportHTML, cleanTags, cleanNote, tweetId } from '../src/lib/bookmarks.js';
 const Parser = new JSDOM('').window.DOMParser;
 
 test('rejects executable and malformed URLs', () => {
@@ -70,7 +70,7 @@ test('rejects invalid documents', () => {
 });
 
 test('site letters come from the site’s name, with a stable color; icons must be small data images', async () => {
-  const { monogram, validIcon } = await import('../bookmarks.js');
+  const { monogram, validIcon } = await import('../src/lib/bookmarks.js');
   assert.equal(monogram('https://en.wikipedia.org/wiki/Attention').letter, 'W');
   assert.equal(monogram('https://www.github.com/x').letter, 'G');
   assert.equal(monogram('https://news.bbc.co.uk/').letter, 'B');
@@ -85,7 +85,7 @@ test('site letters come from the site’s name, with a stable color; icons must 
 });
 
 test('duplicates match the same page despite fragments, www, http, tracking parameters, and a trailing slash', async () => {
-  const { pageIdentity } = await import('../bookmarks.js');
+  const { pageIdentity } = await import('../src/lib/bookmarks.js');
   const same = ['https://www.example.com/post/', 'http://example.com/post#comments', 'https://example.com/post?utm_source=x&utm_medium=y', 'https://example.com/post?fbclid=1'];
   assert.equal(new Set(same.map(pageIdentity)).size, 1);
   assert.notEqual(pageIdentity('https://example.com/post?id=1'), pageIdentity('https://example.com/post?id=2'), 'real parameters count');
@@ -93,7 +93,7 @@ test('duplicates match the same page despite fragments, www, http, tracking para
 });
 
 test('exports notes and highlights as Markdown, with each bookmark’s folder and tags', async () => {
-  const { exportMarkdown } = await import('../bookmarks.js');
+  const { exportMarkdown } = await import('../src/lib/bookmarks.js');
   const root = { children: [{ title: 'Reading', children: [
     { title: 'On [attention]', url: 'https://example.com/a (1)', tags: ['Deep work'], note: 'Reread before the review.', highlights: [{ text: 'A saved link is a promise.', note: 'Why I take notes.' }] },
     { title: 'Plain', url: 'https://plain.test/' }
@@ -109,7 +109,7 @@ test('exports notes and highlights as Markdown, with each bookmark’s folder an
 });
 
 test('a highlight keeps a color other than yellow, the color of every other highlight', async () => {
-  const { cleanHighlight } = await import('../bookmarks.js');
+  const { cleanHighlight } = await import('../src/lib/bookmarks.js');
   assert.equal(cleanHighlight({ text: 'Green', color: 'green', createdAt: 1 }).color, 'green');
   assert.equal('color' in cleanHighlight({ text: 'Yellow', color: 'yellow' }), false, 'yellow is never stored');
   assert.equal('color' in cleanHighlight({ text: 'Odd', color: 'chartreuse' }), false);

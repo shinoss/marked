@@ -6,8 +6,8 @@
 // another origin, so what the user types here reaches Marked alone. The panel
 // asks background.js what to show and sends it what the user chose; all it
 // tells the page is its height, and when it's done.
-import './browser-api.js';
-import { HIGHLIGHT_COLORS } from './bookmarks.js';
+import './lib/browser-api.js';
+import { HIGHLIGHT_COLORS } from './lib/bookmarks.js';
 
 const win = document.defaultView;
 const panel = document.getElementById('panel');

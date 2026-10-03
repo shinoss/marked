@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { exportBackup, parseBackup } from '../backup.js';
-import { createLibraryStore, STORAGE_KEY, previewKey } from '../store.js';
+import { exportBackup, parseBackup } from '../src/lib/backup.js';
+import { createLibraryStore, STORAGE_KEY, previewKey } from '../src/lib/store.js';
 import { fixture } from './storage-fixture.js';
 
 const preview = 'data:image/jpeg;base64,/9j/AAAA';
@@ -65,7 +65,7 @@ test('restored items keep their original dates; other new items are dated now', 
 });
 
 test('Export’s Backup downloads a Marked file that Import restores with dates and previews', async t => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html' });
   globalThis.document = dom.window.document;
   globalThis.DOMParser = dom.window.DOMParser;
   const $ = id => document.getElementById(id);
@@ -77,7 +77,7 @@ test('Export’s Backup downloads a Marked file that Import restores with dates 
   // Mock timers so the download and toast timers do not keep the test alive.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
-  await import('../manager.js');
+  await import('../src/manager.js');
   await flush();
 
   let blob, filename;

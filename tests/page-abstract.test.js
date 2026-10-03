@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readPageAbstract } from '../page-abstract.js';
+import { readPageAbstract } from '../src/lib/page-abstract.js';
 
 function read(html, reader = readPageAbstract) {
   const dom = new JSDOM(html, { url: 'https://example.com/post' });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { siteOf, fetchSite, cleanCard, markdownBlocks, htmlText } from '../sites.js';
-import { countWords } from '../page-text.js';
+import { siteOf, fetchSite, cleanCard, markdownBlocks, htmlText } from '../src/lib/sites.js';
+import { countWords } from '../src/lib/page-text.js';
 
 // A stand-in for the sites' APIs: each address answers with its JSON or text.
 function api(routes) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateAdapter } from '../ai-capabilities.js';
+import { validateAdapter } from '../src/ai/capabilities.js';
 const adapter = () => ({ features: new Set(['shader-f16']), limits: { maxStorageBuffersPerShaderStage: 10, maxComputeWorkgroupStorageSize: 32768, maxBufferSize: 268435456, maxStorageBufferBindingSize: 134217728 } });
 test('rejects the reported Firefox nine-buffer limit before loading a model and suggests Chrome', () => {
   const gpu = adapter(); gpu.limits.maxStorageBuffersPerShaderStage = 9;

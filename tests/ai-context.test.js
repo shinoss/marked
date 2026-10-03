@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChatContext, bookmarkEntries, clipBytes, visibleAnswer } from '../ai-context.js';
-import { modelConfig, MODEL_REVISION } from '../ai-config.js';
+import { buildChatContext, bookmarkEntries, clipBytes, visibleAnswer } from '../src/ai/context.js';
+import { modelConfig, MODEL_REVISION } from '../src/ai/config.js';
 
 const root = { children: [
   { title: 'Cities', children: [{ id: 'a', title: 'Urban planning', url: 'https://example.com/private?secret=123', dateAdded: 100 }] },

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-const source = await readFile(new URL('../tweet-capture.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tweet-capture.js', import.meta.url), 'utf8');
 
 // Runs the content script as browsers do: a classic script in the page's window.
 function load(body, url = 'https://x.com/home') {
@@ -193,7 +193,7 @@ test('shows other notices on request, one at a time, for three seconds', () => {
 });
 
 test('background.js injects this same notice where the content script is missing', async () => {
-  const background = await readFile(new URL('../background.js', import.meta.url), 'utf8');
+  const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
   const notice = text => text.match(/^function showNotice\(text\) \{$[\s\S]*?^\}$/m)?.[0];
   assert.ok(notice(source));
   assert.equal(notice(background), notice(source));

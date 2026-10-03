@@ -2,15 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { MODEL_URL } from '../ai-config.js';
-import { modelStorage, MODEL_DOWNLOAD_KEY } from '../model-download.js';
+import { MODEL_URL } from '../src/ai/config.js';
+import { modelStorage, MODEL_DOWNLOAD_KEY } from '../src/ai/model-download.js';
 import { memory, fakeModel } from './model-fixture.js';
 
 // The chat panel never offers to download the model again once it was asked
 // for: a download cut short offers Resume, one running in another Marked tab
 // shows its progress, and a downloaded model loads without asking anything.
 test('after the one click, the chat panel resumes, follows and loads the download without asking again', async () => {
-  const dom = new JSDOM(await readFile(new URL('../manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html', pretendToBeVisual: true });
+  const dom = new JSDOM(await readFile(new URL('../src/manager.html', import.meta.url), 'utf8'), { url: 'https://extension.local/manager.html', pretendToBeVisual: true });
   globalThis.document = dom.window.document;
   globalThis.window = dom.window;
   const $ = id => document.getElementById(id);
@@ -54,7 +54,7 @@ test('after the one click, the chat panel resumes, follows and loads the downloa
   Object.assign(modelStorage, storage);
   downloading = false;
   try {
-    const { openChat } = await import('../chat.js?download');
+    const { openChat } = await import('../src/ai/chat.js?download');
     await openChat(() => ({ children: [] }));
     await settle();
     assert.equal($('chat-status').textContent, 'Download paused. 900 MB of 2.20 GB is on this device. Choose Resume download to finish it.');

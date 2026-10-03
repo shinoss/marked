@@ -7,7 +7,7 @@ import { inflateRawSync } from 'node:zlib';
 import { extensionFiles, isExtensionFile, manifestFor, packageFor } from '../scripts/package.js';
 import { zip } from '../scripts/zip.js';
 
-const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+const manifest = JSON.parse(await readFile(new URL('../src/manifest.json', import.meta.url), 'utf8'));
 
 // Reads back what zip() wrote, through the central directory as unzip does.
 function unzip(archive) {
@@ -62,18 +62,16 @@ test('the Firefox package drops Chrome-only keys and keeps its gecko settings', 
 });
 
 test('packages take the extension’s own files and nothing from docs, tests, the build, or the checkout', () => {
-  for (const path of ['manifest.json', 'manager.html', 'manager.js', 'styles.css', 'tour/save.webp', 'icons/marked-16.png', 'vendor/ai-worker.js', 'vendor/fonts/fonts.css', 'vendor/qwen3-4b.wasm']) {
+  for (const path of ['manifest.json', 'manager.html', 'manager.js', 'styles.css', 'lib/store.js', 'ai/chat.js', 'tour/save.webp', 'icons/marked-16.png', 'vendor/ai-worker.js', 'vendor/fonts/fonts.css', 'vendor/qwen3-4b.wasm']) {
     assert.ok(isExtensionFile(path), path);
   }
-  for (const path of ['README.md', 'package.json', 'package-lock.json', '.gitignore', '.DS_Store', '.claude/feature-ideas.md', 'docs/images/list.png', 'site/index.html',
-    'tests/manifest.test.js', 'scripts/bundle.js', 'ai/runtime.js', 'node_modules/esbuild/lib/main.js', 'dist/chrome/manifest.json', 'web-ext-artifacts/marked-chrome-1.3.0.zip',
-    'backups/library.json', 'icons/.DS_Store', 'vendor/.cache/x.js']) {
+  for (const path of ['.DS_Store', '.claude/feature-ideas.md', 'icons/.DS_Store', 'vendor/.cache/x.js', 'lib/.hidden/x.js']) {
     assert.ok(!isExtensionFile(path), path);
   }
 });
 
 test('every file the manifest and the pages load is packaged', async () => {
-  const root = new URL('..', import.meta.url);
+  const root = new URL('../src/', import.meta.url);
   // The page scripts background.js registers once access is granted.
   const background = await readFile(new URL('background.js', root), 'utf8');
   const pageScripts = [...background.matchAll(/\bjs: \['([^']+)'\]/g)].map(match => match[1]);
@@ -101,14 +99,18 @@ test('a package is the same archive every time, with the browser’s manifest', 
     const files = {
       'manifest.json': JSON.stringify(manifest), 'manager.html': '<!doctype html>', 'manager.js': 'export {};', 'styles.css': 'body {}',
       'icons/marked-16.png': 'png', 'vendor/fonts/fonts.css': '@font-face {}', 'vendor/web-llm-tokenizers.wasm': '\0asm',
-      'README.md': '# Marked', 'package.json': '{}', '.DS_Store': '', 'docs/images/list.png': 'png', 'tests/a.test.js': '', 'ai/runtime.js': '',
-      'scripts/package.js': '', 'node_modules/x/index.js': '', 'dist/chrome/old.js': '', 'site/index.html': '', 'vendor/.DS_Store': ''
+      'lib/store.js': 'export {};', '.DS_Store': '', 'vendor/.DS_Store': ''
     };
+    const outside = { 'README.md': '# Marked', 'package.json': '{}', 'docs/images/list.png': 'png', 'tests/a.test.js': '', 'scripts/package.js': '', 'node_modules/x/index.js': '', 'site/index.html': '', 'backups/library.json': '{}' };
     for (const [path, content] of Object.entries(files)) {
+      await mkdir(dirname(join(root, 'src', path)), { recursive: true });
+      await writeFile(join(root, 'src', path), content);
+    }
+    for (const [path, content] of Object.entries(outside)) {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await writeFile(join(root, path), content);
     }
-    const expected = ['icons/marked-16.png', 'manager.html', 'manager.js', 'manifest.json', 'styles.css', 'vendor/fonts/fonts.css', 'vendor/web-llm-tokenizers.wasm'];
+    const expected = ['icons/marked-16.png', 'lib/store.js', 'manager.html', 'manager.js', 'manifest.json', 'styles.css', 'vendor/fonts/fonts.css', 'vendor/web-llm-tokenizers.wasm'];
     assert.deepEqual(await extensionFiles(root), expected);
     const first = await packageFor('chrome', { root });
     assert.equal(first.target, join(root, 'web-ext-artifacts', `marked-chrome-${manifest.version}.zip`));

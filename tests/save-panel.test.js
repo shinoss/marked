@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
-const source = await readFile(new URL('../save-panel.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/save-panel.js', import.meta.url), 'utf8');
 const ORIGIN = 'moz-extension://marked';
 
 // Runs the content script as browsers do: a classic script in the page's window,

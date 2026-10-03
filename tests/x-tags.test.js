@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tagAnswers, tagBatch, tagRequest, TAGS_PER_POST } from '../x-tags.js';
-import { DEFAULT_TAGS } from '../store.js';
+import { tagAnswers, tagBatch, tagRequest, TAGS_PER_POST } from '../src/lib/x-tags.js';
+import { DEFAULT_TAGS } from '../src/lib/store.js';
 
 test('one request holds the posts, and asks of each whether each tag fits it', () => {
   const posts = [{ url: 'https://x.com/a/status/1', author: 'Ada @ada', text: 'A new\nmodel   for proofs' }, { url: 'https://x.com/b/status/2', author: 'Bo', text: 'goal! '.repeat(200) }];

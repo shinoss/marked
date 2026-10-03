@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bookmarkLine, semanticSearch, semanticMatches, WINDOW } from '../semantic-search.js';
+import { bookmarkLine, semanticSearch, semanticMatches, WINDOW } from '../src/lib/semantic-search.js';
 
 test('each bookmark becomes one short line: no address, folder, tags, or labels', () => {
   const node = {

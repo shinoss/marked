@@ -2,13 +2,13 @@
 // its highlights. Opened as reader.html?id=<bookmark>, with q=<search> to show
 // words searched for, or highlight=<id> to go to one highlight. It remembers
 // how far each text has been read.
-import './browser-api.js';
-import { createLibraryStore } from './store.js';
-import { cleanHighlightText, safeURL, HIGHLIGHT_COLORS } from './bookmarks.js';
-import { fetchPageText, readingMinutes, searchTerms, READING_KEY } from './page-text.js';
+import './lib/browser-api.js';
+import { createLibraryStore } from './lib/store.js';
+import { cleanHighlightText, safeURL, HIGHLIGHT_COLORS } from './lib/bookmarks.js';
+import { fetchPageText, readingMinutes, searchTerms, READING_KEY } from './lib/page-text.js';
 import { renderText, loadReadability, renderCard } from './text-view.js';
-import { documentTerms, expandIndex, similar, weigh, RELATED_KEY } from './related.js';
-import { ALL_SITES } from './site-access.js';
+import { documentTerms, expandIndex, similar, weigh, RELATED_KEY } from './lib/related.js';
+import { ALL_SITES } from './lib/site-access.js';
 
 const library = createLibraryStore(browser);
 // The window, through the document, as the library page does, so tests can supply one.

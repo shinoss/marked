@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLibraryStore, DEFAULT_TAGS, STORAGE_KEY, INDEX_KEY, PREVIEW_PREFIX, previewKey } from '../store.js';
-import { exportBackup, parseBackup } from '../backup.js';
+import { createLibraryStore, DEFAULT_TAGS, STORAGE_KEY, INDEX_KEY, PREVIEW_PREFIX, previewKey } from '../src/lib/store.js';
+import { exportBackup, parseBackup } from '../src/lib/backup.js';
 import { fixture } from './storage-fixture.js';
 const tree = () => ({ id: 'root', children: [{ id: 'home', parentId: 'root', title: 'Home', children: [{ id: 'a', parentId: 'home', title: 'Original', url: 'https://example.com' }, { id: 'folder', parentId: 'home', title: 'Folder', children: [] }] }] });
 

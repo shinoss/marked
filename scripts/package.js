@@ -24,41 +24,39 @@ export function manifestFor(browser, manifest) {
   return out;
 }
 
-// An allowlist, so docs, the site, tests, build scripts, the ai/ sources that
-// bundle.js compiles, package files, the README, and anything private lying in
-// the checkout (backups, exports, profiles) never reach a store: the manifest,
-// the pages with their scripts and styles at the top level, icons/, the tour's
-// pictures in tour/, and vendor/.
-const FOLDERS = ['icons', 'tour', 'vendor'];
+// The extension is everything in src/: the manifest, the pages with their
+// scripts and styles, lib/, ai/, icons/, tour/, and the generated vendor/. Docs,
+// the site, tests, build scripts, package files, the README, and anything
+// private lying in the checkout (backups, exports, profiles) live outside it, so
+// they never reach a store. Hidden files (.DS_Store and the like) are skipped.
+export const SOURCE_DIR = 'src';
 export function isExtensionFile(path) {
-  const parts = path.split('/');
-  if (parts.some(part => part.startsWith('.'))) return false;
-  if (parts.length === 1) return path === 'manifest.json' || /\.(js|html|css)$/.test(path);
-  return FOLDERS.includes(parts[0]);
+  return !path.split('/').some(part => part.startsWith('.'));
 }
 
 async function walk(root, dir) {
   const files = [];
   for (const entry of await readdir(join(root, dir), { withFileTypes: true })) {
     const path = dir ? `${dir}/${entry.name}` : entry.name;
-    if (entry.isDirectory() && (dir || FOLDERS.includes(entry.name)) && !entry.name.startsWith('.')) files.push(...await walk(root, path));
+    if (entry.isDirectory()) files.push(...await walk(root, path));
     else if (entry.isFile()) files.push(path);
   }
   return files;
 }
 
+// Paths are relative to src/, which is how they appear in the package.
 export async function extensionFiles(root) {
-  return (await walk(root, '')).filter(isExtensionFile).sort();
+  return (await walk(join(root, SOURCE_DIR), '')).filter(isExtensionFile).sort();
 }
 
 export async function packageFor(browser, { root, out = join(root, 'dist', browser), artifacts = join(root, 'web-ext-artifacts') }) {
-  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
+  const manifest = JSON.parse(await readFile(join(root, SOURCE_DIR, 'manifest.json'), 'utf8'));
   const staged = manifestFor(browser, manifest);
   const files = await extensionFiles(root);
   await rm(out, { recursive: true, force: true });
   const entries = [];
   for (const name of files) {
-    const data = name === 'manifest.json' ? Buffer.from(JSON.stringify(staged, null, 2) + '\n') : await readFile(join(root, name));
+    const data = name === 'manifest.json' ? Buffer.from(JSON.stringify(staged, null, 2) + '\n') : await readFile(join(root, SOURCE_DIR, name));
     await mkdir(dirname(join(out, name)), { recursive: true });
     await writeFile(join(out, name), data);
     entries.push({ name, data });
@@ -74,9 +72,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const browsers = process.argv.slice(2);
   if (!browsers.length) throw new Error(`Name a browser: node scripts/package.js ${BROWSERS.join(' ')}`);
-  // vendor/ is generated; without it the package would miss chat, Readability and fonts.
+  // src/vendor/ is generated; without it the package would miss chat, Readability and fonts.
   for (const generated of ['vendor/ai-worker.js', 'vendor/web-llm-tokenizers.wasm', 'vendor/qwen3-4b.wasm', 'vendor/readability.js', 'vendor/fonts/fonts.css']) {
-    await access(join(root, generated)).catch(() => { throw new Error(`${generated} is missing. Run npm run bundle first.`); });
+    await access(join(root, SOURCE_DIR, generated)).catch(() => { throw new Error(`${SOURCE_DIR}/${generated} is missing. Run npm run bundle first.`); });
   }
   for (const browser of browsers) {
     const { target, files, bytes } = await packageFor(browser, { root });
